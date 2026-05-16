@@ -1,0 +1,30 @@
+# Cargo / Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local secrets / runtime state — do NOT commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Operator-local WORKFLOW.md (the example file is committed; the live one is per-machine)
+/WORKFLOW.md
+
+# Workspace dirs (if someone runs from inside the repo)
+/symphony-workspaces/
+/sinfonia-workspaces/
+
+# Coverage / profiling
+/coverage/
+*.profraw
+*.profdata

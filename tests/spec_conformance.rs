@@ -1,0 +1,249 @@
+//! Spec-driven integration tests (§17).
+
+use std::collections::HashSet;
+use sinfonia::config::{AgentProvider, ServiceConfig, TrackerKind};
+use sinfonia::domain::{sanitize_workspace_key, BlockerRef, Issue};
+
+// §17.1 Workflow + config parsing -------------------------------------------------
+
+#[test]
+fn workflow_cwd_default_required_fields_validate() {
+    let def = sinfonia::config::parse_workflow_str(
+        "---\ntracker:\n  kind: linear\n  api_key: testkey\n  project_slug: proj\n---\nhi",
+    )
+    .unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    assert!(matches!(cfg.tracker.kind, TrackerKind::Linear));
+    assert!(cfg.validate_for_dispatch().is_ok());
+}
+
+#[test]
+fn workflow_missing_api_key_blocks_dispatch() {
+    let def = sinfonia::config::parse_workflow_str(
+        "---\ntracker:\n  kind: linear\n  project_slug: x\n---\n",
+    )
+    .unwrap();
+    // Ensure no inherited env var pollutes the test.
+    std::env::remove_var("LINEAR_API_KEY");
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    let err = cfg.validate_for_dispatch().unwrap_err();
+    assert!(format!("{err}").contains("missing_tracker_api_key"));
+}
+
+#[test]
+fn template_renders_issue_and_attempt() {
+    let issue = sample_issue("ABC-1", "Todo", Some(2));
+    let s = sinfonia::template::render_prompt(
+        "{{ issue.identifier }} :: attempt={{ attempt }}",
+        &issue,
+        Some(2),
+    )
+    .unwrap();
+    assert!(s.contains("ABC-1"));
+    assert!(s.contains("attempt=2"));
+}
+
+#[test]
+fn template_strict_unknown_variable_errors() {
+    let issue = sample_issue("ABC-1", "Todo", Some(2));
+    let err = sinfonia::template::render_prompt("{{ noSuchVar }}", &issue, None).unwrap_err();
+    let s = format!("{err}");
+    assert!(s.contains("template_render_error") || s.contains("template_parse_error"));
+}
+
+// §17.2 Workspace + safety -------------------------------------------------------
+
+#[test]
+fn workspace_sanitization_replaces_unsafe_chars() {
+    assert_eq!(sanitize_workspace_key("MT-649"), "MT-649");
+    assert_eq!(sanitize_workspace_key("../../etc/passwd"), ".._.._etc_passwd");
+    assert_eq!(sanitize_workspace_key("a b/c\\d"), "a_b_c_d");
+}
+
+// §17.4 Dispatch sort + blocker rule --------------------------------------------
+
+#[test]
+fn dispatch_sort_priority_then_creation() {
+    use chrono::TimeZone;
+    let make = |id: &str, prio: Option<i64>, created: i64| Issue {
+        id: id.to_string(),
+        identifier: id.to_string(),
+        title: "t".into(),
+        description: None,
+        priority: prio,
+        state: "Todo".into(),
+        branch_name: None,
+        url: None,
+        labels: vec![],
+        blocked_by: vec![],
+        created_at: Some(chrono::Utc.timestamp_opt(created, 0).unwrap()),
+        updated_at: None,
+    };
+    let v = vec![
+        make("z", Some(3), 1),
+        make("a", Some(1), 100),
+        make("b", Some(1), 50),
+        make("n", None, 0),
+    ];
+    let sorted = sinfonia::orchestrator::dispatch_for_test(v);
+    let ids: Vec<_> = sorted.iter().map(|i| i.id.clone()).collect();
+    assert_eq!(ids, vec!["b", "a", "z", "n"]);
+}
+
+#[test]
+fn todo_with_non_terminal_blocker_is_not_eligible() {
+    let def = sinfonia::config::parse_workflow_str(
+        "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: p\n---\n",
+    )
+    .unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    let mut issue = sample_issue("ABC-1", "Todo", Some(2));
+    issue.blocked_by = vec![BlockerRef {
+        id: Some("b1".into()),
+        identifier: Some("ABC-9".into()),
+        state: Some("In Progress".into()),
+    }];
+    assert!(!sinfonia::orchestrator::is_eligible_for_test(&issue, &cfg));
+}
+
+#[test]
+fn todo_with_terminal_blocker_is_eligible() {
+    let def = sinfonia::config::parse_workflow_str(
+        "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: p\n---\n",
+    )
+    .unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    let mut issue = sample_issue("ABC-1", "Todo", Some(2));
+    issue.blocked_by = vec![BlockerRef {
+        id: Some("b1".into()),
+        identifier: Some("ABC-9".into()),
+        state: Some("Done".into()),
+    }];
+    assert!(sinfonia::orchestrator::is_eligible_for_test(&issue, &cfg));
+}
+
+#[test]
+fn terminal_states_default_set_is_inclusive() {
+    let def = sinfonia::config::parse_workflow_str(
+        "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: p\n---\n",
+    )
+    .unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    let set: HashSet<String> = cfg.tracker.terminal_states.iter().cloned().collect();
+    for s in ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"] {
+        assert!(set.contains(s), "missing default terminal state: {s}");
+    }
+}
+
+// §17.4 Retry backoff -----------------------------------------------------------
+
+#[test]
+fn retry_backoff_doubles_until_cap() {
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(1, 300_000), 10_000);
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(2, 300_000), 20_000);
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(3, 300_000), 40_000);
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(4, 300_000), 80_000);
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(5, 300_000), 160_000);
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(6, 300_000), 300_000);
+    assert_eq!(sinfonia::orchestrator::backoff_for_test(20, 300_000), 300_000);
+}
+
+// State-machine extension -------------------------------------------------------
+
+#[test]
+fn state_machine_routes_to_distinct_runners() {
+    let yaml = r#"---
+tracker:
+  kind: linear
+  api_key: x
+  project_slug: p
+agent:
+  provider: anthropic
+  model: claude-sonnet-4-6
+states:
+  Todo:
+    provider: claude_code
+    model: claude-sonnet-4-6
+    prompt: |
+      Investigate {{ issue.identifier }}.
+  "In Progress":
+    provider: claude_code
+    model: claude-opus-4-7
+    turn_timeout_ms: 5400000
+  "In Review":
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+---
+Default body for {{ issue.identifier }}.
+"#;
+    let def = sinfonia::config::parse_workflow_str(yaml).unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+
+    // Todo → claude_code with default command auto-applied.
+    let todo = cfg.effective_llm_for_state("Todo");
+    assert_eq!(todo.provider, AgentProvider::ClaudeCode);
+    assert!(todo.command.starts_with("claude -p"));
+    let p = cfg.effective_prompt_template("Todo", "fallback");
+    assert!(p.contains("Investigate"));
+
+    // In Progress → claude_code on a stronger model + longer timeout.
+    let ip = cfg.effective_llm_for_state("In Progress");
+    assert_eq!(ip.provider, AgentProvider::ClaudeCode);
+    assert_eq!(ip.model, "claude-opus-4-7");
+    assert_eq!(ip.turn_timeout_ms, 5_400_000);
+
+    // In Review → raw Anthropic.
+    let rev = cfg.effective_llm_for_state("In Review");
+    assert_eq!(rev.provider, AgentProvider::Anthropic);
+    assert_eq!(rev.model, "claude-haiku-4-5-20251001");
+
+    // Unlisted state → global defaults, falls back to workflow body.
+    let other = cfg.effective_llm_for_state("Blocked");
+    assert_eq!(other.provider, AgentProvider::Anthropic);
+    assert_eq!(other.model, "claude-sonnet-4-6");
+    assert_eq!(
+        cfg.effective_prompt_template("Blocked", "fallback"),
+        "fallback"
+    );
+}
+
+#[test]
+fn cli_provider_without_command_fails_validation() {
+    let yaml = r#"---
+tracker:
+  kind: linear
+  api_key: x
+  project_slug: p
+agent:
+  provider: claude_code
+  command: ""
+---
+"#;
+    let def = sinfonia::config::parse_workflow_str(yaml).unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    // command parsed as ""; preflight validation must reject it.
+    let err = cfg.validate_for_dispatch().unwrap_err();
+    assert!(
+        format!("{err}").contains("command"),
+        "expected command-required validation error, got: {err}"
+    );
+}
+
+// Helpers -----------------------------------------------------------------------
+
+fn sample_issue(id: &str, state: &str, priority: Option<i64>) -> Issue {
+    Issue {
+        id: id.into(),
+        identifier: id.into(),
+        title: "T".into(),
+        description: None,
+        priority,
+        state: state.into(),
+        branch_name: None,
+        url: None,
+        labels: vec![],
+        blocked_by: vec![],
+        created_at: None,
+        updated_at: None,
+    }
+}

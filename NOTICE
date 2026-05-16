@@ -1,0 +1,51 @@
+Sinfonia
+Copyright 2026 The Sinfonia Contributors
+
+This product includes software developed by The Sinfonia Contributors
+(https://github.com/O-Side-Systems/sinfonia).
+
+------------------------------------------------------------------------
+
+This work implements the Symphony Service Specification (Draft v1)
+originally published by OpenAI:
+
+    https://github.com/openai/symphony
+
+The specification document at `docs/SPEC.md` is reproduced here for
+reference. Any rights in the upstream specification belong to its
+original authors and are not modified by inclusion in this repository.
+
+The name "Sinfonia" was chosen to distinguish this independent Rust
+implementation from the upstream "Symphony" project. Sinfonia is not
+endorsed by, affiliated with, or sponsored by OpenAI.
+
+------------------------------------------------------------------------
+
+This product optionally interoperates with the following third-party
+software at runtime (not bundled):
+
+  - Claude Code CLI (Anthropic)
+      Driven as a subprocess when `agent.provider: claude_code` is set.
+      Sinfonia does not redistribute the CLI. Users must install and
+      authenticate it independently.
+
+  - Codex CLI (OpenAI)
+      Driven as a subprocess when `agent.provider: codex` is set.
+      Sinfonia does not redistribute the CLI. Users must install and
+      authenticate it independently.
+
+  - Ollama (https://ollama.com)
+      Optional locally hosted model server contacted over HTTP when
+      `agent.provider: ollama` is set.
+
+  - Linear (https://linear.app), Atlassian Jira (https://www.atlassian.com)
+      Issue trackers contacted over their public APIs. Sinfonia uses
+      operator-supplied credentials and respects the access scopes of
+      those credentials.
+
+------------------------------------------------------------------------
+
+Trademarks referenced in this NOTICE (Symphony, Claude, Claude Code,
+Codex, Linear, Jira, Atlassian, Ollama) are the property of their
+respective owners. Their use here is descriptive and does not imply
+endorsement.
