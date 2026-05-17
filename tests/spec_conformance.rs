@@ -76,6 +76,7 @@ fn dispatch_sort_priority_then_creation() {
         url: None,
         labels: vec![],
         blocked_by: vec![],
+        children: vec![],
         created_at: Some(chrono::Utc.timestamp_opt(created, 0).unwrap()),
         updated_at: None,
     };
@@ -243,6 +244,7 @@ fn sample_issue(id: &str, state: &str, priority: Option<i64>) -> Issue {
         url: None,
         labels: vec![],
         blocked_by: vec![],
+        children: vec![],
         created_at: None,
         updated_at: None,
     }

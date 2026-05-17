@@ -55,6 +55,7 @@ mod tests {
             url: None,
             labels: vec!["bug".into()],
             blocked_by: vec![],
+            children: vec![],
             created_at: None,
             updated_at: None,
         }
@@ -70,6 +71,32 @@ mod tests {
         .unwrap();
         assert!(s.contains("ABC-1"));
         assert!(s.contains("attempt 3"));
+    }
+
+    #[test]
+    fn children_are_exposed_to_template() {
+        let mut issue = sample_issue();
+        issue.children = vec![
+            crate::domain::ChildRef {
+                id: Some("c1".into()),
+                identifier: Some("ABC-2".into()),
+                state: "Done".into(),
+            },
+            crate::domain::ChildRef {
+                id: Some("c2".into()),
+                identifier: Some("ABC-3".into()),
+                state: "Cancelled".into(),
+            },
+        ];
+        let s = render_prompt(
+            "Parent has {{ issue.children | size }} children: {% for c in issue.children %}{{ c.identifier }}={{ c.state }} {% endfor %}",
+            &issue,
+            None,
+        )
+        .unwrap();
+        assert!(s.contains("2 children"));
+        assert!(s.contains("ABC-2=Done"));
+        assert!(s.contains("ABC-3=Cancelled"));
     }
 
     #[test]
