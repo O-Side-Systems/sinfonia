@@ -1,37 +1,51 @@
+# Shared base used by both services via YAML anchor.
+x-base: &base
+  image: sinfonia-claude:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      USER_UID: "501"
+      USER_GID: "20"
+  working_dir: /workspace
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    TERM: xterm-256color
+    LINEAR_API_KEY: ${LINEAR_API_KEY:-}
+    GH_TOKEN: ${GH_TOKEN:-}
+    GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    RUST_LOG: ${RUST_LOG:-sinfonia=debug,orchestrator=debug,runner=debug}
+    GIT_USER_NAME: ${GIT_USER_NAME:-}
+    GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
+  volumes:
+    - .:/workspace
+    - ${HOME}/.claude:/home/dev/.claude
+    - ${HOME}/.claude.json:/home/dev/.claude.json
+    - sinfonia-cargo-registry:/home/dev/.cargo/registry
+    - sinfonia-cargo-git:/home/dev/.cargo/git
+    - sinfonia-target:/workspace/target
+
 services:
-  claude:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        USER_UID: "501"
-        USER_GID: "20"
-    image: sinfonia-claude:latest
-    container_name: sinfonia-claude
-    working_dir: /workspace
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      TERM: xterm-256color
-      # Explicit passthrough — env_file values still win if also set there.
-      LINEAR_API_KEY: ${LINEAR_API_KEY:-}
-      GH_TOKEN: ${GH_TOKEN:-}
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-      RUST_LOG: ${RUST_LOG:-sinfonia=debug,orchestrator=debug,runner=debug}
-      GIT_USER_NAME: ${GIT_USER_NAME:-}
-      GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
+  # Long-running sinfonia daemon. Start with `docker compose up -d daemon`.
+  daemon:
+    <<: *base
+    container_name: sinfonia-daemon
     ports:
-      # Sinfonia dashboard — configure WORKFLOW.md `server.port: 8080`
-      # or run with `--port 8080`.
       - "8080:8080"
-    volumes:
-      - .:/workspace
-      - ${HOME}/.claude:/home/dev/.claude
-      - ${HOME}/.claude.json:/home/dev/.claude.json
-      - sinfonia-cargo-registry:/home/dev/.cargo/registry
-      - sinfonia-cargo-git:/home/dev/.cargo/git
-      - sinfonia-target:/workspace/target
+    command:
+      - sh
+      - -c
+      - |
+        cargo build --release
+        exec ./target/release/sinfonia docker/WORKFLOW.md --port 8080 --log-format pretty
+
+  # Interactive Claude Code session. Use with `docker compose run --rm shell`.
+  # Useful for signing in, debugging, or driving manual checks against the repo.
+  shell:
+    <<: *base
+    container_name: sinfonia-shell
     stdin_open: true
     tty: true
     command: ["claude", "--dangerously-skip-permissions"]

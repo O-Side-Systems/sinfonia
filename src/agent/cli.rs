@@ -30,7 +30,8 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 use uuid::Uuid;
@@ -151,22 +152,89 @@ impl CodingAgent for CliAgent {
             let _ = stdin.shutdown().await;
         }
 
-        let mut stdout_handle = child.stdout.take();
-        let mut stderr_handle = child.stderr.take();
+        // Stream stdout line-by-line so we can emit incremental token updates
+        // (and capture the real session_id as soon as the CLI's `init` event
+        // arrives) instead of sitting silent until the child exits.
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let events_for_stream = events.clone();
+        let turn_id_for_stream = turn_id.clone();
+        let thread_id_shared = Arc::new(Mutex::new(session.thread_id.clone()));
+        let thread_id_for_stream = thread_id_shared.clone();
+        let flavor_for_stream = self.flavor;
+
+        let stdout_task: tokio::task::JoinHandle<String> = tokio::spawn(async move {
+            let mut buf = String::new();
+            let Some(pipe) = stdout_pipe else {
+                return buf;
+            };
+            let mut reader = BufReader::new(pipe);
+            let mut line = String::new();
+            let mut cum_in: u64 = 0_u64;
+            let mut cum_out: u64 = 0_u64;
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        buf.push_str(&line);
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        let Ok(v) = serde_json::from_str::<Value>(trimmed) else {
+                            continue;
+                        };
+                        // Discover the real session id as soon as it appears
+                        // (the CLI's `init` event carries it on the first line).
+                        if let Some(sid) = v.get("session_id").and_then(|x| x.as_str()) {
+                            if let Ok(mut t) = thread_id_for_stream.lock() {
+                                if t.starts_with("pending-") || t.is_empty() {
+                                    *t = sid.to_string();
+                                }
+                            }
+                        }
+                        if let Some((di, do_)) = extract_stream_usage(flavor_for_stream, &v) {
+                            cum_in = cum_in.saturating_add(di);
+                            cum_out = cum_out.saturating_add(do_);
+                            let tid = thread_id_for_stream
+                                .lock()
+                                .map(|t| t.clone())
+                                .unwrap_or_default();
+                            events_for_stream.send(AgentEvent::TurnProgress {
+                                timestamp: Utc::now(),
+                                thread_id: tid,
+                                turn_id: turn_id_for_stream.clone(),
+                                usage: TokenUsage {
+                                    input_tokens: cum_in,
+                                    output_tokens: cum_out,
+                                    total_tokens: cum_in.saturating_add(cum_out),
+                                },
+                            });
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            buf
+        });
+
+        let stderr_task: tokio::task::JoinHandle<String> = tokio::spawn(async move {
+            let mut buf = String::new();
+            if let Some(mut s) = stderr_pipe {
+                let _ = s.read_to_string(&mut buf).await;
+            }
+            buf
+        });
 
         let wait = async {
             let status = child
                 .wait()
                 .await
                 .map_err(|e| Error::PortExit(format!("wait: {e}")))?;
-            let mut so = String::new();
-            if let Some(s) = stdout_handle.as_mut() {
-                let _ = s.read_to_string(&mut so).await;
-            }
-            let mut se = String::new();
-            if let Some(s) = stderr_handle.as_mut() {
-                let _ = s.read_to_string(&mut se).await;
-            }
+            let so = stdout_task.await.unwrap_or_default();
+            let se = stderr_task.await.unwrap_or_default();
             Ok::<_, Error>((status, so, se))
         };
 
@@ -211,6 +279,12 @@ impl CodingAgent for CliAgent {
         let parsed = parse_cli_output(self.flavor, &stdout_buf);
         if let Some(sid) = parsed.session_id.clone() {
             session.thread_id = sid;
+        } else if let Ok(t) = thread_id_shared.lock() {
+            // Streaming saw the real session_id even if the terminal parser missed it
+            // (e.g. partial JSON on the last line).
+            if !t.starts_with("pending-") && session.thread_id.starts_with("pending-") {
+                session.thread_id = t.clone();
+            }
         }
         // Track the prompt + assistant text in history so a future agent that does
         // its own continuation logic can see it. Tool calls happened inside the
@@ -293,6 +367,32 @@ fn parse_json(flavor: CliFlavor, v: &Value, fallback_text: &str) -> ParsedCliOut
         final_message,
         session_id,
         usage,
+    }
+}
+
+/// Extract per-message (input, output) tokens from a single stream-json line.
+/// Returns None for lines that aren't an `assistant` event carrying usage.
+///
+/// Claude Code's `--output-format json --verbose` emits one assistant event
+/// per model call; their `usage.input_tokens`/`usage.output_tokens` are
+/// per-call values, so callers should accumulate across the turn.
+fn extract_stream_usage(flavor: CliFlavor, v: &Value) -> Option<(u64, u64)> {
+    match flavor {
+        CliFlavor::ClaudeCode => {
+            if v.get("type").and_then(|x| x.as_str())? != "assistant" {
+                return None;
+            }
+            let u = v.get("message").and_then(|m| m.get("usage"))?;
+            let i = u.get("input_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            let o = u.get("output_tokens").and_then(|x| x.as_u64()).unwrap_or(0);
+            if i == 0 && o == 0 {
+                return None;
+            }
+            Some((i, o))
+        }
+        // Codex CLI's per-event usage shape isn't reliably documented; skip
+        // streaming updates for now and let the terminal parser carry it.
+        CliFlavor::Codex => None,
     }
 }
 
@@ -394,6 +494,31 @@ mod tests {
         let p = parse_cli_output(CliFlavor::ClaudeCode, stream);
         assert_eq!(p.final_message, "done");
         assert_eq!(p.session_id.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn extracts_per_message_usage_from_assistant_stream_event() {
+        let line = r#"{"type":"assistant","message":{"id":"m","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":12,"output_tokens":5,"cache_read_input_tokens":1000}},"session_id":"sess-x"}"#;
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert_eq!(extract_stream_usage(CliFlavor::ClaudeCode, &v), Some((12, 5)));
+    }
+
+    #[test]
+    fn stream_usage_skips_non_assistant_lines() {
+        let init = r#"{"type":"system","subtype":"init","session_id":"s","model":"claude-sonnet-4-6"}"#;
+        let result = r#"{"type":"result","subtype":"success","result":"done","session_id":"s","usage":{"input_tokens":99,"output_tokens":99}}"#;
+        let v1: Value = serde_json::from_str(init).unwrap();
+        let v2: Value = serde_json::from_str(result).unwrap();
+        assert!(extract_stream_usage(CliFlavor::ClaudeCode, &v1).is_none());
+        // `result` is handled by the terminal parser, not the streaming path.
+        assert!(extract_stream_usage(CliFlavor::ClaudeCode, &v2).is_none());
+    }
+
+    #[test]
+    fn stream_usage_skips_zero_usage_assistant_lines() {
+        let line = r#"{"type":"assistant","message":{"id":"m","role":"assistant","content":[],"usage":{"input_tokens":0,"output_tokens":0}},"session_id":"s"}"#;
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert!(extract_stream_usage(CliFlavor::ClaudeCode, &v).is_none());
     }
 
     #[test]

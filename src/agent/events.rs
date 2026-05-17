@@ -28,6 +28,16 @@ pub enum AgentEvent {
         message: String,
         usage: Option<TokenUsage>,
     },
+    /// Mid-turn token-usage update. Emitted as the CLI agent streams output so
+    /// the dashboard doesn't sit at 0+0=0 for an entire long-running turn.
+    /// `usage` is cumulative-within-this-turn; the orchestrator's delta logic
+    /// turns successive progress events into incremental aggregate updates.
+    TurnProgress {
+        timestamp: DateTime<Utc>,
+        thread_id: String,
+        turn_id: String,
+        usage: TokenUsage,
+    },
     TurnFailed {
         timestamp: DateTime<Utc>,
         thread_id: String,
@@ -79,6 +89,7 @@ impl AgentEvent {
             AgentEvent::StartupFailed { .. } => "startup_failed",
             AgentEvent::TurnStarted { .. } => "turn_started",
             AgentEvent::TurnCompleted { .. } => "turn_completed",
+            AgentEvent::TurnProgress { .. } => "turn_progress",
             AgentEvent::TurnFailed { .. } => "turn_failed",
             AgentEvent::TurnCancelled { .. } => "turn_cancelled",
             AgentEvent::TurnEndedWithError { .. } => "turn_ended_with_error",
@@ -97,6 +108,7 @@ impl AgentEvent {
             | AgentEvent::StartupFailed { timestamp, .. }
             | AgentEvent::TurnStarted { timestamp, .. }
             | AgentEvent::TurnCompleted { timestamp, .. }
+            | AgentEvent::TurnProgress { timestamp, .. }
             | AgentEvent::TurnFailed { timestamp, .. }
             | AgentEvent::TurnCancelled { timestamp, .. }
             | AgentEvent::TurnEndedWithError { timestamp, .. }
@@ -124,6 +136,7 @@ impl AgentEvent {
     pub fn usage(&self) -> Option<&TokenUsage> {
         match self {
             AgentEvent::TurnCompleted { usage, .. } => usage.as_ref(),
+            AgentEvent::TurnProgress { usage, .. } => Some(usage),
             _ => None,
         }
     }
