@@ -1,0 +1,15 @@
+.git
+target
+**/target
+.planning
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+node_modules
+sinfonia-workspaces
+symphony-workspaces
+coverage
+*.profraw
+*.profdata
