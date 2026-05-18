@@ -17,8 +17,12 @@ Cargo.lock.bak
 *.pem
 *.key
 
-# Operator-local WORKFLOW.md (the example file is committed; the live one is per-machine)
+# Operator-local WORKFLOW.md (the example file is committed; the live one is per-machine).
+# `docker/WORKFLOW.md` is the operator's customized copy of `docker/WORKFLOW.example.md`
+# that gets bind-mounted into the sinfonia daemon container; it holds project-specific
+# values (Linear slug, repo slug) and should not be tracked.
 /WORKFLOW.md
+/docker/WORKFLOW.md
 
 # Workspace dirs (if someone runs from inside the repo)
 /symphony-workspaces/
