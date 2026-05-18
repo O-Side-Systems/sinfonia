@@ -200,10 +200,9 @@ states:
       reached a terminal state. Before doing your own work, confirm the
       children's contributions are actually integrated:
 
-      {% for c in issue.children %}- `{{ c.identifier }}` ({{ c.state }})
+      {% for c in issue.children %}- `{{ c.identifier }}` ({{ c.state }}) — branch `sinfonia/{{ c.identifier | downcase }}`
       {% endfor %}
-      Steps:
-      - For each child, locate its branch (`sinfonia/{{ c.identifier | downcase }}` convention).
+      Steps (for each child above):
       - Confirm its PR is merged to `main` (or note which aren't and STOP — report back).
       - Pull `main`, run the full test suite, ensure children's work composes cleanly.
       - Only then continue with the parent-level work below.

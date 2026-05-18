@@ -100,6 +100,23 @@ mod tests {
     }
 
     #[test]
+    fn for_loop_variable_is_out_of_scope_after_endfor() {
+        // Regression: an earlier WORKFLOW.md referenced `{{ c.identifier }}`
+        // outside its `{% for c in issue.children %}` loop. Strict Liquid
+        // rejects that with "Unknown variable c", which surfaced as
+        // template_render_error at runtime. This test pins that behavior so
+        // a similar prompt regression fails fast in CI.
+        let mut issue = sample_issue();
+        issue.children = vec![crate::domain::ChildRef {
+            id: Some("c1".into()),
+            identifier: Some("ABC-2".into()),
+            state: "Done".into(),
+        }];
+        let bad = "{% for c in issue.children %}{{ c.identifier }}{% endfor %}\n{{ c.identifier }}";
+        assert!(render_prompt(bad, &issue, None).is_err());
+    }
+
+    #[test]
     fn strict_mode_rejects_unknown_filter() {
         let err = render_prompt("{{ issue.title | bogusfilter }}", &sample_issue(), None)
             .unwrap_err();
