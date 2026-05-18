@@ -13,10 +13,12 @@
 //! workspace path as the working directory. The prompt is delivered on stdin so
 //! arbitrary shell escaping doesn't matter.
 //!
-//! Output handling tries to extract a structured JSON result first (Claude Code
-//! emits one with `--output-format json`, Codex with `--json`) and falls back to
-//! treating stdout as the final assistant message. Token usage and session id
-//! are extracted opportunistically from whatever shape we recognize.
+//! Output handling streams stdout line-by-line. Claude Code with
+//! `--output-format stream-json --verbose` and Codex with `--json` both emit
+//! one event per line; the streaming task parses each as it arrives and emits
+//! `TurnProgress` events with cumulative usage so the dashboard updates
+//! mid-turn. The final `result` line is also extracted post-exit for the
+//! session id and final message.
 
 use super::events::{AgentEvent, EventSender, TokenUsage};
 use super::turn::Message;
@@ -317,9 +319,10 @@ struct ParsedCliOutput {
     usage: Option<TokenUsage>,
 }
 
-/// Best-effort parse of a CLI subprocess's stdout. Both Claude Code's
-/// `--output-format json` and Codex's `--json` emit a JSON document we can
-/// pluck fields out of; raw text is treated as the final message verbatim.
+/// Best-effort parse of a CLI subprocess's full stdout buffer. Handles both
+/// single-document JSON (Codex `--json`, older Claude Code `--output-format
+/// json`) and newline-delimited stream-json (current Claude Code default).
+/// Raw text is treated as the final message verbatim.
 fn parse_cli_output(flavor: CliFlavor, stdout: &str) -> ParsedCliOutput {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -373,8 +376,8 @@ fn parse_json(flavor: CliFlavor, v: &Value, fallback_text: &str) -> ParsedCliOut
 /// Extract per-message (input, output) tokens from a single stream-json line.
 /// Returns None for lines that aren't an `assistant` event carrying usage.
 ///
-/// Claude Code's `--output-format json --verbose` emits one assistant event
-/// per model call; their `usage.input_tokens`/`usage.output_tokens` are
+/// Claude Code's `--output-format stream-json --verbose` emits one assistant
+/// event per model call; their `usage.input_tokens`/`usage.output_tokens` are
 /// per-call values, so callers should accumulate across the turn.
 fn extract_stream_usage(flavor: CliFlavor, v: &Value) -> Option<(u64, u64)> {
     match flavor {
