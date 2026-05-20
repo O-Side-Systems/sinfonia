@@ -334,6 +334,9 @@ impl Orchestrator {
                 | AgentEvent::TurnCompleted {
                     thread_id, turn_id, ..
                 }
+                | AgentEvent::TurnProgress {
+                    thread_id, turn_id, ..
+                }
                 | AgentEvent::TurnFailed {
                     thread_id, turn_id, ..
                 } => (Some(thread_id.clone()), Some(turn_id.clone())),
@@ -358,6 +361,14 @@ impl Orchestrator {
                 if let Some(msg) = summary {
                     running.session.last_codex_message =
                         Some(msg.chars().take(2000).collect());
+                }
+                // Reset the per-turn token baseline at TurnStarted so a new
+                // turn's streaming progress events aren't suppressed by the
+                // previous turn's final counts via saturating_sub deltas.
+                if matches!(ev, AgentEvent::TurnStarted { .. }) {
+                    running.session.last_reported_input_tokens = 0;
+                    running.session.last_reported_output_tokens = 0;
+                    running.session.last_reported_total_tokens = 0;
                 }
                 if let Some(usage) = usage_owned.as_ref() {
                     let new_in = usage.input_tokens;

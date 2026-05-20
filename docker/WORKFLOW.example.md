@@ -1,0 +1,406 @@
+---
+# ============================================================================
+# Sinfonia automation contract — docker-friendly template
+#
+# HOW TO USE
+#   Copy this file into your target repo's root as `WORKFLOW.md`, then:
+#     1. Set `tracker.project_slug` to your Linear project's slug (the part
+#        of the URL after `/project/`, including the trailing hash).
+#     2. Update the `after_create` hook to clone your repo (or any other
+#        bootstrap your project needs).
+#     3. Add your `LINEAR_API_KEY` / `GH_TOKEN` to `.env` (the docker-compose
+#        in this directory forwards them into the container automatically).
+#
+# Secrets are env-var references resolved at parse time; the real values
+# live in the operator's shell / .env, never in this file.
+#
+# Owner/repo for the GitHub queries in the prompts are derived at runtime via
+# `gh repo view` against the workspace cwd, so this file is portable across
+# projects without editing the prompt bodies.
+# ============================================================================
+
+# ---- Tracker ----
+tracker:
+  kind: linear
+  api_key: $LINEAR_API_KEY
+  project_slug: your-linear-project-slug-here   # ← change me
+  active_states: ["Todo", "In Progress"]
+  terminal_states: ["Done", "Cancelled"]
+  # "In Review" is intentionally absent from both lists — it's the human gate.
+  # Moving a ticket there stops the agent session but KEEPS the workspace.
+
+polling:
+  interval_ms: 10000           # 10s during testing; raise to 30000 for normal use
+
+workspace:
+  # Resolves to /home/dev/sinfonia-workspaces inside the docker container.
+  root: ~/sinfonia-workspaces
+
+# ---- Lifecycle hooks (run as `bash -lc`, cwd = workspace) ----
+# IMPORTANT: hooks are NOT Liquid-rendered (only prompt bodies are). The cwd
+# is named after the sanitized issue identifier, so derive everything you need
+# from `$PWD` rather than `{{ issue.* }}`.
+hooks:
+  timeout_ms: 180000
+
+  # First-time workspace bootstrap. `gh` uses $GH_TOKEN from the env.
+  after_create: |
+    gh repo clone YOUR-ORG/YOUR-REPO .   # ← change me
+
+  # Runs before every attempt — must be idempotent (retries re-run it).
+  before_run: |
+    branch="sinfonia/$(basename "$PWD" | tr '[:upper:]' '[:lower:]')"
+    git fetch --all --quiet
+    git switch -c "$branch" 2>/dev/null || git switch "$branch"
+
+  after_run: |
+    git status -s || true
+
+# ---- Default agent (fallback for any state without an override) ----
+agent:
+  max_concurrent_agents: 2
+  max_concurrent_agents_by_state:
+    "In Progress": 1
+  max_turns: 8
+  max_retry_backoff_ms: 300000
+
+  provider: claude_code         # `claude` CLI; auth via mounted ~/.claude
+  model: claude-sonnet-4-6
+  # command: defaults to "claude -p --output-format json --verbose --dangerously-skip-permissions"
+  turn_timeout_ms: 3600000      # 60 min
+  # NOTE: sinfonia only extracts `usage` from the terminal `result` event,
+  # so `tokens` stays 0 mid-run and the stall detector false-positives. Raised
+  # from 5min to 60min as a workaround until that parsing is fixed.
+  stall_timeout_ms: 3600000     # 60 min
+
+# ---- State machine ----
+# Todo        → scout + plan + first cut, then transition to In Progress
+# In Progress → implement + test + push branch + open PR, then transition to In Review
+# In Review   → (not active) human reviews the PR; merge is human-only
+states:
+  "Todo":
+    provider: claude_code
+    model: claude-sonnet-4-6
+    prompt: |
+      You are picking up Linear issue **{{ issue.identifier }} — {{ issue.title }}**.
+
+      ## Issue description
+
+      {{ issue.description }}
+
+      ## STEP 0 — Detect prior work (run this every time, before deciding anything)
+
+      A human may have moved this ticket back to Todo to ask you to address PR
+      feedback, fix merge conflicts, or respond to CI failures. Find that out
+      first.
+
+      ```bash
+      set +e   # don't abort on missing PR / empty results
+      BRANCH="sinfonia/{{ issue.identifier | downcase }}"
+
+      # Derive owner/repo from the workspace's git remote so this prompt is portable.
+      OWNER=$(gh repo view --json owner -q .owner.login)
+      REPO=$(gh repo view --json name  -q .name)
+
+      echo "=== git state on $BRANCH ==="
+      git log --oneline main..HEAD 2>/dev/null | head -20 || echo "(no commits yet)"
+      git status -s
+
+      echo
+      echo "=== existing PR for $BRANCH ==="
+      PR_NUM=$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number' 2>/dev/null)
+      if [ -n "$PR_NUM" ]; then
+        echo "Found PR #$PR_NUM"
+        gh pr view "$PR_NUM" --json state,mergeable,mergeStateStatus,reviewDecision
+
+        echo
+        echo "=== unresolved review threads (via graphql) ==="
+        gh api graphql -F owner="$OWNER" -F name="$REPO" -F num="$PR_NUM" -f query='
+          query($owner:String!,$name:String!,$num:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$num){
+                reviewThreads(first:50){
+                  nodes{ isResolved path line
+                    comments(first:10){ nodes{ author{login} body } }
+                  }
+                }
+              }
+            }
+          }' \
+          | jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {path, line, comments: [.comments.nodes[] | {author: .author.login, body}]}'
+
+        echo
+        echo "=== conversation comments (top-level) ==="
+        gh pr view "$PR_NUM" --comments | tail -200
+
+        echo
+        echo "=== failing CI checks ==="
+        gh pr checks "$PR_NUM" 2>/dev/null | grep -viE '^\s*(pass|skipping)' | head -20
+      else
+        echo "(no PR exists for this branch yet)"
+      fi
+
+      echo
+      echo "=== Linear comments on {{ issue.identifier }} ==="
+      curl -sS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" \
+        https://api.linear.app/graphql \
+        -d '{"query":"{ issue(id:\"{{ issue.identifier }}\"){ comments(orderBy:createdAt){ nodes{ user{ name } body createdAt } } } }"}' \
+        | jq -r '.data.issue.comments.nodes[] | "[\(.createdAt) \(.user.name // "unknown")]\n\(.body)\n---"'
+      set -e
+      ```
+
+      ## STEP 1 — Decide work mode from what STEP 0 showed
+
+      **If `reviewDecision == "CHANGES_REQUESTED"` OR `mergeable ==
+      "CONFLICTING"` OR there are unresolved review threads OR there are
+      conversation comments asking for changes: YOU ARE NOT DONE.** Do not
+      transition the issue forward (to In Progress or In Review) until you
+      have actually addressed what was raised. Skipping straight to a state
+      transition without code changes will be caught by the human and the
+      ticket will come back to you.
+
+      Pick the FIRST matching bullet — they are ranked by urgency:
+
+      1. **Merge conflicts** (`mergeStateStatus` is `DIRTY` / `BEHIND` /
+         `BLOCKED` with conflicts noted, or `mergeable == "CONFLICTING"`):
+         your job is to resolve them.
+         - `git fetch origin && git rebase origin/main` (or merge — match the
+           project's convention). Resolve conflicts. `git push --force-with-lease`.
+         - Comment on the PR summarizing what you resolved (`gh pr comment $PR_NUM --body "..."`).
+         - Re-check `mergeStateStatus`. If clean, transition the issue to
+           **In Review** (use the verify-then-claim pattern in step 4 below).
+         - Do NOT touch unrelated code or open a new PR.
+
+      2. **Unresolved review threads or conversation comments asking for changes**:
+         your job is to address each one.
+         - Read every unresolved thread. Make the requested change in code.
+         - For each thread, reply explaining what you did:
+           `gh api --method POST repos/{owner}/{repo}/pulls/$PR_NUM/comments/$COMMENT_ID/replies -f body="..."`
+           (or `gh pr comment $PR_NUM --body "Re: <thread topic> — ..."` if you
+           can't address the thread API).
+         - Commit + push to the same branch. Do NOT create a new PR.
+         - Transition the issue back to **In Review** when all unresolved
+           threads have a reply explaining the fix.
+
+      3. **Failing CI**: read the failing check, fix it, push. Then re-check.
+
+      4. **PR exists, no feedback, no conflicts, CI green**: the human likely
+         moved the ticket back by mistake. Leave a status comment on the PR
+         (`gh pr comment $PR_NUM --body "No outstanding feedback detected;
+         awaiting human review."`) and transition the issue back to **In Review**.
+         Do not redo prior work.
+
+      5. **No PR exists**: this is a genuinely fresh start. Proceed to the
+         "Fresh work" section below.
+
+      {% if issue.children.size > 0 %}
+      ## This issue is a PARENT — verify integration of all sub-issues first
+
+      The orchestrator only dispatched this parent because every child issue
+      reached a terminal state. Before doing your own work, confirm the
+      children's contributions are actually integrated:
+
+      {% for c in issue.children %}- `{{ c.identifier }}` ({{ c.state }}) — branch `sinfonia/{{ c.identifier | downcase }}`
+      {% endfor %}
+      Steps (for each child above):
+      - Confirm its PR is merged to `main` (or note which aren't and STOP — report back).
+      - Pull `main`, run the full test suite, ensure children's work composes cleanly.
+      - Only then continue with the parent-level work below.
+      {% endif %}
+      ## Fresh work (only when STEP 1 said "no PR exists")
+
+      1. Sketch a short plan in `.sinfonia/plan.md` (~10 bullets, not an essay).
+         Create the directory if it doesn't exist.
+      2. Make a minimal first cut — compiles/runs, may be incomplete.
+      3. Commit work-in-progress on `sinfonia/{{ issue.identifier | downcase }}` with a
+         descriptive message referencing `{{ issue.identifier }}`.
+      4. Transition the Linear issue to **In Progress** using the GraphQL API,
+         then **verify the state actually changed**. `jq` is installed.
+
+         ```bash
+         set -e
+         AUTH="Authorization: $LINEAR_API_KEY"
+         CT="Content-Type: application/json"
+         API=https://api.linear.app/graphql
+
+         # Resolve identifier → UUID + team
+         ISSUE_JSON=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+           -d '{"query":"{ issue(id:\"{{ issue.identifier }}\"){ id team { key } state { name } } }"}')
+         ISSUE_UUID=$(echo "$ISSUE_JSON" | jq -er '.data.issue.id')
+         TEAM_KEY=$(echo "$ISSUE_JSON" | jq -er '.data.issue.team.key')
+
+         # Resolve target state id for this team (state names repeat across teams)
+         STATE_JSON=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+           -d "{\"query\":\"{ workflowStates(filter:{team:{key:{eq:\\\"$TEAM_KEY\\\"}},name:{eq:\\\"In Progress\\\"}}){ nodes { id } } }\"}")
+         STATE_ID=$(echo "$STATE_JSON" | jq -er '.data.workflowStates.nodes[0].id')
+
+         # Mutate
+         MUT_JSON=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+           -d "{\"query\":\"mutation{ issueUpdate(id:\\\"$ISSUE_UUID\\\", input:{stateId:\\\"$STATE_ID\\\"}){ success } }\"}")
+         echo "$MUT_JSON" | jq -e '.data.issueUpdate.success == true and (.errors // empty | length == 0)' \
+           || { echo "MUTATION FAILED: $MUT_JSON"; exit 1; }
+
+         # Verify by re-querying
+         VERIFY=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+           -d "{\"query\":\"{ issue(id:\\\"$ISSUE_UUID\\\"){ state { name } } }\"}")
+         NEW=$(echo "$VERIFY" | jq -er '.data.issue.state.name')
+         [ "$NEW" = "In Progress" ] || { echo "VERIFY FAILED: state=$NEW"; exit 1; }
+         echo "OK: {{ issue.identifier }} → In Progress"
+         ```
+
+         **Do not claim the transition succeeded in your final message unless the
+         verification step above prints `OK:`.** If it failed, report what happened
+         (the JSON response) instead of pretending it worked.
+
+  "In Progress":
+    provider: claude_code
+    model: claude-opus-4-7      # stronger model for the implementation pass
+    turn_timeout_ms: 5400000    # 90 min
+    prompt: |
+      Resume work on **{{ issue.identifier }} — {{ issue.title }}**.
+
+      ## STEP 0 — Detect prior work (run this every time)
+
+      Same drill as the Todo prompt — the human may have moved this back to
+      In Progress to ask you to fix something. Run all of these checks before
+      assuming you're just continuing fresh implementation:
+
+      ```bash
+      set +e
+      BRANCH="sinfonia/{{ issue.identifier | downcase }}"
+
+      # Derive owner/repo from the workspace's git remote so this prompt is portable.
+      OWNER=$(gh repo view --json owner -q .owner.login)
+      REPO=$(gh repo view --json name  -q .name)
+
+      echo "=== git state on $BRANCH ==="
+      git log --oneline main..HEAD 2>/dev/null | head -20 || echo "(no commits yet)"
+      git status -s
+
+      echo
+      echo "=== existing PR ==="
+      PR_NUM=$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number' 2>/dev/null)
+      if [ -n "$PR_NUM" ]; then
+        echo "Found PR #$PR_NUM"
+        gh pr view "$PR_NUM" --json state,mergeable,mergeStateStatus,reviewDecision
+        echo
+        echo "=== unresolved review threads (via graphql) ==="
+        gh api graphql -F owner="$OWNER" -F name="$REPO" -F num="$PR_NUM" -f query='
+          query($owner:String!,$name:String!,$num:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$num){
+                reviewThreads(first:50){
+                  nodes{ isResolved path line
+                    comments(first:10){ nodes{ author{login} body } }
+                  }
+                }
+              }
+            }
+          }' \
+          | jq '.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false) | {path, line, comments: [.comments.nodes[] | {author: .author.login, body}]}'
+        echo
+        echo "=== conversation comments ==="
+        gh pr view "$PR_NUM" --comments | tail -200
+        echo
+        echo "=== failing CI checks ==="
+        gh pr checks "$PR_NUM" 2>/dev/null | grep -viE '^\s*(pass|skipping)' | head -20
+      fi
+
+      echo
+      echo "=== Linear comments on {{ issue.identifier }} ==="
+      curl -sS -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" \
+        https://api.linear.app/graphql \
+        -d '{"query":"{ issue(id:\"{{ issue.identifier }}\"){ comments(orderBy:createdAt){ nodes{ user{ name } body createdAt } } } }"}' \
+        | jq -r '.data.issue.comments.nodes[] | "[\(.createdAt) \(.user.name // "unknown")]\n\(.body)\n---"'
+      set -e
+      ```
+
+      ## STEP 1 — If STEP 0 surfaced any of these, handle them FIRST
+
+      **If `reviewDecision == "CHANGES_REQUESTED"` OR `mergeable ==
+      "CONFLICTING"` OR there are unresolved review threads OR comments
+      asking for changes: YOU ARE NOT DONE.** Do not transition the issue to
+      In Review or anywhere else until the requested changes are actually in
+      code and pushed. Don't substitute a state transition for real work.
+
+      - **Merge conflicts** → rebase/merge `origin/main`, resolve, force-push,
+        comment on the PR summarizing the resolution.
+      - **Unresolved review threads** → address each comment in code, push,
+        reply to each thread explaining what you did.
+      - **Failing CI** → read the failing check, fix, push.
+      - **Human comments on the Linear issue raising concerns** → respond to
+        them with a Linear comment via the GraphQL `commentCreate` mutation,
+        then act on whatever was raised.
+
+      Only proceed to the implementation-continuation steps below if STEP 0
+      showed clean state (no unresolved threads, mergeable, CI green) — in
+      that case the human moved the ticket in to nudge progress.
+
+      The previous turn (if any) left state in this workspace and possibly a
+      plan in `.sinfonia/plan.md`.
+
+      ## Implementation continuation (when STEP 1 had nothing to address)
+
+      1. Pick up from `.sinfonia/plan.md` and complete the implementation.
+      2. Run the project's tests + linters. Iterate until green.
+      3. Commit cleanly. Reference `{{ issue.identifier }}` in the message.
+      4. Push: `git push -u origin "sinfonia/{{ issue.identifier | downcase }}"`.
+      5. Open a PR (or update the existing one). Verify the URL afterwards.
+
+         ```bash
+         set -e
+         BRANCH="sinfonia/{{ issue.identifier | downcase }}"
+         EXISTING=$(gh pr list --head "$BRANCH" --json url -q '.[0].url')
+         if [ -z "$EXISTING" ]; then
+           PR_URL=$(gh pr create \
+             --title "{{ issue.identifier }}: {{ issue.title }}" \
+             --body  $'Resolves {{ issue.identifier }}.\n\nGenerated by sinfonia.')
+         else
+           PR_URL="$EXISTING"
+         fi
+         echo "PR: $PR_URL"
+         [ -n "$PR_URL" ] || { echo "PR CREATE FAILED"; exit 1; }
+         ```
+
+      6. Transition the Linear issue to **In Review** using the same
+         verify-then-claim pattern as the Todo prompt (swap `"In Progress"` for
+         `"In Review"`). Do not claim success unless `OK:` prints. Then stop.
+
+      ## Don't
+
+      - Don't merge the PR yourself.
+      - Don't push to `main` directly.
+      - Don't touch files unrelated to this issue.
+
+# ---- HTTP dashboard ----
+server:
+  # 0.0.0.0 because sinfonia runs inside a docker container with port 8080 published.
+  # If you run sinfonia directly on a workstation, switch this back to 127.0.0.1.
+  bind: 0.0.0.0
+  port: 8080
+---
+
+You are picking up Linear issue `{{ issue.identifier }}`: {{ issue.title }}.
+
+This is the *default* prompt body — it runs only when an issue is in a state that has no
+per-state `prompt:` override above. With the current state machine, every Todo or In Progress
+issue uses its state-specific prompt; this fallback exists so a brand-new state we haven't
+tuned for still behaves sensibly.
+
+{% if attempt %}
+This is attempt {{ attempt }} of this run. The previous attempt did not finish — inspect the
+workspace before starting fresh.
+{% endif %}
+
+## Issue description
+
+{{ issue.description }}
+
+## What to do
+
+1. Orient: `README.md`, `CLAUDE.md`, `docs/`.
+2. Make focused changes — minimal diffs.
+3. Run tests + linters.
+4. Commit on `sinfonia/{{ issue.identifier | downcase }}` and push.
+5. Open a PR with `gh` referencing `{{ issue.identifier }}`.
+6. Stop. Don't transition the ticket from this fallback path.

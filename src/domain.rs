@@ -11,6 +11,16 @@ pub struct BlockerRef {
     pub state: Option<String>,
 }
 
+/// Lightweight child-issue record used to gate parent eligibility.
+/// `state` is the raw tracker state name (matched case-insensitively against
+/// `terminal_states` during dispatch).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChildRef {
+    pub id: Option<String>,
+    pub identifier: Option<String>,
+    pub state: String,
+}
+
 /// Normalized issue record. §4.1.1.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Issue {
@@ -26,6 +36,12 @@ pub struct Issue {
     pub labels: Vec<String>,
     #[serde(default)]
     pub blocked_by: Vec<BlockerRef>,
+    /// Sub-issues (Linear `children`, Jira classic `subtasks`). Used to gate
+    /// parent execution until all children reach a `terminal_states` value —
+    /// mirroring the way a human works the leaves of an epic before the epic
+    /// itself.
+    #[serde(default)]
+    pub children: Vec<ChildRef>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }

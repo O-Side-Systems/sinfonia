@@ -55,6 +55,7 @@ mod tests {
             url: None,
             labels: vec!["bug".into()],
             blocked_by: vec![],
+            children: vec![],
             created_at: None,
             updated_at: None,
         }
@@ -70,6 +71,49 @@ mod tests {
         .unwrap();
         assert!(s.contains("ABC-1"));
         assert!(s.contains("attempt 3"));
+    }
+
+    #[test]
+    fn children_are_exposed_to_template() {
+        let mut issue = sample_issue();
+        issue.children = vec![
+            crate::domain::ChildRef {
+                id: Some("c1".into()),
+                identifier: Some("ABC-2".into()),
+                state: "Done".into(),
+            },
+            crate::domain::ChildRef {
+                id: Some("c2".into()),
+                identifier: Some("ABC-3".into()),
+                state: "Cancelled".into(),
+            },
+        ];
+        let s = render_prompt(
+            "Parent has {{ issue.children | size }} children: {% for c in issue.children %}{{ c.identifier }}={{ c.state }} {% endfor %}",
+            &issue,
+            None,
+        )
+        .unwrap();
+        assert!(s.contains("2 children"));
+        assert!(s.contains("ABC-2=Done"));
+        assert!(s.contains("ABC-3=Cancelled"));
+    }
+
+    #[test]
+    fn for_loop_variable_is_out_of_scope_after_endfor() {
+        // Regression: an earlier WORKFLOW.md referenced `{{ c.identifier }}`
+        // outside its `{% for c in issue.children %}` loop. Strict Liquid
+        // rejects that with "Unknown variable c", which surfaced as
+        // template_render_error at runtime. This test pins that behavior so
+        // a similar prompt regression fails fast in CI.
+        let mut issue = sample_issue();
+        issue.children = vec![crate::domain::ChildRef {
+            id: Some("c1".into()),
+            identifier: Some("ABC-2".into()),
+            state: "Done".into(),
+        }];
+        let bad = "{% for c in issue.children %}{{ c.identifier }}{% endfor %}\n{{ c.identifier }}";
+        assert!(render_prompt(bad, &issue, None).is_err());
     }
 
     #[test]

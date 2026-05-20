@@ -26,6 +26,27 @@ pub fn is_dispatch_eligible(issue: &Issue, cfg: &ServiceConfig) -> bool {
         return false;
     }
 
+    let terminal_lc: Vec<String> = cfg
+        .tracker
+        .terminal_states
+        .iter()
+        .map(|s| s.to_lowercase())
+        .collect();
+
+    // Parent-gating: a parent isn't eligible while any sub-issue is still
+    // non-terminal. Mirrors how a human works leaves of an epic before the
+    // epic itself. Issues with no children (the common case) are unaffected.
+    for c in &issue.children {
+        let cs = c.state.to_lowercase();
+        if cs.is_empty() {
+            // Unknown child state — conservatively block (parent waits a poll).
+            return false;
+        }
+        if !terminal_lc.iter().any(|t| t == &cs) {
+            return false;
+        }
+    }
+
     // Blocker rule for Todo state (§8.2).
     let todo = cfg
         .tracker
@@ -34,12 +55,6 @@ pub fn is_dispatch_eligible(issue: &Issue, cfg: &ServiceConfig) -> bool {
         .any(|s| s.eq_ignore_ascii_case("Todo"))
         && state_l == "todo";
     if todo {
-        let terminal_lc: Vec<String> = cfg
-            .tracker
-            .terminal_states
-            .iter()
-            .map(|s| s.to_lowercase())
-            .collect();
         for b in &issue.blocked_by {
             let bs = b.state.as_deref().unwrap_or("").to_lowercase();
             if bs.is_empty() {
@@ -111,9 +126,81 @@ mod tests {
             url: None,
             labels: vec![],
             blocked_by: vec![],
+            children: vec![],
             created_at: Some(chrono::Utc.timestamp_opt(created, 0).unwrap()),
             updated_at: None,
         }
+    }
+
+    fn cfg_with_states(active: &[&str], terminal: &[&str]) -> crate::config::ServiceConfig {
+        let active_yaml = active
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let terminal_yaml = terminal
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let wf = format!(
+            "---\ntracker:\n  kind: linear\n  api_key: testkey\n  project_slug: p\n  active_states: [{active_yaml}]\n  terminal_states: [{terminal_yaml}]\n---\nbody"
+        );
+        let def = crate::config::parse_workflow_str(&wf).unwrap();
+        crate::config::ServiceConfig::from_workflow(&def).unwrap()
+    }
+
+    fn iss_with_children(
+        id: &str,
+        children_states: &[&str],
+    ) -> Issue {
+        let mut i = iss(id, Some(1), 100);
+        i.children = children_states
+            .iter()
+            .enumerate()
+            .map(|(idx, st)| crate::domain::ChildRef {
+                id: Some(format!("{id}-c{idx}")),
+                identifier: Some(format!("{id}.{}", idx + 1)),
+                state: (*st).into(),
+            })
+            .collect();
+        i
+    }
+
+    #[test]
+    fn parent_with_open_child_is_not_eligible() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let parent = iss_with_children("P1", &["In Progress"]);
+        assert!(!is_dispatch_eligible(&parent, &cfg));
+    }
+
+    #[test]
+    fn parent_with_all_terminal_children_is_eligible() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let parent = iss_with_children("P1", &["Done", "Cancelled"]);
+        assert!(is_dispatch_eligible(&parent, &cfg));
+    }
+
+    #[test]
+    fn parent_with_mixed_children_is_not_eligible_until_all_terminal() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let parent = iss_with_children("P1", &["Done", "Backlog"]);
+        // Backlog is neither active nor terminal — conservatively blocks.
+        assert!(!is_dispatch_eligible(&parent, &cfg));
+    }
+
+    #[test]
+    fn issue_with_no_children_passes_parent_gate() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let leaf = iss("L1", Some(1), 100); // children: vec![]
+        assert!(is_dispatch_eligible(&leaf, &cfg));
+    }
+
+    #[test]
+    fn parent_gating_is_case_insensitive() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let parent = iss_with_children("P1", &["done", "CANCELLED"]);
+        assert!(is_dispatch_eligible(&parent, &cfg));
     }
 
     #[test]

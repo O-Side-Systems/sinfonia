@@ -592,7 +592,12 @@ fn default_llm_env(provider: &AgentProvider) -> Option<String> {
 pub(crate) fn default_command(provider: &AgentProvider) -> &'static str {
     match provider {
         AgentProvider::ClaudeCode => {
-            "claude -p --output-format json --verbose --dangerously-skip-permissions"
+            // `stream-json` (not `json`) is required so per-event lines stream as
+            // they happen; sinfonia's stream-parser in `agent/cli.rs` reads them
+            // to emit incremental TurnProgress events. With plain `json`, claude
+            // buffers everything into a single document at exit and the dashboard
+            // sits at 0+0=0 for the whole turn.
+            "claude -p --output-format stream-json --verbose --dangerously-skip-permissions"
         }
         AgentProvider::Codex => "codex exec --json",
         AgentProvider::CodexAppServer => "codex app-server",
