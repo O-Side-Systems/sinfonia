@@ -380,6 +380,9 @@ mod tests {
             self.checks.fetch_add(1, Ordering::SeqCst);
             Ok(crate::github::CheckRunSummary::default())
         }
+        async fn whoami(&self) -> Result<String> {
+            Ok("counting-fake".into())
+        }
     }
 
     #[tokio::test]

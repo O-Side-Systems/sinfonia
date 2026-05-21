@@ -465,6 +465,9 @@ mod tests {
         ) -> Result<CheckRunSummary> {
             Ok(CheckRunSummary::default())
         }
+        async fn whoami(&self) -> Result<String> {
+            Ok("noop-fake".into())
+        }
     }
 
     fn baseline_bridge_cfg() -> &'static str {
@@ -847,6 +850,9 @@ telemetry:
             _head_sha: &str,
         ) -> Result<CheckRunSummary> {
             Ok(self.summary.clone())
+        }
+        async fn whoami(&self) -> Result<String> {
+            Ok("scripted-fake".into())
         }
     }
 

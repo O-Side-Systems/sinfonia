@@ -149,6 +149,12 @@ pub struct CustomFieldsSection {
 pub struct ServerSection {
     pub bind: String,
     pub port: u16,
+    /// Externally reachable URL of this bridge instance, e.g.
+    /// `https://bridge.example.com`. Used by `sinfonia-bridge --self-test`
+    /// to probe `/health` from the outside. When `None`, the reachability
+    /// check `SKIP`s. Pre-parsed at config-load time so consumers can use
+    /// the URL without a second parse.
+    pub public_url: Option<url::Url>,
 }
 
 #[derive(Debug, Clone)]
@@ -536,7 +542,29 @@ fn parse_server(config: &Json) -> Result<ServerSection> {
         .and_then(|v| v.as_u64())
         .map(|n| n as u16)
         .unwrap_or(8081);
-    Ok(ServerSection { bind, port })
+    let public_url = match s.get("public_url").and_then(|v| v.as_str()) {
+        // Treat an explicit empty string the same as "not configured" so
+        // operators can blank the field via env-var indirection (BRIDGE.md
+        // value `$BRIDGE_PUBLIC_URL` resolves to "" when the env var is
+        // unset; that path should not become a hard error).
+        None | Some("") => None,
+        Some(raw) => {
+            let resolved = resolve_var_string(raw);
+            match resolved {
+                None => None,
+                Some(text) => Some(url::Url::parse(&text).map_err(|e| {
+                    Error::BridgeConfigInvalid(format!(
+                        "server.public_url: invalid URL '{text}': {e}"
+                    ))
+                })?),
+            }
+        }
+    };
+    Ok(ServerSection {
+        bind,
+        port,
+        public_url,
+    })
 }
 
 fn parse_storage(config: &Json) -> Result<StorageSection> {
@@ -962,6 +990,40 @@ telemetry:
         );
         let cfg = parse_bridge_str(&yaml).expect("should parse");
         assert_eq!(cfg.telemetry.sinfonia_events_secret.as_deref(), Some("shared"));
+    }
+
+    // -- server.public_url (P1-G addition) -------------------------------
+
+    #[test]
+    fn server_public_url_absent_is_none() {
+        // baseline() never sets public_url; should round-trip as None.
+        let cfg = parse_bridge_str(baseline()).expect("baseline parses");
+        assert!(cfg.server.public_url.is_none());
+    }
+
+    #[test]
+    fn server_public_url_valid_url_parses() {
+        let yaml = baseline().replace(
+            "  port: 8081",
+            "  port: 8081\n  public_url: https://bridge.example.com",
+        );
+        let cfg = parse_bridge_str(&yaml).expect("should parse");
+        let url = cfg.server.public_url.as_ref().expect("public_url set");
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("bridge.example.com"));
+    }
+
+    #[test]
+    fn server_public_url_invalid_url_errors() {
+        let yaml = baseline().replace(
+            "  port: 8081",
+            "  port: 8081\n  public_url: \"not a url\"",
+        );
+        let err = parse_bridge_str(&yaml).unwrap_err();
+        assert!(
+            matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("public_url")),
+            "expected public_url validation error, got: {err:?}"
+        );
     }
 
     // -- Front-matter edge cases ----------------------------------------
