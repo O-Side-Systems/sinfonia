@@ -61,9 +61,11 @@ impl Store {
         })
     }
 
-    /// Open an in-memory database. Used by unit tests so each test starts
-    /// from a clean slate without hitting the filesystem.
-    #[cfg(test)]
+    /// Open an in-memory database. Used by unit tests and the
+    /// integration suite in `tests/bridge_e2e.rs` so each test starts
+    /// from a clean slate without hitting the filesystem. Not gated
+    /// behind `#[cfg(test)]` because integration tests compile against
+    /// the library as an external crate and would not otherwise see it.
     pub async fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()
             .map_err(|e| Error::Storage(format!("open in-memory: {e}")))?;

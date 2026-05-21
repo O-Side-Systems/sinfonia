@@ -58,5 +58,9 @@ jsonwebtoken = "9"
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { version = "1.41", features = ["test-util", "macros", "rt-multi-thread"] }
-# wiremock is added in P1-H for integration tests; left out here to keep
-# the dev-dep surface small while only unit tests exist.
+# wiremock backs the P1-H integration tests in `tests/bridge_e2e.rs`. It
+# stands in for the GitHub REST API (via `Octocrab::builder().base_uri(...)`)
+# and the Linear GraphQL endpoint (via the `tracker.endpoint` config field),
+# so the full webhook → feedback-loop → tracker-write flow is exercised
+# over real HTTP. See `docs/v0.3-plan/01-bridge-mvp.md` §9.2.
+wiremock = "0.6"
