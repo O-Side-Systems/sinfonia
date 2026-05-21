@@ -38,12 +38,14 @@ pub mod config;
 pub mod feedback;
 pub mod github;
 pub mod labels;
+pub mod selftest;
 pub mod storage;
 pub mod webhook;
 
 pub use config::BridgeConfig;
-pub use github::{GhOps, OctocrabGhOps};
+pub use github::{build_gh_ops, BridgeAuthMode, GhOps, OctocrabGhOps};
 pub use labels::{BridgeLabel, LabelManager};
+pub use selftest::{run_selftest, CheckLine, CheckResult};
 pub use storage::Store;
 
 use thiserror::Error;

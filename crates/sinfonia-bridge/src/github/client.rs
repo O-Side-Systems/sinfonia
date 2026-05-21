@@ -89,6 +89,13 @@ pub trait GhOps: Send + Sync {
     /// Aggregate every check run for a head SHA into a [`CheckRunSummary`].
     async fn list_check_run_summary(&self, repo: &str, head_sha: &str)
         -> Result<CheckRunSummary>;
+
+    /// Return a short identity label for the authenticated client. PAT
+    /// mode returns the user's `login`; App mode returns the App's
+    /// `slug`. Used by `sinfonia-bridge --self-test` to surface the
+    /// effective identity in its `PASS  github:` line, and to actually
+    /// exercise the credential (a wrong PAT fails the API call here).
+    async fn whoami(&self) -> Result<String>;
 }
 
 /// Production [`GhOps`] backed by `octocrab` in PAT mode.
@@ -214,6 +221,20 @@ impl GhOps for OctocrabGhOps {
             .await
             .map(|_| ())
             .map_err(|e| Error::GitHub(format!("create_comment pr={pr_number}: {e}")))
+    }
+
+    async fn whoami(&self) -> Result<String> {
+        // PAT-mode clients authenticate as a real user.
+        let value: serde_json::Value = self
+            .crab
+            .get("/user", None::<&()>)
+            .await
+            .map_err(|e| Error::GitHub(format!("GET /user: {e}")))?;
+        value
+            .get("login")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| Error::GitHub("GET /user: missing 'login' field".into()))
     }
 
     async fn list_check_run_summary(

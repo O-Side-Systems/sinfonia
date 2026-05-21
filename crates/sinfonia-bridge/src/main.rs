@@ -1,18 +1,24 @@
 //! `sinfonia-bridge` CLI entry point.
 //!
-//! Two operating modes in P1-D:
+//! Three operating modes:
 //!
 //! ```text
 //! sinfonia-bridge BRIDGE.md                # serve (default)
 //! sinfonia-bridge BRIDGE.md --check        # parse + validate; exit 0/non-zero
+//! sinfonia-bridge BRIDGE.md --self-test    # run install gate; exit = failure count
 //! ```
 //!
-//! `--self-test` will be added in P1-G; webhook handler bodies in P1-E.
+//! `--self-test` is the install-gate runner — it builds the tracker
+//! client, the GitHub client, and probes the public webhook URL (if
+//! configured), then prints one `PASS` / `FAIL` / `SKIP` line per check.
+//! Exit code = number of `FAIL` lines so a `setup-bridge` skill can
+//! gate on `[[ $? -eq 0 ]]`.
 
 use clap::Parser;
 use sinfonia_bridge::config::read_bridge_file;
-use sinfonia_bridge::github::{GhOps, OctocrabGhOps};
+use sinfonia_bridge::github::{build_gh_ops, GhOps};
 use sinfonia_bridge::labels::LabelManager;
+use sinfonia_bridge::selftest::run_selftest;
 use sinfonia_bridge::storage::Store;
 use sinfonia_bridge::webhook::{router, AppState};
 use sinfonia_tracker::{IssueTracker, LinearTracker, TrackerKind};
@@ -36,6 +42,12 @@ struct Args {
     #[arg(long)]
     check: bool,
 
+    /// Run the install-gate self-test and exit. Returns the number of
+    /// failed checks; SKIPs do not count. Mutually exclusive with
+    /// `--check` (which only parses the config).
+    #[arg(long = "self-test")]
+    self_test: bool,
+
     /// Override the bind port from `BRIDGE.md` (`server.port`).
     #[arg(long)]
     port: Option<u16>,
@@ -50,13 +62,17 @@ async fn main() {
     let args = Args::parse();
     init_logging(&args.log_format);
 
-    if let Err(e) = run(args).await {
-        error!(target: "main", error=%e, "fatal");
-        std::process::exit(1);
+    match run(args).await {
+        Ok(code) if code == 0 => {}
+        Ok(code) => std::process::exit(code),
+        Err(e) => {
+            error!(target: "main", error=%e, "fatal");
+            std::process::exit(1);
+        }
     }
 }
 
-async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     let bridge_path = args
         .bridge
         .clone()
@@ -67,10 +83,21 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = read_bridge_file(&bridge_path)?;
 
+    if args.check && args.self_test {
+        return Err("--check and --self-test are mutually exclusive".into());
+    }
+
     if args.check {
         // Match `sinfonia --check`'s convention: print one line and exit 0.
         println!("ok");
-        return Ok(());
+        return Ok(0);
+    }
+
+    if args.self_test {
+        // Exit code carries the failure count so install scripts can
+        // gate on it. SKIPs do not count.
+        let failures = run_selftest(&cfg).await;
+        return Ok(failures);
     }
 
     let port = args.port.unwrap_or(cfg.server.port);
@@ -100,20 +127,9 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // GitHub client. P1-F: PAT mode only. P1-G adds App mode.
-    let gh: Arc<dyn GhOps> = match (&cfg.github.pat, &cfg.github.app_id) {
-        (Some(token), _) => Arc::new(OctocrabGhOps::from_pat(token.clone())?),
-        (None, Some(_)) => {
-            return Err(
-                "BRIDGE.md github.app_id auth is deferred to P1-G; set github.pat in Phase 1"
-                    .into(),
-            );
-        }
-        (None, None) => {
-            // Already rejected by BridgeConfig validation; defensive.
-            return Err("BRIDGE.md github: neither pat nor app_id is set".into());
-        }
-    };
+    // GitHub client. PAT vs App is selected inside `build_gh_ops` from
+    // the parsed config; both modes implement the same `GhOps` trait.
+    let gh: Arc<dyn GhOps> = build_gh_ops(&cfg.github)?;
 
     let labels = LabelManager::new(
         gh.clone(),
@@ -133,7 +149,7 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     info!(target: "main", %actual, "sinfonia-bridge listening");
 
     axum::serve(listener, app).await?;
-    Ok(())
+    Ok(0)
 }
 
 fn init_logging(format: &str) {

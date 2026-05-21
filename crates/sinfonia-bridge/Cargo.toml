@@ -45,11 +45,15 @@ shellexpand = { workspace = true }
 # - rusqlite          idempotency + PR↔ticket map (P1-E)
 # - subtle            constant-time HMAC compare (P1-E)
 # - hmac, sha2        signature verification (P1-E)
+# - jsonwebtoken      EncodingKey for GitHub App JWT auth (P1-G); pinned
+#                     to the major used transitively by octocrab 0.39 to
+#                     avoid duplicate compilation.
 octocrab = "0.39"
 rusqlite = { version = "0.31", features = ["bundled"] }
 subtle = "2.5"
 hmac = "0.12"
 sha2 = "0.10"
+jsonwebtoken = "9"
 
 [dev-dependencies]
 tempfile = { workspace = true }

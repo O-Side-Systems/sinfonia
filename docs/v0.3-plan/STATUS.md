@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-05-21
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
-**Branch state:** `main` contains the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D: `sinfonia-bridge` crate, BRIDGE.md parser, axum router with `/health` + stub `/webhook`), and the real webhook layer (#4 — P1-E: HMAC-SHA256 verification, SQLite idempotency, `pull_request` / `check_suite` / `workflow_run` dispatch).
+**Branch state:** `main` contains the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D: `sinfonia-bridge` crate, BRIDGE.md parser, axum router with `/health` + stub `/webhook`), the real webhook layer (#4 — P1-E: HMAC-SHA256 verification, SQLite idempotency, `pull_request` / `check_suite` / `workflow_run` dispatch), and the feedback loop (#5 — P1-F: `evaluate_ci` orchestrator, categorize / attempts / transition modules, `LabelManager` + `BridgeLabel`, PAT-mode `GhOps`).
 
 This file is the **rolling milestone status**. Future agents resuming work on v0.3.0 should read this *before* the per-phase plans — it tells you what's done, what's next, and the decisions that aren't obvious from the code alone.
 
@@ -10,11 +10,11 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 ## TL;DR for the next agent
 
-Phase 1 *foundation* (P1-A / P1-B / P1-C), the bridge crate skeleton (P1-D), **and** the real webhook layer (P1-E — HMAC verify + SQLite idempotency + `pull_request` / `check_suite` / `workflow_run` dispatch) are merged to `main`. The remaining four Phase 1 deliverables (P1-F … P1-I) — feedback loop & categorization & labels, GitHub auth & `--self-test`, integration tests, and the Phase 1 docs — have not been started. Pick up at **P1-F: feedback loop + categorization + labels**. The phase plan in `01-bridge-mvp.md` (§5.2 CI evaluation, §6 categorization, §7 PR labels) is the source of truth; this STATUS doc captures the *implementation* deltas you need to know about that aren't in the plan.
+Phase 1 *foundation* (P1-A / P1-B / P1-C), the bridge crate skeleton (P1-D), the real webhook layer (P1-E — HMAC verify + SQLite idempotency + `pull_request` / `check_suite` / `workflow_run` dispatch), **and** the feedback loop (P1-F — `evaluate_ci`, categorize, attempts counter, transition, `LabelManager`, PAT-only `GhOps`) are merged to `main`. The remaining three Phase 1 deliverables (P1-G / P1-H / P1-I) — GitHub auth & `--self-test`, integration tests, and the Phase 1 docs — have not been started. Pick up at **P1-G: GitHub auth (PAT + App) + `--self-test`**. The phase plan in `01-bridge-mvp.md` §8 is the source of truth; this STATUS doc captures the *implementation* deltas you need to know about that aren't in the plan.
 
 The single most important non-obvious decision made during the foundation work: **`CustomFieldValue` was collapsed from four variants (`Null` / `Number` / `Decimal` / `LongText` / `Url`) to three (`Null` / `Number` / `String`)** because serde's `#[serde(untagged)]` deserializer can't distinguish multiple JSON-string variants. See §5 below.
 
-The single most important non-obvious decision made during P1-E: **`check_suite` / `workflow_run` handlers stop at 202 \"queued\" and persist the `delivery_id`** — they do NOT yet run the CI evaluation. That's by design (see §2 below) so P1-F can land the loop in isolation. The `pull_request` handler is fully wired (extracts the tracker ID and upserts `pr_ticket_map`); only the CI-result-→-transition path is deferred.
+The single most important non-obvious decision made during P1-F: the bridge's GitHub surface is **abstracted behind a narrow `GhOps` trait** (in `crates/sinfonia-bridge/src/github/client.rs`) so the feedback loop and the `LabelManager` can be unit-tested with counting fakes without bringing up an HTTP server. P1-G's job is to add a second implementation of that trait (App-mode + per-installation client cache) and the `--self-test` runner — `AppState`, `LabelManager`, `evaluate_ci`, and every handler already take `Arc<dyn GhOps>` and don't need to change.
 
 ---
 
@@ -30,6 +30,8 @@ The single most important non-obvious decision made during P1-E: **`check_suite`
 | `07c0381` (#3) | P1-D: sinfonia-bridge crate skeleton + BRIDGE.md config parser | Code — `crates/sinfonia-bridge/`, 16 unit tests |
 | `cca48a0` | STATUS: mark P1-D merged, queue P1-E as next deliverable | Docs — this file |
 | `69eb8e0` (#4) | P1-E: webhook handlers + HMAC verify + SQLite idempotency | Code — `storage.rs`, `webhook/verify.rs`, full `POST /webhook` handler; +23 unit tests (6 verify, 6 storage, 11 handlers) |
+| `fd9629e` | STATUS: mark P1-E merged, queue P1-F as next deliverable | Docs — this file |
+| `9d33d51` (#5) | P1-F: feedback loop + categorization + labels | Code — `feedback/` (`mod`, `categorize`, `attempts`, `transition`), `labels.rs` (`BridgeLabel` + `LabelManager`), `github/` (`mod` + `client.rs` PAT-only `GhOps` trait + production impl); `webhook/handlers.rs` swaps the P1-E stubs for `dispatch_ci_event` calling `evaluate_ci`; bridge crate jumps from 39 to 67 unit tests |
 
 ### Phase 1 sub-task status
 
@@ -40,103 +42,100 @@ The single most important non-obvious decision made during P1-E: **`check_suite`
 | **P1-C** `Issue.fields` + Linear marker-comment + template scope (H-1) | §4.2 | ✅ merged | `Issue.fields` populated by Linear fetch; `template.rs` pre-seeds well-known keys |
 | **P1-D** bridge binary skeleton + BRIDGE.md config parser | §2, §3 | ✅ merged | `crates/sinfonia-bridge` crate scaffolded; BRIDGE.md parser + 9 validation rules + 16 unit tests; axum router with `/health` + stub `POST /webhook`; `--check` flag |
 | **P1-E** webhook handlers + HMAC verify + SQLite idempotency | §5, §9 | ✅ merged | `storage.rs` (rusqlite + Mutex; `processed_deliveries` + `pr_ticket_map`); `webhook/verify.rs` (HMAC-SHA256, constant-time compare); full `POST /webhook` dispatch for `pull_request` / `check_suite` / `workflow_run`; `AppState` carries `Arc<Store>` + `Arc<dyn IssueTracker>`; +23 unit tests |
-| **P1-F** feedback loop + categorization + labels | §5.2, §6, §7 | ⬜ not started | Next deliverable |
-| **P1-G** GitHub auth (PAT + App) + `--self-test` | §8 | ⬜ not started | |
+| **P1-F** feedback loop + categorization + labels | §5.2, §6, §7 | ✅ merged | `feedback/` (`evaluate_ci`, `categorize`, `attempts`, `transition`); `labels.rs` (`BridgeLabel` + `LabelManager`); `github/` (`GhOps` trait + PAT-mode `OctocrabGhOps`); `dispatch_ci_event` wired in `handle_check_suite` / `handle_workflow_run`; bridge crate now at 67 unit tests |
+| **P1-G** GitHub auth (PAT + App) + `--self-test` | §8 | ⬜ not started | Next deliverable |
 | **P1-H** integration tests with `wiremock` | §9.2 | ⬜ not started | Nine scenarios specified |
 | **P1-I** Phase 1 docs (BRIDGE.example.md, SPEC §11.6 draft, CHANGELOG, README stub) | §12 | ⬜ not started | |
 
 ### Test baseline on `main`
 
-- `cargo test --workspace --no-fail-fast` → **90 tests pass, 0 failures**
+- `cargo test --workspace --no-fail-fast` → **118 tests pass, 0 failures**
   - 32 sinfonia unit tests (mostly under `crates/sinfonia/src/agent/cli/tests`, `config/`, `orchestrator/`, `template/`, `workspace/`)
   - 12 `spec_conformance.rs` integration tests
   - 7 sinfonia-tracker tests (1 base64 + 6 custom_fields)
-  - 39 sinfonia-bridge unit tests (16 config from P1-D + 23 from P1-E: 6 verify, 6 storage, 11 handlers)
+  - 67 sinfonia-bridge unit tests (16 config from P1-D + 23 from P1-E + 28 from P1-F covering `feedback::categorize`, `feedback::attempts`, `labels`, `feedback::transition`, and the wired-up `dispatch_ci_event` paths in `webhook::handlers`)
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --check` → `ok` (exit 0) on valid, descriptive error (exit 1) on invalid
 - `GET /health` returns `{"service":"sinfonia-bridge","status":"ok","tenant_id":<...>,"tracker":"linear"}`
-- `POST /webhook` flow (verified end-to-end with manual curl + sqlite3 row dump):
+- `POST /webhook` flow (verified end-to-end with manual curl + sqlite3 row dump in P1-E; P1-F adds the action paths exercised by the 28 new unit tests; full wiremock coverage of the nine scenarios in §9.2 lands in P1-H):
   - Signed `pull_request opened` → 202 + row in `pr_ticket_map`.
   - Same `delivery_id` redelivered → 200 `{"status":"duplicate"}`, no DB mutation.
   - Wrong HMAC → 401, no DB mutation.
-  - Signed `check_suite completed` → 202 + row in `processed_deliveries` (no transition; that's P1-F).
+  - Signed `check_suite completed` with a mapped PR → 202 + per-PR `CiOutcome` (green / red / cap_hit / pending / no_mapped_pr) returned in the JSON body. PAT-mode `octocrab` calls reach the live GitHub API; App-mode auth is P1-G.
 - `scripts/verify-workspace-move.sh` → no longer applicable post-merge (the script's purpose was to gate the workspace-move commit; it can stay in-repo as a one-shot artifact)
 
 ---
 
-## 2. What's next: P1-F — feedback loop + categorization + labels
+## 2. What's next: P1-G — GitHub auth (PAT + App) + `--self-test`
 
-The next concrete deliverable. Source of truth: `docs/v0.3-plan/01-bridge-mvp.md` §5.2 (CI evaluation), §6 (categorization), §7 (PR labels). This is the deliverable that turns the bridge from "accepts webhooks" into "closes the loop."
+The next concrete deliverable. Source of truth: `docs/v0.3-plan/01-bridge-mvp.md` §8 (GitHub authentication + self-test). This is the deliverable that finishes the bridge's GitHub surface and gives the Phase 5 `setup-bridge` skill a deterministic install gate.
 
 ### Scope
 
-P1-E left `check_suite` / `workflow_run` handlers acknowledging at 202 "queued" without doing the actual work. P1-F replaces that with the real CI-result-→-tracker-state path, plus the label management that goes with it, plus the failure categorization that routes to the right `Needs Fixes - X` state.
+P1-F landed `GhOps` as a trait with one implementation (`OctocrabGhOps::from_pat`) and a hand-rolled `match (&cfg.github.pat, &cfg.github.app_id)` branch in `main.rs::run` that explicitly rejects App-mode auth ("BRIDGE.md github.app_id auth is deferred to P1-G"). P1-G:
 
-Five modules carry this:
+- Adds **App-mode auth** — JWT-authenticated `Octocrab` + per-installation client cache, so a single bridge process can serve multiple GitHub installations.
+- Adds a **mode-selector** factory that consolidates the PAT branch and the App branch behind one entry point.
+- Adds **`sinfonia-bridge --self-test`** — a serial runner that prints `PASS` / `FAIL` / `SKIP` per check and exits with the failure count, so install scripts can gate on it.
+- Adds an optional **`server.public_url`** config field so the self-test can probe webhook reachability; absent → that check `SKIP`s.
 
-- `crates/sinfonia-bridge/src/feedback/mod.rs` (new). Front door for the loop. Exposes `evaluate_ci(state, payload)` called from `webhook/handlers::handle_check_suite` and `handle_workflow_run`. Looks up the PR from the event payload, resolves the ticket via the P1-E `pr_ticket_map`, fetches check runs through the github client (P1-G), aggregates outcome (green / red / wait), and dispatches to the appropriate transition path.
-- `crates/sinfonia-bridge/src/feedback/categorize.rs` (new). Pure function `categorize(failed_checks, categories) -> &FailureCategory`. Edge cases per plan §6: empty `failed_checks` (debug-assert, return default in release); multi-match across categories (highest priority wins); equal priorities (unreachable — config validation rejects them); no `failure_categories:` configured (synthetic default routes to `needs_fixes_state`). The synthetic-default-on-empty path is already in place from `BridgeConfig` parsing — categorize just consumes the list.
-- `crates/sinfonia-bridge/src/feedback/attempts.rs` (new). Read / increment / cap-check for the `sinfonia_attempt_count` custom field on the ticket. Reads via `IssueTracker::read_custom_field`; writes the incremented value via `write_custom_field`. Honors `sinfonia_max_attempts` per-ticket override before falling back to `feedback_loop.max_attempts`. Cap detection returns an enum (`AttemptDecision::Continue { next } | ::CapHit`) so the transition layer can pick the right state and label.
-- `crates/sinfonia-bridge/src/feedback/transition.rs` (new). State-transition logic per plan §5.2. On green: apply `awaiting-review` label, remove `in-progress` / `needs-fixes`. On red below cap: write `sinfonia_last_ci_failure` + `sinfonia_failure_category`, increment counter, transition to category target state, apply `needs-fixes` + `failure:<category>` labels, post the rendered `failure_comment_template` to the PR. On red at cap: transition to `blocked_state`, apply `cap-hit`, post the cap-explanation comment.
-- `crates/sinfonia-bridge/src/labels.rs` (new). `BridgeLabel` enum (`InProgress` / `AwaitingReview` / `NeedsFixes` / `CapHit` / `BudgetExceeded` (Phase 3) / `Failure(String)`). `BridgeLabel::full_name(prefix, aliases)` resolves the verbatim-semantics alias from `BridgeConfig.github.label_aliases` (already parsed in P1-D). `ensure_labels(client, repo, prefix, aliases)` is idempotent label creation per repo, called lazily on first event for a (repo). `apply(client, repo, pr, label)` / `remove(client, repo, pr, label)` short-circuit when `manage_labels: false`.
+Two modules carry this:
 
-Note on the github client surface: P1-F needs to fetch check runs, post comments, and create/apply/remove labels. The cleanest split with P1-G is for P1-F to introduce `crates/sinfonia-bridge/src/github/client.rs` with **PAT-mode-only** auth (one `Octocrab::builder().personal_token(...)` instance built in `main.rs::run` and stuffed into `AppState`), and let P1-G add App-mode and `--self-test`. The `auth.rs` mode-selector and the per-installation `RwLock<HashMap<…>>` are P1-G's job. `BridgeConfig.github.pat` and `BridgeConfig.github.webhook_secret` are already parsed in P1-D.
+- `crates/sinfonia-bridge/src/github/auth.rs` (new). `BridgeAuthMode::{Pat, App}` selector; `load_private_key(s)` accepting inline PEM or `@/path/to/key.pem` (with `~` expansion via `shellexpand`); `build_gh_ops(&GitHubSection) -> Result<Arc<dyn GhOps>>` factory replacing the inline branch in `main.rs::run`. `AppModeGhOps` wraps a JWT-authenticated `Octocrab` plus `tokio::sync::RwLock<HashMap<String /* owner */, Arc<Octocrab>>>`. On the first GhOps method against a `repo`, the owner segment is resolved to an installation via `apps().get_repository_installation(owner, repo)`, the installation-scoped client is built via `crab.installation(id)` and cached under the owner key; subsequent calls hit the cache. (One installation per (App, owner) is the GitHub data model.) The trait methods on `AppModeGhOps` delegate every call to the per-owner installation client.
+- `crates/sinfonia-bridge/src/selftest.rs` (new). `run_selftest(&BridgeConfig) -> i32` runs the checks serially, prints one labelled line each, returns the failure count for `std::process::exit`. Checks: (1) `config: BRIDGE.md parsed` (PASS by definition — we got here), (2) `github: authenticated as <login or app slug> (<mode>)` via `/user` (PAT) or `/app` (App), (3) `github: webhook endpoint reachable at <public_url>/health` — SKIP when `server.public_url` is unset, otherwise `reqwest::get` → expect 200, (4) `tracker: <kind> project '<slug>' accessible` — for Linear, an `IssueTracker::fetch_candidate_issues` round-trip is the cheapest "can we reach the API?" probe; for Jira (Phase 4) this is currently a `NotImplemented` no-op, (5) `custom fields: <MARKER> reserved` — verifies the `sinfonia_tracker::custom_fields::MARKER` constant; documentation-grade PASS.
 
-### Unit tests (per plan §9.1)
+The CLI gains a single new flag — `--self-test` — wired into the same `clap::Parser` struct already in `main.rs`. When set, `run()` builds `cfg` + `tracker` + `Arc<dyn GhOps>` exactly as the serve path does, then dispatches to `selftest::run_selftest` and exits without binding the listener.
+
+### Config addition
+
+`server.public_url: Option<String>` lands in `BridgeConfig::ServerSection` with one validation rule: when set, must parse as a `url::Url`. Backward-compatible — every existing test config + the example BRIDGE.md keeps working untouched.
+
+### Unit tests
 
 | Module | Cases |
 |---|---|
-| `feedback::categorize` | Priority ordering (high beats low); multi-match across categories; empty `failed_checks` returns default; `failure_categories:` absent in config still returns default. |
-| `feedback::attempts` | Increment from 0 → 1; increment respects per-ticket `sinfonia_max_attempts` override; cap-hit detection on the final attempt; cap-hit does NOT increment past the cap. |
-| `labels` | Label name composition (prefix + base); alias supplies full name verbatim (prefix ignored); `manage_labels: false` short-circuits both `apply` and `ensure_labels`. |
+| `github::auth` | `load_private_key`: inline-PEM passthrough; `@/abs/path` reads file; `@~/key.pem` expands `~`; missing-file errors with a path in the message. `BridgeAuthMode::from_github_section`: PAT-only → `Pat`; App-only (app_id + private_key) → `App`; both set / neither set → error (BridgeConfig validation already catches these; this is belt-and-braces against future drift). |
+| `selftest` | Exit code = number of `FAIL` lines (not `SKIP`s); reachability check `SKIP`s cleanly when `server.public_url` is `None`; the formatted output starts each line with `PASS` / `FAIL` / `SKIP` and includes the check name. |
+| `config` | `server.public_url` round-trips; absent → `None`; non-URL string → `Error::BridgeConfigInvalid`. |
 
-Mock the `IssueTracker` and the github client for these — they're pure dispatch tests, no live HTTP. The full wiremock-backed integration coverage is P1-H's responsibility (nine scenarios in plan §9.2).
+App-mode integration (octocrab JWT → installation token → real REST call) is covered by the P1-H wiremock harness — scenario 8 specifically uses App credentials.
 
 ### What's already prepared
 
-- The P1-E `webhook/handlers::handle_check_suite` / `handle_workflow_run` stubs are the call sites that P1-F replaces. They already log and 202 — P1-F swaps in `feedback::evaluate_ci(&state, &payload, &delivery_id).await` and returns based on the result.
-- `AppState` already carries `Arc<Store>` and `Arc<dyn IssueTracker>` from P1-E. P1-F adds the github client to it.
-- `Store::lookup_pr_ticket(repo, pr_number)` exists — that's the PR-→-ticket step on the read side.
-- `BridgeConfig.feedback_loop` is fully parsed: `max_attempts`, `needs_fixes_state`, `blocked_state`, `failure_categories` (with the synthetic-default already injected when the user omits them), `failure_comment_template`, `pr_link_pattern`.
-- `BridgeConfig.github.label_prefix` / `label_aliases` / `manage_labels` are parsed with verbatim-alias semantics in `parse_github`.
-- `BridgeConfig.custom_fields` resolves the four loop-side field names (`attempt_count`, `last_failure_log`, `max_attempts_override`, `failure_category`); P1-F just reads them off `state.config.custom_fields`.
-- `octocrab` and `liquid` are already in `crates/sinfonia-bridge/Cargo.toml` from P1-D.
-- `sinfonia_tracker::IssueTracker::{transition_issue, read_custom_field, write_custom_field, post_comment}` are all implemented on `LinearTracker` from P1-B. P1-F calls them directly — no new tracker methods needed.
+- `BridgeConfig.github.{pat,app_id,private_key,webhook_secret}` are all parsed in P1-D with env-var indirection (`$ENVVAR` substitution).
+- Validation rule 1 in `config::validate` already enforces "exactly one of `pat` or `app_id`" and rule "App mode requires `private_key`."
+- `GhOps` trait is repo-scoped — every method already receives `repo: &str` — so `AppModeGhOps` can extract the owner and route without a new trait method.
+- `octocrab = "0.39"` is in `Cargo.toml`. `Octocrab::installation(InstallationId) -> Octocrab` is synchronous (no API call) — the API call happens once during installation discovery, then the scoped client is reusable.
+- `shellexpand` is already in workspace deps; `~`-expansion for `@path` PEM loading is a one-line call.
+- `reqwest` is in workspace deps for the public-URL probe.
+- The `--check` flag's pattern in `main.rs` (build config, run a one-shot check, exit) is the template for `--self-test`'s wiring.
 
-### Exit criteria for P1-F
+### Exit criteria for P1-G
 
 - `cargo check --workspace` compiles clean.
-- All P1-F unit tests pass (count: ~4 + ~4 + 3 = ~11 new tests minimum).
-- `cargo test --workspace` zero regressions over the post-P1-E baseline (90 tests).
-- A signed `check_suite completed` with all-pass conclusions applies the `awaiting-review` label and does NOT transition the ticket.
-- A signed `check_suite completed` with at least one failing conclusion increments `sinfonia_attempt_count` on the ticket, writes `sinfonia_last_ci_failure`, transitions to the configured `needs_fixes_state` (or the matched category's `target_state`), applies `needs-fixes` + `failure:<category>` labels, and posts the rendered `failure_comment_template` to the PR.
-- The (`max_attempts`+1)-th red run transitions to `blocked_state` and applies `cap-hit` — counter does NOT advance past the cap.
-- `manage_labels: false` short-circuits every label call; state transitions still happen.
+- `cargo test --workspace` zero regressions over the post-P1-F baseline (118 tests).
+- All new P1-G unit tests pass (count: ~5–7 across `github::auth`, `selftest`, and `config::server.public_url`).
+- `sinfonia-bridge --self-test` against a valid PAT-mode `BRIDGE.md` prints PASS for each check and exits 0.
+- `sinfonia-bridge --self-test` against a deliberately-broken `BRIDGE.md` (wrong PAT, unreachable public_url, wrong tracker project) prints one `FAIL` per broken check and exits with the failure count.
+- App-mode `main.rs::run` no longer errors at startup — it instead constructs an `AppModeGhOps` with a working JWT and stuffs it into `AppState`. (Full live-traffic verification waits on P1-H; for P1-G, unit-test coverage of `auth.rs` plus successful workspace compilation is the gate.)
 
-### Files (still pending; P1-F owns the five marked with †)
+### Files (P1-G owns the three marked with †)
 
 ```
 crates/sinfonia-bridge/
 ├── Cargo.toml
 └── src/
-    ├── main.rs                  ← P1-D / P1-E, P1-F adds github client to AppState
-    ├── lib.rs                   ← P1-D, P1-F registers feedback/ + labels + github
-    ├── config.rs                ← P1-D
-    ├── webhook/
-    │   ├── mod.rs               ← P1-D / P1-E
-    │   ├── verify.rs            ← P1-E
-    │   └── handlers.rs          ← P1-E (handle_check_suite / handle_workflow_run swap in P1-F)
-    ├── feedback/                ← P1-F †
-    │   ├── mod.rs               ← P1-F †  evaluate_ci entry point
-    │   ├── categorize.rs        ← P1-F †  pure categorize() function
-    │   ├── transition.rs        ← P1-F †  green/red/cap state logic
-    │   └── attempts.rs          ← P1-F †  counter read/increment via custom_fields
-    ├── labels.rs                ← P1-F †  BridgeLabel + ensure/apply/remove
-    ├── github/                  ← P1-F (client.rs PAT-only) / P1-G (auth.rs App + selector)
-    │   ├── mod.rs               ← P1-F
-    │   ├── auth.rs              ← P1-G  (App mode + mode selection)
-    │   └── client.rs            ← P1-F  (PAT-mode octocrab wrapper)
-    ├── storage.rs               ← P1-E
-    └── selftest.rs              ← P1-G
+    ├── main.rs                  ← P1-D / P1-E / P1-F. P1-G: + `--self-test` flag, swap inline auth branch for `auth::build_gh_ops`.
+    ├── lib.rs                   ← P1-D / P1-F. P1-G: register `selftest`.
+    ├── config.rs                ← P1-D. P1-G: add `server.public_url: Option<String>` + URL-syntax validation.
+    ├── webhook/                 ← P1-D / P1-E / P1-F.
+    ├── feedback/                ← P1-F.
+    ├── labels.rs                ← P1-F.
+    ├── github/
+    │   ├── mod.rs               ← P1-F. P1-G: re-export `auth::build_gh_ops` + `BridgeAuthMode`.
+    │   ├── client.rs            ← P1-F (`GhOps` trait + PAT-mode `OctocrabGhOps`).
+    │   └── auth.rs              ← P1-G †  mode selector + `load_private_key` + `AppModeGhOps`.
+    ├── storage.rs               ← P1-E.
+    └── selftest.rs              ← P1-G †  serial runner with PASS/FAIL/SKIP per check.
 ```
 
 ---
@@ -174,7 +173,7 @@ sinfonia/
 │   │       ├── jira.rs          # JiraTracker (defaults for bridge-write methods)
 │   │       ├── linear.rs        # LinearTracker (full bridge-write impls)
 │   │       └── types.rs         # Issue (with .fields), IssueState, BlockerRef, ChildRef
-│   └── sinfonia-bridge/         # the bridge daemon (config + webhook layer landed; feedback loop is P1-F)
+│   └── sinfonia-bridge/         # the bridge daemon (config + webhook layer + feedback loop landed; GitHub App auth & --self-test are P1-G)
 ├── docs/
 │   ├── SPEC.md                  # Symphony spec; §11.6 draft lands in P1-I
 │   └── v0.3-plan/
@@ -286,7 +285,7 @@ The script exists because the workspace-move commit needed a verifiable "logic u
 git checkout main
 git pull --ff-only origin main
 
-# 2. Confirm test baseline (should be 90 passing tests, zero failures).
+# 2. Confirm test baseline (should be 118 passing tests, zero failures).
 cargo test --workspace --no-fail-fast 2>&1 | grep -E "test result"
 
 # 3. Read the rolling status (this file) and the Phase 1 plan.
@@ -295,19 +294,21 @@ cat docs/v0.3-plan/01-bridge-mvp.md
 
 # 4. Confirm the working tree shape matches §3 above.
 ls crates/
-ls crates/sinfonia-bridge/src/        # expect: config.rs, lib.rs, main.rs, storage.rs, webhook/
+ls crates/sinfonia-bridge/src/        # expect: config.rs, lib.rs, main.rs, storage.rs, labels.rs, webhook/, feedback/, github/
 ls crates/sinfonia-bridge/src/webhook/  # expect: handlers.rs, mod.rs, verify.rs
+ls crates/sinfonia-bridge/src/feedback/ # expect: attempts.rs, categorize.rs, mod.rs, transition.rs
+ls crates/sinfonia-bridge/src/github/   # expect: client.rs, mod.rs   (P1-G adds auth.rs + selftest.rs at crate root)
 ls crates/sinfonia-tracker/src/
 
-# 5. Start a P1-F branch off main.
-git checkout -b v0.3-phase-1-feedback-loop
+# 5. Start a P1-G branch off main.
+git checkout -b v0.3-phase-1-github-auth
 
 # 6. Set up Phase 1 sub-task tracking. The original task IDs from the
 #    completed-context conversation are not preserved across context
-#    clears — TaskCreate a fresh set for P1-F..P1-I per the table in §1.
+#    clears — TaskCreate a fresh set for P1-G..P1-I per the table in §1.
 ```
 
-Previous sessions completed P1-A / P1-B / P1-C / P1-D / P1-E. Four sub-tasks remain (P1-F … P1-I); recreate those as fresh TaskCreate entries.
+Previous sessions completed P1-A / P1-B / P1-C / P1-D / P1-E / P1-F. Three sub-tasks remain (P1-G … P1-I); recreate those as fresh TaskCreate entries.
 
 ---
 
@@ -341,14 +342,15 @@ For the next agent's first message to itself when context is fresh:
 ```
 Working directory: /Users/brettlee/work/sinfonia
 Current branch: main (assumed; verify with `git branch --show-current`)
-Last merged work: P1-E webhook layer (PR #4, commit 69eb8e0)
-Earlier merges: P1-D bridge skeleton (PR #3, commit 07c0381);
+Last merged work: P1-F feedback loop + categorization + labels (PR #5, commit 9d33d51, merge 1c2c14f)
+Earlier merges: P1-E webhook layer (PR #4, commit 69eb8e0);
+                P1-D bridge skeleton (PR #3, commit 07c0381);
                 Phase 1 foundation (PR #2: commits 82d2d2f + 3f045e9)
 
 Read these in this order:
   1. docs/v0.3-plan/STATUS.md   (this file — rolling milestone status)
   2. docs/v0.3-plan/00-overview.md   (milestone index, phase deps)
-  3. docs/v0.3-plan/01-bridge-mvp.md   (Phase 1 plan; next deliverable is P1-F in §5.2 / §6 / §7)
+  3. docs/v0.3-plan/01-bridge-mvp.md   (Phase 1 plan; next deliverable is P1-G in §8)
 
 Source of truth for the underlying change set:
   /Users/brettlee/Downloads/sinfonia-change-proposal.md
@@ -383,7 +385,7 @@ When P1-D through P1-I are all merged:
 - `CHANGELOG.md` has a v0.3.0-alpha.1 entry.
 - README has a "What's new in v0.3" stub.
 - `wiremock`-backed integration tests cover the nine scenarios in `01-bridge-mvp.md` §9.2.
-- The full `cargo test --workspace` count should be roughly 51 sinfonia/tracker + ~50 bridge unit tests (39 from P1-D+P1-E plus P1-F's ~11 + P1-G's ~5) + 9 integration tests ≈ ~110 tests.
+- The full `cargo test --workspace` count should be roughly 51 sinfonia/tracker + ~75 bridge unit tests (67 from P1-D+P1-E+P1-F plus P1-G's ~5–7) + 9 integration tests ≈ ~130 tests.
 
 Phase 1 is then shippable on its own; Phases 2–7 land on top of it.
 
