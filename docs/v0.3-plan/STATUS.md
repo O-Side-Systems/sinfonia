@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-05-21
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
-**Branch state:** `main` contains the Phase 1 foundation (#2: workspace conversion + tracker extensions + H-1 fix) plus the STATUS doc itself. The bridge-binary skeleton (P1-D) is on a branch `v0.3-phase-1-bridge-skeleton` awaiting PR.
+**Branch state:** `main` contains the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix) and the bridge skeleton (#3 — P1-D: `sinfonia-bridge` crate, BRIDGE.md parser, axum router with `/health` + stub `/webhook`).
 
 This file is the **rolling milestone status**. Future agents resuming work on v0.3.0 should read this *before* the per-phase plans — it tells you what's done, what's next, and the decisions that aren't obvious from the code alone.
 
@@ -10,7 +10,7 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 ## TL;DR for the next agent
 
-Phase 1 *foundation* (P1-A / P1-B / P1-C) is merged to `main`. The remaining six Phase 1 deliverables (P1-D … P1-I) — the actual `sinfonia-bridge` binary, its tests, and the Phase 1 docs — have not been started. Pick up at **P1-D: bridge binary skeleton + BRIDGE.md config parser**. The phase plan in `01-bridge-mvp.md` is the source of truth; this STATUS doc captures the *implementation* deltas you need to know about that aren't in the plan.
+Phase 1 *foundation* (P1-A / P1-B / P1-C) **and** the bridge crate skeleton (P1-D) are merged to `main`. The remaining five Phase 1 deliverables (P1-E … P1-I) — runtime webhook handlers, the feedback loop, GitHub auth, integration tests, and the Phase 1 docs — have not been started. Pick up at **P1-E: webhook handlers + HMAC verify + SQLite idempotency**. The phase plan in `01-bridge-mvp.md` (§5 event flow, §9 test plan) is the source of truth; this STATUS doc captures the *implementation* deltas you need to know about that aren't in the plan.
 
 The single most important non-obvious decision made during the foundation work: **`CustomFieldValue` was collapsed from four variants (`Null` / `Number` / `Decimal` / `LongText` / `Url`) to three (`Null` / `Number` / `String`)** because serde's `#[serde(untagged)]` deserializer can't distinguish multiple JSON-string variants. See §5 below.
 
@@ -20,10 +20,12 @@ The single most important non-obvious decision made during the foundation work: 
 
 ### Commits
 
-| Commit | Title | Scope |
+| Commit / PR | Title | Scope |
 |---|---|---|
-| `82d2d2f` | Add v0.3 implementation plan docs (eight phase plans + index) | Docs only — `docs/v0.3-plan/00..07.md` |
-| `3f045e9` | Phase 1 foundation: workspace conversion + tracker extensions + H-1 fix | Code — P1-A / P1-B / P1-C |
+| `82d2d2f` (#2) | Add v0.3 implementation plan docs (eight phase plans + index) | Docs only — `docs/v0.3-plan/00..07.md` |
+| `3f045e9` (#2) | Phase 1 foundation: workspace conversion + tracker extensions + H-1 fix | Code — P1-A / P1-B / P1-C |
+| `d6cd7ca` | Add v0.3 milestone STATUS doc | Docs — this file |
+| `07c0381` (#3) | P1-D: sinfonia-bridge crate skeleton + BRIDGE.md config parser | Code — `crates/sinfonia-bridge/`, 16 unit tests |
 
 ### Phase 1 sub-task status
 
@@ -32,7 +34,7 @@ The single most important non-obvious decision made during the foundation work: 
 | **P1-A** workspace conversion + verify script | `01-bridge-mvp.md` §2 | ✅ merged | `crates/sinfonia/`, `crates/sinfonia-tracker/`, `scripts/verify-workspace-move.sh` |
 | **P1-B** tracker trait extensions + `custom_fields` module | §4, §11 | ✅ merged | 5 new bridge-write methods on `IssueTracker`; Linear impls; Jira returns `NotImplemented` (Phase 4 fills) |
 | **P1-C** `Issue.fields` + Linear marker-comment + template scope (H-1) | §4.2 | ✅ merged | `Issue.fields` populated by Linear fetch; `template.rs` pre-seeds well-known keys |
-| **P1-D** bridge binary skeleton + BRIDGE.md config parser | §2, §3 | 🟡 PR open | `crates/sinfonia-bridge` crate scaffolded; BRIDGE.md parser + 9 validation rules + 16 unit tests; axum router with `/health` + stub `POST /webhook`; `--check` flag |
+| **P1-D** bridge binary skeleton + BRIDGE.md config parser | §2, §3 | ✅ merged | `crates/sinfonia-bridge` crate scaffolded; BRIDGE.md parser + 9 validation rules + 16 unit tests; axum router with `/health` + stub `POST /webhook`; `--check` flag |
 | **P1-E** webhook handlers + HMAC verify + SQLite idempotency | §5, §9 | ⬜ not started | Next deliverable |
 | **P1-F** feedback loop + categorization + labels | §5, §6, §7 | ⬜ not started | |
 | **P1-G** GitHub auth (PAT + App) + `--self-test` | §8 | ⬜ not started | |
@@ -56,111 +58,79 @@ The single most important non-obvious decision made during the foundation work: 
 
 ---
 
-## 2. What's next: P1-D — bridge binary skeleton
+## 2. What's next: P1-E — webhook handlers + HMAC verify + SQLite idempotency
 
-The next concrete deliverable. Source of truth: `docs/v0.3-plan/01-bridge-mvp.md` §2 (target layout) and §3 (BRIDGE.md schema).
+The next concrete deliverable. Source of truth: `docs/v0.3-plan/01-bridge-mvp.md` §5 (event flow) and §9.1 (storage / verify unit tests).
 
-### Files to create (per the plan §2)
+### Scope
+
+Replace the P1-D `POST /webhook` stub with the real implementation. Three modules carry this:
+
+- `crates/sinfonia-bridge/src/webhook/verify.rs` (new). HMAC-SHA256 over the raw request body using `github.webhook_secret`. Constant-time compare via `subtle::ConstantTimeEq`. Reject missing / malformed `X-Hub-Signature-256` headers with 401. Returns the verified body bytes so the handler can JSON-decode without re-reading.
+- `crates/sinfonia-bridge/src/webhook/handlers.rs` (extend). Dispatch on the `X-GitHub-Event` header:
+  - `pull_request` → parse PR body+title, run `feedback_loop.pr_link_pattern` to extract a tracker identifier, upsert the `pr_ticket_map` row.
+  - `check_suite` (action=completed) → trigger CI evaluation.
+  - `workflow_run` (action=completed) → same as check_suite.
+  - Anything else → 200 + log at debug.
+  - In P1-E the handlers stop short of doing the actual ticket-state transition; that's P1-F. P1-E just persists the mapping and returns 202 with a "queued" body so the bridge has visibility into what's been received.
+- `crates/sinfonia-bridge/src/storage.rs` (new). `rusqlite::Connection` wrapped in `tokio::sync::Mutex`. Two tables:
+  - `processed_deliveries(delivery_id TEXT PRIMARY KEY, processed_at INTEGER)` — idempotency. Insert returns `OK(())` if new, `Err(Storage("duplicate"))` on conflict; the handler treats duplicate as a 200 no-op.
+  - `pr_ticket_map(repo TEXT, pr_number INTEGER, ticket_id TEXT, discovered_at INTEGER, PRIMARY KEY(repo, pr_number))` — PR↔ticket mapping. Upsert on `pull_request opened/synchronize`.
+- `crates/sinfonia-bridge/src/webhook/mod.rs` (extend `AppState`). Add `store: Arc<storage::Store>` and `tracker: Arc<dyn IssueTracker>` so handlers have what they need without re-reading config.
+
+Bridge's `main.rs::run()` must open the SQLite DB at `config.storage.state_db_path` before binding the listener — schema migration is a single `CREATE TABLE IF NOT EXISTS` per table.
+
+### Unit tests (per plan §9.1)
+
+| Module | Cases |
+|---|---|
+| `webhook::verify` | HMAC verify happy path; wrong-secret rejection; missing header rejection; tampered-body rejection |
+| `storage` | Insert idempotency key (new + duplicate); upsert pr_ticket_map (insert + update); restart-replay reads same row |
+
+### What's already prepared
+
+- The bridge `AppState` already holds `Arc<BridgeConfig>` — extend it, don't replace.
+- `octocrab`, `rusqlite`, `subtle`, `hmac`, `sha2` are already in `crates/sinfonia-bridge/Cargo.toml` from P1-D.
+- `BridgeConfig.github.webhook_secret`, `BridgeConfig.storage.state_db_path`, and `BridgeConfig.feedback_loop.pr_link_pattern` are all parsed + validated in P1-D.
+- The `IssueTracker` trait + `LinearTracker` implementations from P1-B already expose every read/write the bridge needs.
+- `crates/sinfonia-tracker/src/custom_fields.rs` has `encode_marker()` / `decode_marker()` for Linear's bot-owned comment convention.
+
+### Exit criteria for P1-E
+
+- `cargo check --workspace` compiles clean.
+- All P1-E unit tests pass (count: 4 + 3 = 7 new tests).
+- `cargo test --workspace` zero regressions over the post-P1-D baseline (67 tests).
+- `POST /webhook` with a correctly-signed `pull_request opened` payload upserts the `pr_ticket_map` row and returns 202.
+- `POST /webhook` with the same `delivery_id` twice is idempotent (second response is 200 with body indicating the duplicate, no DB mutation).
+- `POST /webhook` with a wrong HMAC returns 401 with no DB mutation.
+- Manual: send a recorded `check_suite completed` payload, observe a row in `processed_deliveries`, observe the handler log it without dispatching a transition (that's P1-F).
+
+### Files (still pending; P1-E owns the three marked with †)
 
 ```
 crates/sinfonia-bridge/
 ├── Cargo.toml
 └── src/
-    ├── main.rs                  # clap parsing, init_observability, run() entry
-    ├── lib.rs                   # pub mod tree + Result/Error
-    ├── config.rs                # BRIDGE.md front-matter parser + validation
+    ├── main.rs                  ← P1-D, extended in P1-E for storage init
+    ├── lib.rs                   ← P1-D
+    ├── config.rs                ← P1-D
     ├── webhook/
+    │   ├── mod.rs               ← P1-D, AppState extended in P1-E
+    │   ├── verify.rs            ← P1-E †  HMAC-SHA256 + subtle::ConstantTimeEq
+    │   └── handlers.rs          ← P1-D stub, full impl in P1-E †
+    ├── feedback/                ← P1-F
     │   ├── mod.rs
-    │   ├── verify.rs            # HMAC-SHA256 + subtle::ConstantTimeEq
-    │   └── handlers.rs          # axum routes (P1-E)
-    ├── feedback/
+    │   ├── categorize.rs
+    │   ├── transition.rs
+    │   └── attempts.rs
+    ├── labels.rs                ← P1-F
+    ├── github/                  ← P1-G
     │   ├── mod.rs
-    │   ├── categorize.rs        # check-name → category (P1-F)
-    │   ├── transition.rs        # state transition logic (P1-F)
-    │   └── attempts.rs          # counter read/increment (P1-F)
-    ├── labels.rs                # PR label management (P1-F)
-    ├── github/
-    │   ├── mod.rs
-    │   ├── auth.rs              # PAT vs App selector (P1-G)
-    │   └── client.rs            # octocrab wrapper (P1-G)
-    ├── storage.rs               # rusqlite idempotency (P1-E)
-    └── selftest.rs              # --self-test command (P1-G)
+    │   ├── auth.rs
+    │   └── client.rs
+    ├── storage.rs               ← P1-E †  rusqlite, idempotency + pr_ticket_map
+    └── selftest.rs              ← P1-G
 ```
-
-P1-D specifically only owns: `Cargo.toml`, `main.rs`, `lib.rs`, `config.rs`, an axum router with `/health`, and a stub for `webhook/handlers.rs` that returns 200 OK. The actual webhook logic is P1-E. The feedback/labels/auth/selftest pieces are later sub-tasks.
-
-### What's already prepared
-
-- Workspace `Cargo.toml` has `[workspace.dependencies]` with everything the bridge needs except its bridge-specific deps (`octocrab`, `rusqlite`, `subtle`, `hmac`, `sha2`, `jsonwebtoken`). Add those to **the bridge crate's** `Cargo.toml`, not the workspace, unless they end up shared.
-- `sinfonia-tracker` exports `IssueTracker`, `LinearTracker`, `JiraTracker`, `TrackerConfig`, `CustomFieldValue`, `CustomFieldSchema`, `FieldsMap`, `WELL_KNOWN_FIELDS`, and its own `Error` type. The bridge depends on this crate.
-- `crates/sinfonia-tracker/src/custom_fields.rs` has `encode_marker()` and `decode_marker()` plus the `MARKER` sentinel string; the bridge uses these to read/write the bot-owned Linear comment.
-
-### Add to `crates/sinfonia-bridge/Cargo.toml`
-
-```toml
-[package]
-name = "sinfonia-bridge"
-description = "CI feedback bridge for Sinfonia — translates GitHub webhook events into tracker state transitions."
-version.workspace      = true
-edition.workspace      = true
-rust-version.workspace = true
-license.workspace      = true
-authors.workspace      = true
-homepage.workspace     = true
-repository.workspace   = true
-
-[[bin]]
-name = "sinfonia-bridge"
-path = "src/main.rs"
-
-[lib]
-name = "sinfonia_bridge"
-path = "src/lib.rs"
-
-[dependencies]
-sinfonia-tracker = { workspace = true }
-
-tokio = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-reqwest = { workspace = true }
-clap = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-axum = { workspace = true }
-tower = { workspace = true }
-liquid = { workspace = true }      # for failure_comment_template
-anyhow = { workspace = true }
-thiserror = { workspace = true }
-chrono = { workspace = true }
-async-trait = { workspace = true }
-regex = { workspace = true }
-url = { workspace = true }
-shellexpand = { workspace = true }
-
-# Bridge-specific (not workspace deps unless re-used)
-octocrab = "0.39"                   # verify version at impl time
-rusqlite = { version = "0.31", features = ["bundled"] }
-subtle = "2.5"
-hmac = "0.12"
-sha2 = "0.10"
-
-[dev-dependencies]
-tempfile = { workspace = true }
-wiremock = "0.6"
-tokio = { version = "1.41", features = ["test-util", "macros", "rt-multi-thread"] }
-```
-
-Then add `"crates/sinfonia-bridge"` to the root `Cargo.toml` `[workspace] members`.
-
-### Exit criteria for P1-D
-
-- `cargo check -p sinfonia-bridge` compiles clean.
-- `sinfonia-bridge BRIDGE.example.md --check` parses a sample config and exits 0.
-- All schema validation rules in `01-bridge-mvp.md` §3 have a unit test (one test per rule).
-- The skeleton axum server starts on the configured `server.port` and serves `GET /health` returning `{"status":"ok"}`.
-- `cargo test --workspace` shows the existing 51 tests + however many new bridge unit tests; zero regressions.
 
 ---
 
@@ -281,11 +251,11 @@ The script exists because the workspace-move commit needed a verifiable "logic u
 ## 6. Resume protocol — first commands a fresh agent should run
 
 ```bash
-# 1. Land on a clean main with all foundation work merged.
+# 1. Land on a clean main with all merged work.
 git checkout main
 git pull --ff-only origin main
 
-# 2. Confirm test baseline (should be 51 passing tests, zero failures).
+# 2. Confirm test baseline (should be 67 passing tests, zero failures).
 cargo test --workspace --no-fail-fast 2>&1 | grep -E "test result"
 
 # 3. Read the rolling status (this file) and the Phase 1 plan.
@@ -294,18 +264,18 @@ cat docs/v0.3-plan/01-bridge-mvp.md
 
 # 4. Confirm the working tree shape matches §3 above.
 ls crates/
+ls crates/sinfonia-bridge/src/
 ls crates/sinfonia-tracker/src/
-ls crates/sinfonia/src/
 
-# 5. Start a P1-D branch off main.
-git checkout -b v0.3-phase-1-bridge-skeleton
+# 5. Start a P1-E branch off main.
+git checkout -b v0.3-phase-1-webhook-storage
 
 # 6. Set up Phase 1 sub-task tracking. The original task IDs from the
 #    completed-context conversation are not preserved across context
-#    clears — TaskCreate a fresh set for P1-D..P1-I per the table in §1.
+#    clears — TaskCreate a fresh set for P1-E..P1-I per the table in §1.
 ```
 
-The previous agent had nine TaskCreate entries (P1-A through P1-I); they completed three (P1-A/B/C). On resume, recreate the remaining six tasks fresh.
+Previous sessions completed P1-A / P1-B / P1-C / P1-D. Five sub-tasks remain (P1-E … P1-I); recreate those as fresh TaskCreate entries.
 
 ---
 
@@ -339,22 +309,23 @@ For the next agent's first message to itself when context is fresh:
 ```
 Working directory: /Users/brettlee/work/sinfonia
 Current branch: main (assumed; verify with `git branch --show-current`)
-Last merged work: Phase 1 foundation (commits 82d2d2f + 3f045e9)
+Last merged work: P1-D bridge skeleton (PR #3, commit 07c0381)
+Earlier merges: Phase 1 foundation (PR #2: commits 82d2d2f + 3f045e9)
 
 Read these in this order:
   1. docs/v0.3-plan/STATUS.md   (this file — rolling milestone status)
   2. docs/v0.3-plan/00-overview.md   (milestone index, phase deps)
-  3. docs/v0.3-plan/01-bridge-mvp.md   (Phase 1 plan; the next deliverable is P1-D in §2)
+  3. docs/v0.3-plan/01-bridge-mvp.md   (Phase 1 plan; next deliverable is P1-E in §5 / §9)
 
 Source of truth for the underlying change set:
   /Users/brettlee/Downloads/sinfonia-change-proposal.md
 
 Workspace shape:
-  crates/sinfonia/         — the daemon (existing code)
+  crates/sinfonia/         — the daemon
   crates/sinfonia-tracker/ — shared tracker (Linear + Jira adapters, custom_fields)
-  crates/sinfonia-bridge/  — does not exist yet; P1-D creates it
+  crates/sinfonia-bridge/  — bridge binary skeleton (config parser + /health + stub /webhook)
 
-Test baseline: 51 passing, 0 failures. Maintain that.
+Test baseline: 67 passing, 0 failures. Maintain that.
 ```
 
 ---
