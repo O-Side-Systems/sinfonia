@@ -129,6 +129,7 @@ mod tests {
             children: vec![],
             created_at: Some(chrono::Utc.timestamp_opt(created, 0).unwrap()),
             updated_at: None,
+            fields: Default::default(),
         }
     }
 
