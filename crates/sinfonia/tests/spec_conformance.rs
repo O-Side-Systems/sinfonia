@@ -79,6 +79,7 @@ fn dispatch_sort_priority_then_creation() {
         children: vec![],
         created_at: Some(chrono::Utc.timestamp_opt(created, 0).unwrap()),
         updated_at: None,
+        fields: Default::default(),
     };
     let v = vec![
         make("z", Some(3), 1),
@@ -247,5 +248,6 @@ fn sample_issue(id: &str, state: &str, priority: Option<i64>) -> Issue {
         children: vec![],
         created_at: None,
         updated_at: None,
+        fields: Default::default(),
     }
 }

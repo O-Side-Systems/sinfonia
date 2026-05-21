@@ -1,7 +1,22 @@
+//! Top-level Sinfonia error type.
+//!
+//! As of v0.3 the tracker-specific error variants live in the shared
+//! [`sinfonia_tracker`] crate. They reach Sinfonia code through the
+//! [`Error::Tracker`] variant, which carries `#[from]` so any `?` on a
+//! `sinfonia_tracker::Result<T>` auto-converts.
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    // --- Tracker ---
+    /// Wraps any tracker-layer error from `sinfonia-tracker` (Linear / Jira
+    /// HTTP failures, missing tracker config, unsupported tracker kind, …).
+    /// `#[from]` is what makes `Ok(t.fetch_candidate_issues().await?)`
+    /// transparently usable from a `Result<_, sinfonia::Error>` context.
+    #[error(transparent)]
+    Tracker(#[from] sinfonia_tracker::Error),
+
     // --- Workflow / config (§5.5, §6) ---
     #[error("missing_workflow_file: {0}")]
     MissingWorkflowFile(String),
@@ -15,30 +30,6 @@ pub enum Error {
     TemplateRenderError(String),
     #[error("config_invalid: {0}")]
     ConfigInvalid(String),
-
-    // --- Tracker (§11.4) ---
-    #[error("unsupported_tracker_kind: {0}")]
-    UnsupportedTrackerKind(String),
-    #[error("missing_tracker_api_key")]
-    MissingTrackerApiKey,
-    #[error("missing_tracker_project_slug")]
-    MissingTrackerProjectSlug,
-    #[error("linear_api_request: {0}")]
-    LinearApiRequest(String),
-    #[error("linear_api_status: {0}")]
-    LinearApiStatus(String),
-    #[error("linear_graphql_errors: {0}")]
-    LinearGraphqlErrors(String),
-    #[error("linear_unknown_payload: {0}")]
-    LinearUnknownPayload(String),
-    #[error("linear_missing_end_cursor")]
-    LinearMissingEndCursor,
-    #[error("jira_api_request: {0}")]
-    JiraApiRequest(String),
-    #[error("jira_api_status: {0}")]
-    JiraApiStatus(String),
-    #[error("jira_unknown_payload: {0}")]
-    JiraUnknownPayload(String),
 
     // --- Workspace (§9) ---
     #[error("workspace_create: {0}")]

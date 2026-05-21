@@ -1,34 +1,25 @@
-[package]
-name = "sinfonia"
-version = "0.1.0"
+[workspace]
+resolver = "2"
+members = [
+    "crates/sinfonia",
+    "crates/sinfonia-tracker",
+]
+
+[workspace.package]
+version = "0.3.0-alpha.1"
 edition = "2021"
 rust-version = "1.78"
-description = "A Rust implementation of the Symphony orchestrator spec: polls an issue tracker (Linear or Jira), isolates each issue in a per-issue workspace, and runs a coding-agent session against OpenAI / Anthropic / Google / Ollama or the Claude Code / Codex CLIs."
 license = "Apache-2.0"
 authors = ["The Sinfonia Contributors"]
-readme = "README.md"
 homepage = "https://github.com/O-Side-Systems/sinfonia"
 repository = "https://github.com/O-Side-Systems/sinfonia"
 documentation = "https://docs.rs/sinfonia"
-keywords = ["agent", "automation", "linear", "jira", "orchestrator"]
-categories = ["command-line-utilities", "development-tools"]
-exclude = [
-    "/.github/",
-    "/target/",
-    "/.idea/",
-    "/.vscode/",
-    "/WORKFLOW.md",
-]
 
-[[bin]]
-name = "sinfonia"
-path = "src/main.rs"
+[workspace.dependencies]
+# Cross-crate Sinfonia members.
+sinfonia-tracker = { path = "crates/sinfonia-tracker", version = "0.3.0-alpha.1" }
 
-[lib]
-name = "sinfonia"
-path = "src/lib.rs"
-
-[dependencies]
+# Async runtime + HTTP + serialization shared across crates.
 tokio = { version = "1.41", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -54,9 +45,8 @@ parking_lot = "0.12"
 url = "2"
 once_cell = "1"
 
-[dev-dependencies]
+# Dev-only.
 tempfile = "3"
-tokio = { version = "1.41", features = ["test-util", "macros", "rt-multi-thread"] }
 
 [profile.release]
 opt-level = 3

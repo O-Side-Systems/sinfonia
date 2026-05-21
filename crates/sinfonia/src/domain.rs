@@ -1,65 +1,20 @@
-//! Core domain model (spec §4).
+//! Core domain model (spec §4) — orchestrator-side types.
+//!
+//! As of v0.3 the *tracker-facing* types (`Issue`, `IssueState`,
+//! `BlockerRef`, `ChildRef`) live in the shared [`sinfonia_tracker`] crate
+//! so the v0.3 `sinfonia-bridge` companion daemon can consume them too.
+//! They're re-exported here so existing `crate::domain::Issue` call sites
+//! keep working unchanged.
+//!
+//! Orchestrator-only state (live sessions, retry entries, the in-memory
+//! state map, token totals) stays in this module — none of it is meaningful
+//! outside the polling daemon.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockerRef {
-    pub id: Option<String>,
-    pub identifier: Option<String>,
-    pub state: Option<String>,
-}
-
-/// Lightweight child-issue record used to gate parent eligibility.
-/// `state` is the raw tracker state name (matched case-insensitively against
-/// `terminal_states` during dispatch).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChildRef {
-    pub id: Option<String>,
-    pub identifier: Option<String>,
-    pub state: String,
-}
-
-/// Normalized issue record. §4.1.1.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Issue {
-    pub id: String,
-    pub identifier: String,
-    pub title: String,
-    pub description: Option<String>,
-    pub priority: Option<i64>,
-    pub state: String,
-    pub branch_name: Option<String>,
-    pub url: Option<String>,
-    #[serde(default)]
-    pub labels: Vec<String>,
-    #[serde(default)]
-    pub blocked_by: Vec<BlockerRef>,
-    /// Sub-issues (Linear `children`, Jira classic `subtasks`). Used to gate
-    /// parent execution until all children reach a `terminal_states` value —
-    /// mirroring the way a human works the leaves of an epic before the epic
-    /// itself.
-    #[serde(default)]
-    pub children: Vec<ChildRef>,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
-}
-
-impl Issue {
-    /// Normalized state for comparison (§4.2).
-    pub fn normalized_state(&self) -> String {
-        self.state.to_lowercase()
-    }
-}
-
-/// Lighter form returned by state-only refresh queries.
-#[derive(Debug, Clone)]
-pub struct IssueState {
-    pub id: String,
-    pub identifier: String,
-    pub state: String,
-}
+pub use sinfonia_tracker::{BlockerRef, ChildRef, Issue, IssueState};
 
 /// Live session metadata while a coding-agent subprocess is running. §4.1.6.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

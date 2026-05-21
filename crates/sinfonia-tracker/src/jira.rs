@@ -8,10 +8,10 @@
 //! Authentication: HTTP Basic with `<email>:<api_token>` (Atlassian Cloud) when
 //! `tracker.email` is set, otherwise `Bearer <api_token>` (self-hosted PAT).
 
-use crate::config::ServiceConfig;
-use crate::domain::{BlockerRef, Issue, IssueState};
-use crate::errors::{Error, Result};
-use crate::tracker::IssueTracker;
+use crate::config::TrackerConfig;
+use crate::error::{Error, Result};
+use crate::types::{BlockerRef, Issue, IssueState};
+use crate::IssueTracker;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -31,29 +31,33 @@ pub struct JiraTracker {
 }
 
 impl JiraTracker {
-    pub fn new(cfg: &ServiceConfig) -> Result<Self> {
+    /// Construct a Jira adapter from a resolved [`TrackerConfig`].
+    ///
+    /// `endpoint` is the site base URL (e.g. `https://acme.atlassian.net`).
+    /// When `jira_email` is set on the config, Basic auth is used
+    /// (email + API token); otherwise the `api_key` is treated as a Bearer
+    /// token (Jira Server / Data Center PAT mode).
+    pub fn new(cfg: &TrackerConfig) -> Result<Self> {
         let api_key = cfg
-            .tracker
             .api_key
             .clone()
             .ok_or(Error::MissingTrackerApiKey)?;
         let project_key = cfg
-            .tracker
             .project_slug
             .clone()
             .ok_or(Error::MissingTrackerProjectSlug)?;
 
         // Endpoint is the base URL of the Jira site, e.g. https://acme.atlassian.net.
-        if cfg.tracker.endpoint.is_empty() {
+        if cfg.endpoint.is_empty() {
             return Err(Error::ConfigInvalid(
                 "tracker.endpoint is required for Jira (e.g. https://acme.atlassian.net)".into(),
             ));
         }
-        let base_url = Url::parse(&cfg.tracker.endpoint)
+        let base_url = Url::parse(&cfg.endpoint)
             .map_err(|e| Error::ConfigInvalid(format!("invalid tracker.endpoint: {e}")))?;
 
         let mut headers = HeaderMap::new();
-        let auth_value = if let Some(email) = cfg.tracker.jira_email.as_deref() {
+        let auth_value = if let Some(email) = cfg.jira_email.as_deref() {
             let raw = format!("{}:{}", email, api_key);
             format!("Basic {}", base64_encode(raw.as_bytes()))
         } else {
@@ -77,8 +81,8 @@ impl JiraTracker {
             client,
             base_url,
             project_key,
-            active_states: cfg.tracker.active_states.clone(),
-            terminal_states: cfg.tracker.terminal_states.clone(),
+            active_states: cfg.active_states.clone(),
+            terminal_states: cfg.terminal_states.clone(),
         })
     }
 
@@ -309,7 +313,7 @@ fn normalize_jira(r: &Json, terminal_states: &[String]) -> Result<Issue> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .map(|c| crate::domain::ChildRef {
+                .map(|c| crate::types::ChildRef {
                     id: c.get("id").and_then(|v| v.as_str()).map(str::to_string),
                     identifier: c
                         .get("key")
@@ -330,6 +334,8 @@ fn normalize_jira(r: &Json, terminal_states: &[String]) -> Result<Issue> {
     let created_at = parse_ts(fields.get("created"));
     let updated_at = parse_ts(fields.get("updated"));
 
+    // `fields` stays empty on Jira until Phase 4 wires real customfield_NNNNN
+    // reads. Templates that reference these MUST use a `| default:` filter.
     Ok(Issue {
         id,
         identifier,
@@ -344,6 +350,7 @@ fn normalize_jira(r: &Json, terminal_states: &[String]) -> Result<Issue> {
         children,
         created_at,
         updated_at,
+        fields: Default::default(),
     })
 }
 

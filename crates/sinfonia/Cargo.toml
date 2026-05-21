@@ -1,0 +1,62 @@
+[package]
+name = "sinfonia"
+description = "A Rust implementation of the Symphony orchestrator spec: polls an issue tracker (Linear or Jira), isolates each issue in a per-issue workspace, and runs a coding-agent session against OpenAI / Anthropic / Google / Ollama or the Claude Code / Codex CLIs."
+readme = "../../README.md"
+keywords = ["agent", "automation", "linear", "jira", "orchestrator"]
+categories = ["command-line-utilities", "development-tools"]
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+homepage.workspace     = true
+repository.workspace   = true
+documentation.workspace = true
+
+exclude = [
+    "/.github/",
+    "/target/",
+    "/.idea/",
+    "/.vscode/",
+    "/WORKFLOW.md",
+]
+
+[[bin]]
+name = "sinfonia"
+path = "src/main.rs"
+
+[lib]
+name = "sinfonia"
+path = "src/lib.rs"
+
+[dependencies]
+sinfonia-tracker = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+liquid = { workspace = true }
+notify = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+regex = { workspace = true }
+dirs = { workspace = true }
+shellexpand = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }
+url = { workspace = true }
+once_cell = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { version = "1.41", features = ["test-util", "macros", "rt-multi-thread"] }

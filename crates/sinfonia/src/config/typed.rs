@@ -6,34 +6,11 @@ use serde_json::Value as Json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TrackerKind {
-    Linear,
-    Jira,
-}
-
-impl TrackerKind {
-    pub fn parse(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "linear" => Ok(TrackerKind::Linear),
-            "jira" => Ok(TrackerKind::Jira),
-            other => Err(Error::UnsupportedTrackerKind(other.to_string())),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TrackerConfig {
-    pub kind: TrackerKind,
-    pub endpoint: String,
-    pub api_key: Option<String>,
-    /// `project_slug` for Linear; project key (e.g. "ABC") for Jira.
-    pub project_slug: Option<String>,
-    pub active_states: Vec<String>,
-    pub terminal_states: Vec<String>,
-    /// Jira-only: account email used with the API token for Basic auth.
-    pub jira_email: Option<String>,
-}
+// As of v0.3 the tracker configuration types live in the shared
+// `sinfonia-tracker` crate so the bridge can consume them. Re-exported here
+// so existing `crate::config::TrackerKind` and `crate::config::TrackerConfig`
+// call sites in this codebase keep compiling without per-file rewrites.
+pub use sinfonia_tracker::{TrackerConfig, TrackerKind};
 
 #[derive(Debug, Clone)]
 pub struct PollingConfig {
@@ -272,10 +249,10 @@ impl ServiceConfig {
     /// Preflight validation (§6.3).
     pub fn validate_for_dispatch(&self) -> Result<()> {
         if self.tracker.api_key.as_deref().unwrap_or("").is_empty() {
-            return Err(Error::MissingTrackerApiKey);
+            return Err(sinfonia_tracker::Error::MissingTrackerApiKey.into());
         }
         if self.tracker.project_slug.as_deref().unwrap_or("").is_empty() {
-            return Err(Error::MissingTrackerProjectSlug);
+            return Err(sinfonia_tracker::Error::MissingTrackerProjectSlug.into());
         }
         // CLI-based providers need a non-empty command line.
         if matches!(
@@ -306,7 +283,9 @@ fn parse_tracker(config: &Json) -> Result<TrackerConfig> {
     let kind_str = t
         .get("kind")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| Error::UnsupportedTrackerKind("(missing)".to_string()))?;
+        .ok_or_else(|| {
+            sinfonia_tracker::Error::UnsupportedTrackerKind("(missing)".to_string())
+        })?;
     let kind = TrackerKind::parse(kind_str)?;
 
     let default_endpoint = match kind {
@@ -752,7 +731,10 @@ mod tests {
         )
         .unwrap();
         let err = ServiceConfig::from_workflow(&def).unwrap_err();
-        matches!(err, Error::UnsupportedTrackerKind(_));
+        matches!(
+            err,
+            Error::Tracker(sinfonia_tracker::Error::UnsupportedTrackerKind(_))
+        );
     }
 
     #[test]

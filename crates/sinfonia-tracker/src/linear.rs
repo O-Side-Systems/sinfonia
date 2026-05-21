@@ -1,9 +1,10 @@
 //! Linear GraphQL adapter (spec §11.2).
 
-use crate::config::ServiceConfig;
-use crate::domain::{BlockerRef, Issue, IssueState};
-use crate::errors::{Error, Result};
-use crate::tracker::IssueTracker;
+use crate::config::TrackerConfig;
+use crate::custom_fields::{self, CustomFieldSchema, CustomFieldValue, MarkerEnvelope};
+use crate::error::{Error, Result};
+use crate::types::{BlockerRef, Issue, IssueState};
+use crate::IssueTracker;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Client;
@@ -32,7 +33,19 @@ const ISSUE_FRAGMENT: &str = r#"
   children(first: 100) {
     nodes { id identifier state { name } }
   }
+  comments(first: 100) {
+    nodes { body }
+  }
 "#;
+// Why `comments(first: 100)` here, in the candidate-fetch fragment? Because
+// Phase 1's bridge stores per-ticket state in a single bot-owned marker
+// comment, and the agent prompt template reads it via `{{ issue.fields.* }}`.
+// Including it in the same GraphQL hop avoids an N+1 round-trip per active
+// issue. The 100-comment cap is fine in practice — the marker is created at
+// the first bridge interaction and rewritten in place, so it'll always be
+// among the first ~100 unless humans + the bot have generated more than that
+// in a single ticket lifecycle. Document this in `docs/SPEC.md` §11.6 so
+// the limit is part of the contract, not an implementation detail.
 
 pub struct LinearTracker {
     client: Client,
@@ -43,14 +56,16 @@ pub struct LinearTracker {
 }
 
 impl LinearTracker {
-    pub fn new(cfg: &ServiceConfig) -> Result<Self> {
+    /// Construct a Linear adapter from a resolved [`TrackerConfig`].
+    ///
+    /// Errors with `MissingTrackerApiKey` / `MissingTrackerProjectSlug` if
+    /// the corresponding fields aren't populated.
+    pub fn new(cfg: &TrackerConfig) -> Result<Self> {
         let api_key = cfg
-            .tracker
             .api_key
             .clone()
             .ok_or(Error::MissingTrackerApiKey)?;
         let project_slug = cfg
-            .tracker
             .project_slug
             .clone()
             .ok_or(Error::MissingTrackerProjectSlug)?;
@@ -60,10 +75,10 @@ impl LinearTracker {
             .map_err(|e| Error::LinearApiRequest(e.to_string()))?;
         Ok(LinearTracker {
             client,
-            endpoint: cfg.tracker.endpoint.clone(),
+            endpoint: cfg.endpoint.clone(),
             api_key,
             project_slug,
-            active_states: cfg.tracker.active_states.clone(),
+            active_states: cfg.active_states.clone(),
         })
     }
 
@@ -156,6 +171,129 @@ impl LinearTracker {
         }
         Ok(out)
     }
+
+    // ---- Bridge-write helpers (v0.3 spec §11.6) -----------------------------
+    //
+    // Linear doesn't have native custom fields the way Jira does. The bridge
+    // stores all of its per-ticket state inside a single bot-owned comment on
+    // the issue, with the body shaped as `{"sinfonia_bridge_state_v1": {…}}`
+    // (see `custom_fields` module docs). The methods below own the load /
+    // mutate / store cycle on that comment.
+
+    /// Fetch the bot-owned marker comment (if it exists) along with its
+    /// Linear comment ID so we can `commentUpdate` instead of creating
+    /// a duplicate. Returns `Ok((None, None))` when the issue exists but
+    /// has no marker comment yet.
+    async fn load_marker_comment(
+        &self,
+        issue_id: &str,
+    ) -> Result<(Option<String>, Option<MarkerEnvelope>)> {
+        let query = r#"
+          query($id: String!) {
+            issue(id: $id) {
+              id
+              comments(first: 100) {
+                nodes { id body }
+              }
+            }
+          }
+        "#;
+        let resp = self.post(query, json!({ "id": issue_id })).await?;
+        let nodes = resp
+            .get("data")
+            .and_then(|d| d.get("issue"))
+            .and_then(|i| i.get("comments"))
+            .and_then(|c| c.get("nodes"))
+            .and_then(|n| n.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for n in nodes {
+            let body = n.get("body").and_then(|b| b.as_str()).unwrap_or("");
+            if let Some(env) = custom_fields::decode_marker(body) {
+                let id = n
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                return Ok((id, Some(env)));
+            }
+        }
+        Ok((None, None))
+    }
+
+    /// Idempotent upsert of the marker comment. Creates it if absent,
+    /// updates the existing one otherwise.
+    async fn store_marker_comment(
+        &self,
+        issue_id: &str,
+        envelope: &MarkerEnvelope,
+        existing_comment_id: Option<&str>,
+    ) -> Result<()> {
+        let body = custom_fields::encode_marker(envelope);
+        match existing_comment_id {
+            Some(cid) => {
+                let m = r#"
+                  mutation($id: String!, $body: String!) {
+                    commentUpdate(id: $id, input: { body: $body }) { success }
+                  }
+                "#;
+                self.post(m, json!({ "id": cid, "body": body })).await?;
+            }
+            None => {
+                let m = r#"
+                  mutation($issueId: String!, $body: String!) {
+                    commentCreate(input: { issueId: $issueId, body: $body }) { success }
+                  }
+                "#;
+                self.post(m, json!({ "issueId": issue_id, "body": body }))
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Look up the workflow-state ID for a given state name on the team that
+    /// owns this issue. Linear `issueUpdate` needs the state ID; users
+    /// configure state *names*. Two GraphQL hops in the worst case (no
+    /// cache in Phase 1 — see `docs/v0.3-plan/01-bridge-mvp.md` §11 q4).
+    async fn resolve_state_id(&self, issue_id: &str, state_name: &str) -> Result<String> {
+        let query = r#"
+          query($id: String!) {
+            issue(id: $id) {
+              id
+              team { id states(first: 100) { nodes { id name } } }
+            }
+          }
+        "#;
+        let resp = self.post(query, json!({ "id": issue_id })).await?;
+        let nodes = resp
+            .get("data")
+            .and_then(|d| d.get("issue"))
+            .and_then(|i| i.get("team"))
+            .and_then(|t| t.get("states"))
+            .and_then(|s| s.get("nodes"))
+            .and_then(|n| n.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for n in nodes {
+            let name = n.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if name.eq_ignore_ascii_case(state_name) {
+                return n
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| {
+                        Error::LinearUnknownPayload(format!(
+                            "state '{}' has no id",
+                            state_name
+                        ))
+                    });
+            }
+        }
+        Err(Error::Other(format!(
+            "linear: no workflow state named '{}' on the team of issue {}",
+            state_name, issue_id
+        )))
+    }
 }
 
 #[async_trait]
@@ -228,6 +366,61 @@ impl IssueTracker for LinearTracker {
             .await?;
         debug!(target: "tracker.linear", "raw graphql ok");
         Ok(resp)
+    }
+
+    // ---- Bridge-only writes (spec §11.6, v0.3) -----------------------------
+
+    async fn transition_issue(&self, id: &str, target_state: &str) -> Result<()> {
+        let state_id = self.resolve_state_id(id, target_state).await?;
+        let m = r#"
+          mutation($id: String!, $stateId: String!) {
+            issueUpdate(id: $id, input: { stateId: $stateId }) {
+              success issue { id state { name } }
+            }
+          }
+        "#;
+        self.post(m, json!({ "id": id, "stateId": state_id })).await?;
+        debug!(target: "tracker.linear", issue_id=%id, target=%target_state, "transition ok");
+        Ok(())
+    }
+
+    async fn read_custom_field(&self, id: &str, key: &str) -> Result<CustomFieldValue> {
+        let (_, env) = self.load_marker_comment(id).await?;
+        Ok(env
+            .and_then(|e| e.fields.get(key).cloned())
+            .unwrap_or(CustomFieldValue::Null))
+    }
+
+    async fn write_custom_field(
+        &self,
+        id: &str,
+        key: &str,
+        value: CustomFieldValue,
+    ) -> Result<()> {
+        let (cid, env) = self.load_marker_comment(id).await?;
+        let mut env = env.unwrap_or_default();
+        if value.is_null() {
+            env.fields.remove(key);
+        } else {
+            env.fields.insert(key.to_string(), value);
+        }
+        self.store_marker_comment(id, &env, cid.as_deref()).await
+    }
+
+    async fn ensure_custom_field(&self, _schema: &CustomFieldSchema) -> Result<()> {
+        // No-op on Linear: the marker comment carries the schema implicitly.
+        // Jira's implementation in Phase 4 creates a real customfield_NNNNN.
+        Ok(())
+    }
+
+    async fn post_comment(&self, id: &str, body: &str) -> Result<()> {
+        let m = r#"
+          mutation($issueId: String!, $body: String!) {
+            commentCreate(input: { issueId: $issueId, body: $body }) { success }
+          }
+        "#;
+        self.post(m, json!({ "issueId": id, "body": body })).await?;
+        Ok(())
     }
 }
 
@@ -323,7 +516,7 @@ fn normalize_full(n: &Json) -> Result<Issue> {
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .map(|c| crate::domain::ChildRef {
+                .map(|c| crate::types::ChildRef {
                     id: c.get("id").and_then(|v| v.as_str()).map(str::to_string),
                     identifier: c
                         .get("identifier")
@@ -343,6 +536,23 @@ fn normalize_full(n: &Json) -> Result<Issue> {
     let created_at = parse_ts(n.get("createdAt"));
     let updated_at = parse_ts(n.get("updatedAt"));
 
+    // Pull bridge-written custom fields out of the marker comment, if any
+    // (spec §11.6, H-1 in `docs/v0.3-plan/01-bridge-mvp.md` §4.2). The
+    // marker is the first comment whose body decodes as a
+    // `sinfonia_bridge_state_v1` envelope. We scan up to 100 comments;
+    // see `ISSUE_FRAGMENT` for the rationale.
+    let fields = n
+        .get("comments")
+        .and_then(|c| c.get("nodes"))
+        .and_then(|v| v.as_array())
+        .and_then(|arr| {
+            arr.iter()
+                .filter_map(|c| c.get("body").and_then(|b| b.as_str()))
+                .find_map(crate::custom_fields::decode_marker)
+        })
+        .map(|env| env.fields)
+        .unwrap_or_default();
+
     Ok(Issue {
         id,
         identifier,
@@ -357,6 +567,7 @@ fn normalize_full(n: &Json) -> Result<Issue> {
         children,
         created_at,
         updated_at,
+        fields,
     })
 }
 
