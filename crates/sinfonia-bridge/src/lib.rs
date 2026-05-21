@@ -35,9 +35,11 @@
 //! they own genuinely different concerns.
 
 pub mod config;
+pub mod storage;
 pub mod webhook;
 
 pub use config::BridgeConfig;
+pub use storage::Store;
 
 use thiserror::Error;
 
