@@ -11,9 +11,12 @@
 
 use clap::Parser;
 use sinfonia_bridge::config::read_bridge_file;
+use sinfonia_bridge::storage::Store;
 use sinfonia_bridge::webhook::{router, AppState};
+use sinfonia_tracker::{IssueTracker, LinearTracker, TrackerKind};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -73,7 +76,29 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         .parse()
         .map_err(|e| format!("invalid bind/port: {e}"))?;
 
-    let state = AppState::new(cfg);
+    // Open (or create) the bridge state DB before binding the listener.
+    // A failure here is fatal — no point listening if we can't record
+    // delivery IDs.
+    let store = Store::open(&cfg.storage.state_db_path).await?;
+    info!(
+        target: "main",
+        db = %cfg.storage.state_db_path.display(),
+        "bridge state DB opened"
+    );
+
+    // Construct the tracker adapter once and share it as a trait object
+    // so future P1-F handlers can do tracker writes without per-request
+    // setup. Phase 1 only supports Linear (Jira deferred to Phase 4 —
+    // BridgeConfig validation already rejects `kind: jira`).
+    let tracker_cfg = cfg.tracker.to_tracker_config();
+    let tracker: Arc<dyn IssueTracker> = match tracker_cfg.kind {
+        TrackerKind::Linear => Arc::new(LinearTracker::new(&tracker_cfg)?),
+        TrackerKind::Jira => {
+            return Err("BRIDGE.md tracker.kind 'jira' not supported until Phase 4".into());
+        }
+    };
+
+    let state = AppState::new(cfg, store, tracker);
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
