@@ -35,10 +35,15 @@
 //! they own genuinely different concerns.
 
 pub mod config;
+pub mod feedback;
+pub mod github;
+pub mod labels;
 pub mod storage;
 pub mod webhook;
 
 pub use config::BridgeConfig;
+pub use github::{GhOps, OctocrabGhOps};
+pub use labels::{BridgeLabel, LabelManager};
 pub use storage::Store;
 
 use thiserror::Error;
