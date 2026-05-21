@@ -1209,6 +1209,223 @@ Symphony does not require first-class tracker write APIs in the orchestrator.
 - If the `linear_graphql` client-side tool extension is implemented, it is still part of the agent
   toolchain rather than orchestrator business logic.
 
+### 11.6 Bridge Service Extension Contract (Draft)
+
+> **Status:** *Draft.* This section describes the OPTIONAL bridge-service extension introduced in
+> Sinfonia v0.3 and slated for finalization in a future spec revision. Implementations MAY follow
+> the contract below; conformance is not required by §11.1–§11.5.
+
+#### 11.6.1 Definition and Trust Boundary
+
+A **bridge service** is an OPTIONAL out-of-band component that owns interpretation of CI results,
+maintenance of per-ticket attempt counters, and the mapping between pull requests and tracker
+issues. The bridge is the *only* writer of the `sinfonia_*` custom-field namespace defined below
+(§11.6.3). The orchestrator (Sinfonia, the polling daemon described in §3–§10) remains a tracker
+*reader* and a coding-agent runner; it MUST NOT mutate `sinfonia_*` fields directly.
+
+This separation enables three properties:
+
+1. The orchestrator stays trust-boundary-equivalent to §15.1 — it does not need any GitHub
+   credentials.
+2. The bridge can be operated by a different team / namespace / cluster from the orchestrator.
+3. Tickets the bridge has never touched render correctly in agent prompts that reference
+   `sinfonia_*` fields, because the orchestrator pre-seeds the field map with nulls (§11.6.4).
+
+#### 11.6.2 Custom-Field Marker Envelope
+
+Conforming bridges MUST persist their per-ticket state inside a single versioned envelope
+addressed by the sentinel key `sinfonia_bridge_state_v1`. The envelope is a JSON object containing
+all `sinfonia_*` fields the bridge owns for that ticket:
+
+```json
+{
+  "sinfonia_bridge_state_v1": {
+    "sinfonia_attempt_count": 3,
+    "sinfonia_last_ci_failure": "...last 50 lines of the most-failed check...",
+    "sinfonia_failure_category": "e2e",
+    "sinfonia_tokens_consumed": 412053,
+    "sinfonia_cost_consumed_usd": "8.23"
+  }
+}
+```
+
+Storage mechanism:
+
+- **Linear** — the envelope is stored as a single bot-owned comment on the ticket, serialized to
+  JSON. The bridge reads, mutates, and rewrites the *whole* comment on every update; partial
+  updates are NOT permitted. This sidesteps Linear's lack of a stable custom-field surface (see
+  §11.6.7).
+- **Jira** — the envelope is stored as real custom fields keyed by name. The bridge MUST call
+  `ensure_custom_field` for each `sinfonia_*` key at startup. (Jira bridge writes are deferred to a
+  later milestone in Sinfonia's reference implementation.)
+- **Other trackers** — implementations choose a single-writer storage mechanism that round-trips
+  the entire envelope atomically. Splitting the envelope across multiple storage primitives is
+  NOT RECOMMENDED.
+
+The `_v1` suffix is reserved for future schema migration. A bridge that introduces an incompatible
+field-shape change MUST migrate to `sinfonia_bridge_state_v2` and leave the v1 envelope readable
+for one release cycle.
+
+#### 11.6.3 Field Shapes
+
+Each `sinfonia_*` field has a JSON-primitive shape (see also Sinfonia's reference
+`CustomFieldValue` enum in `crates/sinfonia-tracker/src/custom_fields.rs`):
+
+- `Null` — JSON `null`. Means "field is unset."
+- `Number` — JSON number. Used for integer counters like `sinfonia_attempt_count`.
+- `String` — JSON string. Used for everything else: failure-log text, monetary values stringified
+  to preserve precision, URLs, category names.
+
+Implementations MUST serialize the three shapes as JSON `null`, JSON number, and JSON string
+respectively — *not* as tagged variant objects like `{"Number": 3}`. (The reference implementation
+uses a hand-written `Serialize` impl for this reason; the equivalent for `serde`-derived encoders
+is `#[serde(untagged)]`.) Tagged serialization breaks the Liquid prompt rendering path described
+in §11.6.4.
+
+Monetary values (e.g. `sinfonia_cost_consumed_usd`) MUST be stringified to preserve precision and
+MUST NOT be serialized as JSON numbers. The reference implementation uses `rust_decimal::Decimal`
+internally and serializes its `to_string()` output.
+
+#### 11.6.4 Well-Known Field Set and Template Pre-Seeding
+
+The orchestrator's prompt template renderer (§12) pre-populates the `issue.fields` map with
+`Null` entries for every well-known `sinfonia_*` key before rendering. This guarantees that a
+template clause like `{{ issue.fields.sinfonia_last_ci_failure | default: "(none)" }}` always
+finds the key in scope and falls back to the `default:` filter rather than raising a strict-mode
+"Unknown index" template error.
+
+The well-known set in v0.3 is:
+
+```
+sinfonia_attempt_count
+sinfonia_last_ci_failure
+sinfonia_failure_category
+sinfonia_max_attempts
+sinfonia_tokens_consumed
+sinfonia_cost_consumed_usd
+sinfonia_max_cost_usd
+```
+
+Bridges that introduce additional `sinfonia_*` keys MUST register them with the orchestrator's
+well-known list. A key the bridge writes but the orchestrator does not know about will render
+correctly *when the bridge has touched the ticket* but will raise a strict-mode template error on
+tickets the bridge has never touched. Implementations MAY treat this as a packaging contract:
+introducing a new key requires shipping an orchestrator update alongside the bridge update.
+
+#### 11.6.5 Webhook Surface
+
+A conforming bridge SHOULD accept GitHub webhook deliveries on at least the following events:
+
+- `pull_request` with action in `{opened, synchronize, reopened, closed}` — updates the
+  PR↔ticket mapping (§11.6.8). Note: `reopened` is included so a contributor who edits the PR
+  body between close and reopen does not leave a stale mapping behind.
+- `check_suite` with action `completed` — triggers CI-result evaluation.
+- `workflow_run` with action `completed` — triggers CI-result evaluation; functionally equivalent
+  to `check_suite` for the bridge's purposes.
+
+The bridge MUST verify the HMAC-SHA256 signature on every inbound webhook against a shared secret
+configured per-bridge. Signature comparison MUST use constant-time equality (e.g. `subtle::ConstantTimeEq`
+or equivalent) to avoid timing attacks.
+
+The bridge MUST persist every `X-GitHub-Delivery` ID it has accepted and reject duplicates as
+no-ops. The `processed_deliveries` table in Sinfonia's reference SQLite store is a sufficient
+implementation; any durable single-writer key-value store is acceptable. The persistence layer
+MUST be durable across bridge restarts.
+
+#### 11.6.6 HTTP Response Contract
+
+Conforming bridges MUST return JSON response bodies on the webhook endpoint. The canonical shapes
+are:
+
+```
+200 {"delivery_id": "<id>", "status": "duplicate"}
+200 {"status": "ignored", "reason": "<short reason>"}
+202 {"action": "<gh action>", "delivery_id": "<id>", "event": "<gh event>",
+     "pr_number": 42, "repo": "owner/name", "status": "queued",
+     "ticket_id": "ENG-123"}
+401 {"error": "<short reason>"}
+```
+
+Error responses MUST set `Content-Type: application/json` and include a single `error` field
+describing the failure reason. Successful responses MUST include `status` and event-specific
+fields. Operator-facing tooling and the `--self-test` install gate (§11.6.10) rely on this shape
+to parse responses uniformly.
+
+#### 11.6.7 Linear Comment-Boundary Note
+
+The reference Linear adapter fetches `comments(first: 100)` per ticket and scans the result for the
+`sinfonia_bridge_state_v1` marker. Because Linear orders comments by creation time ascending and
+the bridge creates the marker comment on first interaction, the marker is reliably near the start
+of the list. Tickets with more than 100 *bot interactions* (i.e. more than 100 marker rewrites in
+the bridge's lifetime) MAY scroll the marker out of the fetched window.
+
+Implementations SHOULD detect and document this boundary. RECOMMENDED mitigations:
+
+- Filter comments by author at the GraphQL layer (`comments(filter: {user: {id: {eq: $botId}}})`).
+- Migrate the marker to a Linear native custom-field once Linear ships a stable API surface for
+  it.
+- Bound the number of marker rewrites per ticket (e.g. expire tickets to a terminal state before
+  the cap).
+
+A bridge that does *not* implement one of these mitigations MUST document the 100-rewrite boundary
+in operator-facing docs.
+
+#### 11.6.8 PR-to-Ticket Mapping
+
+The PR↔ticket mapping is *derivable from PR bodies*: the bridge matches a configured regex
+against the PR title + body and treats the first capture group as the tracker identifier (e.g.
+`ENG-42`). Implementations MAY persist the mapping (the reference implementation uses a SQLite
+table keyed by `(repo, pr_number)`) or recompute it on each event; the regex match is the source
+of truth.
+
+The default regex in the reference implementation is:
+
+```
+(?i)(?:closes|fixes|resolves)\s+([A-Z]+-\d+|[a-z]+-\d+)
+```
+
+Implementations MUST allow operators to override this regex. PRs that do not match are
+silently dropped — the bridge MUST NOT create speculative ticket mappings.
+
+#### 11.6.9 GitHub Authentication
+
+A conforming bridge MUST support both Personal Access Token (PAT) and GitHub App authentication
+modes. The two modes are mutually exclusive per bridge install.
+
+- **PAT mode** — single-user, single-org. Required scopes: `repo` (full) for label/comment writes
+  and `read:org` for cross-repo PR resolution.
+- **App mode** — installable, per-installation scoped. The bridge MUST mint per-installation
+  access tokens via the standard `POST /app/installations/{id}/access_tokens` flow and SHOULD
+  cache the resulting token until expiry. The reference implementation caches per-owner
+  `octocrab::Octocrab` instances obtained via `Octocrab::installation(InstallationId)` to avoid
+  re-minting tokens for every webhook.
+
+Implementations MUST validate that exactly one of `pat` / `app_id` is configured at startup and
+MUST refuse to start otherwise. When `app_id` is set, `private_key` MUST also be set.
+
+#### 11.6.10 Self-Test Contract
+
+A conforming bridge SHOULD expose a self-test mode (the reference binary exposes it as
+`sinfonia-bridge --self-test`) that runs each install-gate check serially and emits exactly one
+line per check. The line format is:
+
+```
+<LABEL>  <category>: <human-readable description>
+```
+
+Where `<LABEL>` is one of `PASS`, `FAIL`, or `SKIP`. The process exit code MUST equal the number
+of `FAIL` lines; `SKIP` lines do not contribute. RECOMMENDED check categories:
+
+- `config` — `BRIDGE.md` parsed and validated.
+- `github` — auth succeeded; the configured token / app has the required scopes.
+- `webhook reachability` — the configured `server.public_url` (when set) responds to
+  `GET /health` from the outside. SKIP when `public_url` is unset.
+- `tracker` — the tracker project is reachable.
+- `custom fields` — the marker scheme is reserved (Linear) or the fields exist (Jira).
+
+The reference implementation's `--self-test` is the gate Phase 5's `setup-bridge` skill uses
+before declaring an install complete.
+
 ## 12. Prompt Construction and Context Assembly
 
 ### 12.1 Inputs

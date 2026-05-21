@@ -16,6 +16,19 @@ This implementation conforms to the Symphony spec (Draft v1) with three added pl
 - **Coding agents**: OpenAI, Anthropic, Google Gemini, Ollama (locally hosted) over raw LLM APIs with a built-in tool loop, **plus** the `claude` CLI (Claude Code) and `codex` CLI (Codex CLI) driven as subprocesses so you can leverage those products' full capabilities instead of a hand-rolled loop.
 - **Per-state runner overrides**: a `states:` block in `WORKFLOW.md` routes each tracker state to a different agent + prompt — e.g. `Todo` → Claude Code, `In Progress` → Claude Code with Opus, `In Review` → raw Haiku for a quick pass.
 
+## What's new in v0.3 (preview)
+
+**v0.3.0-alpha.1** adds a separate `sinfonia-bridge` binary that turns GitHub CI results into tracker state transitions for the daemon to pick up — a CI failure on a PR moves the linked ticket back to a "needs fixes" state, Sinfonia's next poll routes the agent at the failure, and a per-ticket attempt counter caps the loop before runaway retries. The bridge runs alongside the existing `sinfonia` daemon; nothing about the v0.1 polling-loop behaviour has changed.
+
+If you're upgrading from v0.1 and don't want the bridge, you don't have to do anything — `sinfonia` still runs the same way against the same `WORKFLOW.md`. If you do want the bridge:
+
+- Start with [`BRIDGE.example.md`](BRIDGE.example.md) — fully-commented config for the new binary, parses cleanly under `sinfonia-bridge BRIDGE.example.md --check`.
+- The recommended extension contract for any compatible bridge implementation is drafted in [`docs/SPEC.md` §11.6](docs/SPEC.md).
+- Run `sinfonia-bridge BRIDGE.md --self-test` once you've filled in real credentials — it returns one `PASS` / `FAIL` / `SKIP` line per install-gate check.
+- See [`CHANGELOG.md`](CHANGELOG.md) for the full Added / Changed / Known limitations list.
+
+Still alpha — Phases 2–7 land budget caps + telemetry, Jira bridge writes, a `setup-bridge` skills CLI, a refreshed Docker image, and finalized docs.
+
 ## Sinfonia vs. Symphony
 
 | | Symphony | Sinfonia |
