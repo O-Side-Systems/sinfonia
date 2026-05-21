@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/sinfonia",
+    "crates/sinfonia-bridge",
     "crates/sinfonia-tracker",
 ]
 

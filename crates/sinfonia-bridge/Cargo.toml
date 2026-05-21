@@ -1,0 +1,58 @@
+[package]
+name = "sinfonia-bridge"
+description = "CI feedback bridge for Sinfonia — translates GitHub webhook events into tracker state transitions, custom-field updates, and PR comments."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+authors.workspace      = true
+homepage.workspace     = true
+repository.workspace   = true
+
+[[bin]]
+name = "sinfonia-bridge"
+path = "src/main.rs"
+
+[lib]
+name = "sinfonia_bridge"
+path = "src/lib.rs"
+
+[dependencies]
+sinfonia-tracker = { workspace = true }
+
+# Async runtime + HTTP + serialization (all shared with sinfonia).
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+reqwest = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+liquid = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+async-trait = { workspace = true }
+regex = { workspace = true }
+url = { workspace = true }
+shellexpand = { workspace = true }
+
+# Bridge-only dependencies. Pinned at impl time; revisit at v0.3 release.
+# - octocrab          GitHub API client (PAT + App auth in P1-G)
+# - rusqlite          idempotency + PR↔ticket map (P1-E)
+# - subtle            constant-time HMAC compare (P1-E)
+# - hmac, sha2        signature verification (P1-E)
+octocrab = "0.39"
+rusqlite = { version = "0.31", features = ["bundled"] }
+subtle = "2.5"
+hmac = "0.12"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { version = "1.41", features = ["test-util", "macros", "rt-multi-thread"] }
+# wiremock is added in P1-H for integration tests; left out here to keep
+# the dev-dep surface small while only unit tests exist.

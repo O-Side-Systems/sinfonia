@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-05-21
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
-**Branch state:** `main` contains the Phase 1 foundation as of the merge of #?? (workspace conversion + tracker extensions + H-1 fix). `new-features` is no longer in use.
+**Branch state:** `main` contains the Phase 1 foundation (#2: workspace conversion + tracker extensions + H-1 fix) plus the STATUS doc itself. The bridge-binary skeleton (P1-D) is on a branch `v0.3-phase-1-bridge-skeleton` awaiting PR.
 
 This file is the **rolling milestone status**. Future agents resuming work on v0.3.0 should read this *before* the per-phase plans — it tells you what's done, what's next, and the decisions that aren't obvious from the code alone.
 
@@ -32,8 +32,8 @@ The single most important non-obvious decision made during the foundation work: 
 | **P1-A** workspace conversion + verify script | `01-bridge-mvp.md` §2 | ✅ merged | `crates/sinfonia/`, `crates/sinfonia-tracker/`, `scripts/verify-workspace-move.sh` |
 | **P1-B** tracker trait extensions + `custom_fields` module | §4, §11 | ✅ merged | 5 new bridge-write methods on `IssueTracker`; Linear impls; Jira returns `NotImplemented` (Phase 4 fills) |
 | **P1-C** `Issue.fields` + Linear marker-comment + template scope (H-1) | §4.2 | ✅ merged | `Issue.fields` populated by Linear fetch; `template.rs` pre-seeds well-known keys |
-| **P1-D** bridge binary skeleton + BRIDGE.md config parser | §2, §3 | ⬜ not started | Next deliverable |
-| **P1-E** webhook handlers + HMAC verify + SQLite idempotency | §5, §9 | ⬜ not started | |
+| **P1-D** bridge binary skeleton + BRIDGE.md config parser | §2, §3 | 🟡 PR open | `crates/sinfonia-bridge` crate scaffolded; BRIDGE.md parser + 9 validation rules + 16 unit tests; axum router with `/health` + stub `POST /webhook`; `--check` flag |
+| **P1-E** webhook handlers + HMAC verify + SQLite idempotency | §5, §9 | ⬜ not started | Next deliverable |
 | **P1-F** feedback loop + categorization + labels | §5, §6, §7 | ⬜ not started | |
 | **P1-G** GitHub auth (PAT + App) + `--self-test` | §8 | ⬜ not started | |
 | **P1-H** integration tests with `wiremock` | §9.2 | ⬜ not started | Nine scenarios specified |
@@ -46,6 +46,13 @@ The single most important non-obvious decision made during the foundation work: 
   - 12 `spec_conformance.rs` integration tests
   - 7 sinfonia-tracker tests (1 base64 + 6 custom_fields)
 - `scripts/verify-workspace-move.sh` → no longer applicable post-merge (the script's purpose was to gate the workspace-move commit; it can stay in-repo as a one-shot artifact)
+
+### Test baseline on `v0.3-phase-1-bridge-skeleton`
+
+- `cargo test --workspace --no-fail-fast` → **67 tests pass, 0 failures** (51 + 16 new bridge config tests)
+- `cargo run -p sinfonia-bridge -- BRIDGE.md --check` → `ok` (exit 0) on valid, descriptive error (exit 1) on invalid
+- `GET /health` returns `{"service":"sinfonia-bridge","status":"ok","tenant_id":<...>,"tracker":"linear"}`
+- `POST /webhook` stub returns 200 (real handler logic lands in P1-E)
 
 ---
 
