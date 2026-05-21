@@ -20,6 +20,7 @@
 //!
 //! See `01-bridge-mvp.md` §5 for the canonical event flow.
 
+use crate::feedback::{evaluate_ci, CiOutcome, EvaluateContext};
 use crate::webhook::{verify::verify_signature, AppState};
 use crate::Error;
 use axum::body::Bytes;
@@ -139,8 +140,8 @@ pub async fn webhook(
 
     match event.as_str() {
         "pull_request" => handle_pull_request(&state, &payload, &delivery_id).await,
-        "check_suite" => handle_check_suite(&payload, &delivery_id).await,
-        "workflow_run" => handle_workflow_run(&payload, &delivery_id).await,
+        "check_suite" => handle_check_suite(&state, &payload, &delivery_id).await,
+        "workflow_run" => handle_workflow_run(&state, &payload, &delivery_id).await,
         "ping" => {
             // GitHub's startup probe. Acknowledge with 200 so the webhook
             // configuration shows green in the UI.
@@ -278,7 +279,11 @@ async fn handle_pull_request(
         .into_response()
 }
 
-async fn handle_check_suite(payload: &Value, delivery_id: &str) -> axum::response::Response {
+async fn handle_check_suite(
+    state: &AppState,
+    payload: &Value,
+    delivery_id: &str,
+) -> axum::response::Response {
     let action = payload.get("action").and_then(|v| v.as_str()).unwrap_or("");
     if action != "completed" {
         debug!(target: "webhook", %delivery_id, action, "check_suite action not completed");
@@ -288,24 +293,14 @@ async fn handle_check_suite(payload: &Value, delivery_id: &str) -> axum::respons
         )
             .into_response();
     }
-    // P1-F replaces this with the real CI evaluation. P1-E only records
-    // that the event was received — the delivery_id is already in
-    // `processed_deliveries`, which is the visibility test the plan
-    // calls for in the §2 exit criteria.
-    info!(target: "webhook", %delivery_id, "check_suite completed received (queued for P1-F)");
-    (
-        StatusCode::ACCEPTED,
-        Json(json!({
-            "status": "queued",
-            "event": "check_suite",
-            "action": action,
-            "delivery_id": delivery_id,
-        })),
-    )
-        .into_response()
+    dispatch_ci_event(state, "check_suite", payload, delivery_id, action).await
 }
 
-async fn handle_workflow_run(payload: &Value, delivery_id: &str) -> axum::response::Response {
+async fn handle_workflow_run(
+    state: &AppState,
+    payload: &Value,
+    delivery_id: &str,
+) -> axum::response::Response {
     let action = payload.get("action").and_then(|v| v.as_str()).unwrap_or("");
     if action != "completed" {
         debug!(target: "webhook", %delivery_id, action, "workflow_run action not completed");
@@ -315,17 +310,86 @@ async fn handle_workflow_run(payload: &Value, delivery_id: &str) -> axum::respon
         )
             .into_response();
     }
-    info!(target: "webhook", %delivery_id, "workflow_run completed received (queued for P1-F)");
-    (
-        StatusCode::ACCEPTED,
-        Json(json!({
-            "status": "queued",
-            "event": "workflow_run",
-            "action": action,
-            "delivery_id": delivery_id,
-        })),
-    )
-        .into_response()
+    dispatch_ci_event(state, "workflow_run", payload, delivery_id, action).await
+}
+
+/// Run `evaluate_ci` for a `check_suite` or `workflow_run` event and
+/// turn the per-PR outcomes into a single HTTP response.
+///
+/// HTTP status:
+/// - 202 ACCEPTED whenever the bridge took an action (any non-Pending,
+///   non-NoMappedPr outcome on any PR).
+/// - 200 OK when every outcome is `Pending` or `NoMappedPr` — both are
+///   "the bridge saw the event but had nothing to do this time."
+async fn dispatch_ci_event(
+    state: &AppState,
+    event: &str,
+    payload: &Value,
+    delivery_id: &str,
+    action: &str,
+) -> axum::response::Response {
+    let ctx = EvaluateContext {
+        config: state.config.as_ref(),
+        store: state.store.as_ref(),
+        tracker: state.tracker.as_ref(),
+        gh: &state.gh,
+        labels: &state.labels,
+    };
+
+    let outcomes = match evaluate_ci(ctx, event, payload).await {
+        Ok(o) => o,
+        Err(e) => {
+            warn!(target: "webhook", event, %delivery_id, error = %e, "evaluate_ci failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": e.to_string(), "delivery_id": delivery_id})),
+            )
+                .into_response();
+        }
+    };
+
+    let any_action = outcomes
+        .iter()
+        .any(|o| !matches!(o, CiOutcome::Pending | CiOutcome::NoMappedPr));
+    let status = if any_action {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::OK
+    };
+    let body = json!({
+        "status": if any_action { "queued" } else { "no-op" },
+        "event": event,
+        "action": action,
+        "delivery_id": delivery_id,
+        "outcomes": outcomes.iter().map(outcome_to_json).collect::<Vec<_>>(),
+    });
+    info!(target: "webhook", event, %delivery_id, ?outcomes, "ci event dispatched");
+    (status, Json(body)).into_response()
+}
+
+fn outcome_to_json(o: &CiOutcome) -> Value {
+    match o {
+        CiOutcome::NoMappedPr => json!({"kind": "no_mapped_pr"}),
+        CiOutcome::Pending => json!({"kind": "pending"}),
+        CiOutcome::Green => json!({"kind": "green"}),
+        CiOutcome::Red {
+            category,
+            next_attempt,
+            max_attempts,
+            target_state,
+        } => json!({
+            "kind": "red",
+            "category": category,
+            "next_attempt": next_attempt,
+            "max_attempts": max_attempts,
+            "target_state": target_state,
+        }),
+        CiOutcome::CapHit { stayed_at, max } => json!({
+            "kind": "cap_hit",
+            "stayed_at": stayed_at,
+            "max": max,
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -337,9 +401,13 @@ async fn handle_workflow_run(payload: &Value, delivery_id: &str) -> axum::respon
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::parse_bridge_str;
+    use crate::config::{parse_bridge_str, LabelAliases};
+    use crate::github::{CheckRunSummary, GhOps};
+    use crate::labels::LabelManager;
     use crate::storage::Store;
     use crate::webhook::router;
+    use crate::Result;
+    use async_trait::async_trait;
     use axum::body::Body;
     use axum::http::Request;
     use hmac::{Hmac, Mac};
@@ -349,6 +417,55 @@ mod tests {
     use tower::ServiceExt;
 
     type HmacSha256 = Hmac<Sha256>;
+
+    /// No-op GhOps for the P1-E handler tests, which don't exercise CI
+    /// evaluation. Every method returns success without doing anything.
+    /// (P1-H's wiremock harness exercises the real client.)
+    struct NoopGh;
+
+    #[async_trait]
+    impl GhOps for NoopGh {
+        async fn ensure_label(
+            &self,
+            _repo: &str,
+            _name: &str,
+            _color: &str,
+            _description: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn apply_label_to_pr(
+            &self,
+            _repo: &str,
+            _pr_number: u64,
+            _name: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn remove_label_from_pr(
+            &self,
+            _repo: &str,
+            _pr_number: u64,
+            _name: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn post_pr_comment(
+            &self,
+            _repo: &str,
+            _pr_number: u64,
+            _body: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn list_check_run_summary(
+            &self,
+            _repo: &str,
+            _head_sha: &str,
+        ) -> Result<CheckRunSummary> {
+            Ok(CheckRunSummary::default())
+        }
+    }
 
     fn baseline_bridge_cfg() -> &'static str {
         r#"---
@@ -395,7 +512,9 @@ telemetry:
             jira_email: None,
         };
         let tracker = Arc::new(LinearTracker::new(&tracker_cfg).expect("linear tracker"));
-        AppState::new(cfg, store, tracker)
+        let gh: Arc<dyn GhOps> = Arc::new(NoopGh);
+        let labels = LabelManager::new(gh.clone(), false, "sinfonia", LabelAliases::default());
+        AppState::new(cfg, store, tracker, gh, labels)
     }
 
     fn sign(secret: &str, body: &[u8]) -> String {
@@ -559,21 +678,36 @@ telemetry:
     }
 
     #[tokio::test]
-    async fn check_suite_completed_acknowledged() {
+    async fn check_suite_completed_with_no_mapped_pr_returns_200_no_op() {
+        // P1-F contract: 202 ACCEPTED only when the bridge took an
+        // action. The event payload here has no `check_suite.pull_requests`
+        // array (and no PR ↔ ticket mapping exists for any number anyway),
+        // so every per-PR outcome is `NoMappedPr` → 200 OK no-op.
         let state = make_state().await;
         let body = serde_json::to_vec(&json!({"action": "completed"})).unwrap();
         let sig = sign("shh", &body);
         let resp = post_webhook(state, "check_suite", "deliv-cs-1", body, Some(sig)).await;
-        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192)
+            .await
+            .expect("body");
+        let v: Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["status"], json!("no-op"));
     }
 
     #[tokio::test]
-    async fn workflow_run_completed_acknowledged() {
+    async fn workflow_run_completed_with_no_mapped_pr_returns_200_no_op() {
+        // See `check_suite_completed_with_no_mapped_pr_returns_200_no_op`.
         let state = make_state().await;
         let body = serde_json::to_vec(&json!({"action": "completed"})).unwrap();
         let sig = sign("shh", &body);
         let resp = post_webhook(state, "workflow_run", "deliv-wf-1", body, Some(sig)).await;
-        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 8192)
+            .await
+            .expect("body");
+        let v: Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(v["status"], json!("no-op"));
     }
 
     #[tokio::test]
@@ -633,5 +767,207 @@ telemetry:
                 .expect("lookup"),
             Some("ENG-13".into()),
         );
+    }
+
+    // -- End-to-end dispatch tests (P1-F wiring) ----------------------------
+
+    /// Scriptable [`GhOps`] for the handler-level wiring tests. Lets each
+    /// test seed a [`CheckRunSummary`] and inspect which labels were
+    /// applied / removed / posted as comments.
+    use std::sync::Mutex as StdMutex;
+
+    struct ScriptedGh {
+        summary: CheckRunSummary,
+        applied: StdMutex<Vec<(u64, String)>>,
+        removed: StdMutex<Vec<(u64, String)>>,
+        comments: StdMutex<Vec<(u64, String)>>,
+    }
+
+    impl ScriptedGh {
+        fn new(summary: CheckRunSummary) -> Self {
+            Self {
+                summary,
+                applied: StdMutex::new(Vec::new()),
+                removed: StdMutex::new(Vec::new()),
+                comments: StdMutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GhOps for ScriptedGh {
+        async fn ensure_label(
+            &self,
+            _repo: &str,
+            _name: &str,
+            _color: &str,
+            _description: &str,
+        ) -> Result<()> {
+            Ok(())
+        }
+        async fn apply_label_to_pr(
+            &self,
+            _repo: &str,
+            pr_number: u64,
+            name: &str,
+        ) -> Result<()> {
+            self.applied
+                .lock()
+                .unwrap()
+                .push((pr_number, name.to_string()));
+            Ok(())
+        }
+        async fn remove_label_from_pr(
+            &self,
+            _repo: &str,
+            pr_number: u64,
+            name: &str,
+        ) -> Result<()> {
+            self.removed
+                .lock()
+                .unwrap()
+                .push((pr_number, name.to_string()));
+            Ok(())
+        }
+        async fn post_pr_comment(
+            &self,
+            _repo: &str,
+            pr_number: u64,
+            body: &str,
+        ) -> Result<()> {
+            self.comments
+                .lock()
+                .unwrap()
+                .push((pr_number, body.to_string()));
+            Ok(())
+        }
+        async fn list_check_run_summary(
+            &self,
+            _repo: &str,
+            _head_sha: &str,
+        ) -> Result<CheckRunSummary> {
+            Ok(self.summary.clone())
+        }
+    }
+
+    async fn state_with_gh(gh: Arc<ScriptedGh>, manage_labels: bool) -> AppState {
+        let cfg = parse_bridge_str(baseline_bridge_cfg()).expect("baseline parses");
+        let store = Store::open_in_memory().await.expect("store");
+        let tracker_cfg = TrackerConfig {
+            kind: TrackerKind::Linear,
+            endpoint: "https://api.linear.app/graphql".into(),
+            api_key: Some("test".into()),
+            project_slug: Some("my-project".into()),
+            active_states: vec![],
+            terminal_states: vec![],
+            jira_email: None,
+        };
+        let tracker = Arc::new(LinearTracker::new(&tracker_cfg).expect("linear tracker"));
+        let gh_dyn: Arc<dyn GhOps> = gh;
+        let labels = LabelManager::new(
+            gh_dyn.clone(),
+            manage_labels,
+            "sinfonia",
+            LabelAliases::default(),
+        );
+        AppState::new(cfg, store, tracker, gh_dyn, labels)
+    }
+
+    fn check_suite_payload(repo: &str, head_sha: &str, pr_number: u64) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "action": "completed",
+            "check_suite": {
+                "head_sha": head_sha,
+                "pull_requests": [{"number": pr_number}],
+            },
+            "repository": {"full_name": repo},
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn check_suite_green_applies_awaiting_review_no_transition() {
+        // Two passing runs, no pending, no failures → green path.
+        let summary = CheckRunSummary {
+            failed: vec![],
+            passed: vec!["unit".into(), "lint".into()],
+            any_pending: false,
+        };
+        let gh = Arc::new(ScriptedGh::new(summary));
+        let state = state_with_gh(gh.clone(), /* manage_labels = */ true).await;
+
+        // Seed the mapping: PR 42 → ticket ENG-42.
+        state
+            .store
+            .upsert_pr_ticket("acme/widgets", 42, "ENG-42")
+            .await
+            .expect("seed");
+
+        let body = check_suite_payload("acme/widgets", "head-sha-1", 42);
+        let sig = sign("shh", &body);
+        let resp = post_webhook(state, "check_suite", "deliv-green-1", body, Some(sig)).await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED, "green should be 202");
+
+        let applied = gh.applied.lock().unwrap().clone();
+        let removed = gh.removed.lock().unwrap().clone();
+        // The awaiting-review label was applied to PR 42.
+        assert!(
+            applied
+                .iter()
+                .any(|(pr, name)| *pr == 42 && name == "sinfonia:awaiting-review"),
+            "expected awaiting-review label applied to PR 42; got {applied:?}",
+        );
+        // in-progress and needs-fixes were removed.
+        assert!(removed.iter().any(|(_, n)| n == "sinfonia:in-progress"));
+        assert!(removed.iter().any(|(_, n)| n == "sinfonia:needs-fixes"));
+        // No PR comment was posted on green.
+        assert!(gh.comments.lock().unwrap().is_empty(), "no comment on green");
+    }
+
+    #[tokio::test]
+    async fn check_suite_pending_returns_no_op() {
+        let summary = CheckRunSummary {
+            failed: vec![],
+            passed: vec![],
+            any_pending: true,
+        };
+        let gh = Arc::new(ScriptedGh::new(summary));
+        let state = state_with_gh(gh.clone(), true).await;
+        state
+            .store
+            .upsert_pr_ticket("acme/widgets", 42, "ENG-42")
+            .await
+            .expect("seed");
+
+        let body = check_suite_payload("acme/widgets", "head-sha-2", 42);
+        let sig = sign("shh", &body);
+        let resp = post_webhook(state, "check_suite", "deliv-pending-1", body, Some(sig)).await;
+        // Pending → 200 OK no-op.
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(gh.applied.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn green_short_circuits_when_manage_labels_false() {
+        let summary = CheckRunSummary {
+            failed: vec![],
+            passed: vec!["unit".into()],
+            any_pending: false,
+        };
+        let gh = Arc::new(ScriptedGh::new(summary));
+        let state = state_with_gh(gh.clone(), /* manage_labels = */ false).await;
+        state
+            .store
+            .upsert_pr_ticket("acme/widgets", 1, "ENG-1")
+            .await
+            .expect("seed");
+
+        let body = check_suite_payload("acme/widgets", "head-sha-3", 1);
+        let sig = sign("shh", &body);
+        let resp = post_webhook(state, "check_suite", "deliv-nlbl-1", body, Some(sig)).await;
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        // No label operations should have hit the github client.
+        assert!(gh.applied.lock().unwrap().is_empty());
+        assert!(gh.removed.lock().unwrap().is_empty());
     }
 }

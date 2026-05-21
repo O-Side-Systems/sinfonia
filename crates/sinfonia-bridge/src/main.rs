@@ -11,6 +11,8 @@
 
 use clap::Parser;
 use sinfonia_bridge::config::read_bridge_file;
+use sinfonia_bridge::github::{GhOps, OctocrabGhOps};
+use sinfonia_bridge::labels::LabelManager;
 use sinfonia_bridge::storage::Store;
 use sinfonia_bridge::webhook::{router, AppState};
 use sinfonia_tracker::{IssueTracker, LinearTracker, TrackerKind};
@@ -87,9 +89,9 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Construct the tracker adapter once and share it as a trait object
-    // so future P1-F handlers can do tracker writes without per-request
-    // setup. Phase 1 only supports Linear (Jira deferred to Phase 4 —
-    // BridgeConfig validation already rejects `kind: jira`).
+    // so handlers can do tracker writes without per-request setup. Phase
+    // 1 only supports Linear (Jira deferred to Phase 4 — BridgeConfig
+    // validation already rejects `kind: jira`).
     let tracker_cfg = cfg.tracker.to_tracker_config();
     let tracker: Arc<dyn IssueTracker> = match tracker_cfg.kind {
         TrackerKind::Linear => Arc::new(LinearTracker::new(&tracker_cfg)?),
@@ -98,7 +100,32 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let state = AppState::new(cfg, store, tracker);
+    // GitHub client. P1-F: PAT mode only. P1-G adds App mode.
+    let gh: Arc<dyn GhOps> = match (&cfg.github.pat, &cfg.github.app_id) {
+        (Some(token), _) => Arc::new(OctocrabGhOps::from_pat(token.clone())?),
+        (None, Some(_)) => {
+            return Err(
+                "BRIDGE.md github.app_id auth is deferred to P1-G; set github.pat in Phase 1"
+                    .into(),
+            );
+        }
+        (None, None) => {
+            // Already rejected by BridgeConfig validation; defensive.
+            return Err("BRIDGE.md github: neither pat nor app_id is set".into());
+        }
+    };
+
+    let labels = LabelManager::new(
+        gh.clone(),
+        cfg.github.manage_labels,
+        cfg.github.label_prefix.clone(),
+        cfg.github.label_aliases.clone(),
+    );
+    if !cfg.github.manage_labels {
+        info!(target: "main", "label management disabled (manage_labels: false)");
+    }
+
+    let state = AppState::new(cfg, store, tracker, gh, labels);
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;

@@ -11,6 +11,8 @@
 pub mod handlers;
 pub mod verify;
 
+use crate::github::GhOps;
+use crate::labels::LabelManager;
 use crate::{storage::Store, BridgeConfig};
 use axum::routing::{get, post};
 use axum::Router;
@@ -19,23 +21,33 @@ use std::sync::Arc;
 
 /// Shared state injected into every handler via `axum::extract::State`.
 ///
-/// P1-E extends the P1-D shape with the SQLite [`Store`] (idempotency +
-/// PR ↔ ticket map) and an `Arc<dyn IssueTracker>` so handlers can
-/// dispatch tracker writes when P1-F lands without re-reading config or
-/// re-instantiating an adapter per request.
+/// P1-F extends the P1-E shape with:
+/// - `gh`: the GitHub client (PAT-only in P1-F; P1-G adds App mode).
+/// - `labels`: the [`LabelManager`] that short-circuits on
+///   `manage_labels: false`.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<BridgeConfig>,
     pub store: Arc<Store>,
     pub tracker: Arc<dyn IssueTracker>,
+    pub gh: Arc<dyn GhOps>,
+    pub labels: LabelManager,
 }
 
 impl AppState {
-    pub fn new(config: BridgeConfig, store: Store, tracker: Arc<dyn IssueTracker>) -> Self {
+    pub fn new(
+        config: BridgeConfig,
+        store: Store,
+        tracker: Arc<dyn IssueTracker>,
+        gh: Arc<dyn GhOps>,
+        labels: LabelManager,
+    ) -> Self {
         Self {
             config: Arc::new(config),
             store: Arc::new(store),
             tracker,
+            gh,
+            labels,
         }
     }
 }
