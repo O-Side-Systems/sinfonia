@@ -1,8 +1,8 @@
 # v0.3.0 milestone — status & handoff
 
-**Last updated:** 2026-05-21 (P1-I merged — **Phase 1 complete**; Phase 2 is the next pickup)
+**Last updated:** 2026-05-21 (P2 merged — **Phase 2 complete**; Phase 3 is the next pickup)
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
-**Branch state:** `main` contains the **complete Phase 1 of v0.3** — all nine sub-tasks (P1-A through P1-I) are merged. The merged work, in order: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D: `sinfonia-bridge` crate, BRIDGE.md parser, axum router with `/health` + stub `/webhook`), the real webhook layer (#4 — P1-E: HMAC-SHA256 verification, SQLite idempotency, `pull_request` / `check_suite` / `workflow_run` dispatch), the feedback loop (#5 — P1-F: `evaluate_ci` orchestrator, categorize / attempts / transition modules, `LabelManager` + `BridgeLabel`, PAT-mode `GhOps`), GitHub authentication + the install gate (#6 — P1-G: `github::auth` mode selector, `AppModeGhOps` with per-owner installation cache, `sinfonia-bridge --self-test` runner, `server.public_url` config field), the wiremock-backed integration suite (#7 — P1-H: `tests/bridge_e2e.rs` boots the full daemon against per-test GitHub + Linear `MockServer`s and asserts on all nine §9.2 scenarios end-to-end), **and** the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md` at the repo root, `docs/SPEC.md` §11.6 draft of the bridge extension contract, `CHANGELOG.md` entry for v0.3.0-alpha.1, README "What's new in v0.3 (preview)" stub).
+**Branch state:** `main` contains the **complete Phase 1 and Phase 2 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`).
 
 This file is the **rolling milestone status**. Future agents resuming work on v0.3.0 should read this *before* the per-phase plans — it tells you what's done, what's next, and the decisions that aren't obvious from the code alone.
 
@@ -10,13 +10,17 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 ## TL;DR for the next agent
 
-**Phase 1 of v0.3 is complete.** All nine sub-tasks (P1-A through P1-I) are merged to `main`; the bridge MVP ships as v0.3.0-alpha.1. The bridge binary parses `BRIDGE.md`, verifies HMAC-signed GitHub webhooks, persists delivery-ID idempotency in SQLite, evaluates CI results, routes by failure category, applies the attempt cap, manages PR labels under the `sinfonia:` prefix, supports both PAT and App auth, and exposes `sinfonia-bridge --self-test` as the install gate. The full chain — bridge writes the marker comment → tracker fetch parses it into `Issue.fields` → prompt template renders `{{ issue.fields.sinfonia_last_ci_failure }}` into the agent's input — works end-to-end. Workspace test count: 149 passing (32 sinfonia + 12 conformance + 7 tracker + 89 bridge unit + 9 bridge integration), zero failures.
+**Phase 1 of v0.3 is complete.** All nine sub-tasks (P1-A through P1-I) are merged to `main`; the bridge MVP ships as v0.3.0-alpha.1. The bridge binary parses `BRIDGE.md`, verifies HMAC-signed GitHub webhooks, persists delivery-ID idempotency in SQLite, evaluates CI results, routes by failure category, applies the attempt cap, manages PR labels under the `sinfonia:` prefix, supports both PAT and App auth, and exposes `sinfonia-bridge --self-test` as the install gate. The full chain — bridge writes the marker comment → tracker fetch parses it into `Issue.fields` → prompt template renders `{{ issue.fields.sinfonia_last_ci_failure }}` into the agent's input — works end-to-end.
 
-The next pickup is **Phase 2 — OpenCode agent backend** (`docs/v0.3-plan/02-opencode-backend.md`). Phase 2 depends only on Phase 1's workspace conversion (long since merged) — that dependency unlocked back at the P1-A merge. The remaining Phase 1 commits (P1-D..P1-I) were all in the bridge crate, which Phase 2 doesn't touch. Per `00-overview.md`'s deferred-finding M-1, Phase 2 has been runnable in parallel with later Phase 1 work for months; it's just been queued behind the v0.3 milestone's natural left-to-right ordering. Pick it up from `02-opencode-backend.md` §1.
+**Phase 2 of v0.3 is also complete.** `provider: opencode` is wired as a first-class CLI subprocess backend in `crates/sinfonia/src/agent/opencode.rs`, joining `claude_code` and `codex` as a sibling under `agent/cli.rs`'s pattern (parser + spawn + session continuation). OpenCode owns auth via its own CLI (`opencode auth login`) and routes internally to 75+ providers — including a local Ollama-with-LSP path that the raw `ollama` backend can't provide. The `which` crate is now a workspace-level dep used by the preflight binary check. Workspace test count: **158 passing** (40 sinfonia + 13 conformance + 7 tracker + 89 bridge unit + 9 bridge integration), zero failures — up from Phase 1's 149 by 8 new `agent::opencode::tests` unit tests + 1 new `spec_conformance::opencode_provider_parses` integration test.
 
-The single most important non-obvious decision the foundation work bequeaths to Phase 2: **`crates/sinfonia/src/agent/cli/` is the canonical model** for any subprocess-driven backend. OpenCode joins `claude_code` and `codex` as a sibling under `agent/cli.rs`'s parser + spawn pattern; do not invent a new abstraction. The `template.rs` Liquid scope (with the H-1 well-known field pre-seed from §5.2) is also part of what Phase 2 inherits — any new backend automatically gets `{{ issue.fields.* }}` access for the bridge-written counters with no extra wiring.
+The next pickup is **Phase 3 — Telemetry + budget enforcement** (`docs/v0.3-plan/03-telemetry-budget.md`). Phase 3's stated dependency was "Phase 1 AND Phase 2" — Phase 1 because the bridge owns the tracker write path the budget caps use, Phase 2 because every coding-agent backend (including OpenCode) needs to emit the same `runner.session` span shape. Both deps are now resolved. Phase 3 layers `tracing-opentelemetry` over the existing `tracing` macros (the json/pretty stdout subscribers stay unchanged), tags every span and metric with `tenant_id` from day one, defines a Sinfonia↔bridge typed HTTP event channel (replacing the dropped bridge-hosted OTLP receiver), and adds token + cost caps the bridge enforces at the tracker boundary. Plan §1-§7 is the source of truth for scope; §2's coexistence model with today's `tracing` subscribers is the key non-obvious design decision a fresh agent should anchor on first.
 
-The single most important non-obvious decision made during Phase 1 itself (forward-relevant to every later phase): **`CustomFieldValue` is three variants (`Null` / `Number` / `String`), not five** (the plan-doc §4 draft showed `Decimal` / `LongText` / `Url` as separate variants). Cost values, URLs, and long-text fields all serialize as `String`. See §5.1 below. This is the foundation Phase 3's budget caps and Phase 4's Jira custom-field writes both build on.
+The single most important non-obvious decision the Phase 1+2 work bequeaths to Phase 3: **the agent-side token-accounting plumbing is already in place across every CLI backend**. `OpenCodeAgent::run_turn` parses the `provider/usage` stream events and surfaces `(prompt_tokens, completion_tokens, total_tokens)` per turn; `cli.rs` does the same for `claude_code` and `codex`; and `crates/sinfonia/src/agent/turn.rs` already aggregates token counts into `TurnOutcome`. Phase 3's `runner.session` span attributes (per `03-telemetry-budget.md` §4) are a read of fields that already exist; the work is to emit them as OTel span attributes, not to instrument fresh code paths. Treat that as the savings line — Phase 3's "instrument every backend" surface is much smaller than it looks.
+
+The single most important non-obvious decision made during Phase 1 itself (forward-relevant to every later phase): **`CustomFieldValue` is three variants (`Null` / `Number` / `String`), not five** (the plan-doc §4 draft showed `Decimal` / `LongText` / `Url` as separate variants). Cost values, URLs, and long-text fields all serialize as `String`. See §5.1 below. This is the foundation Phase 3's budget caps and Phase 4's Jira custom-field writes both build on — Phase 3 writes `sinfonia_session_cost_usd` and `sinfonia_total_cost_usd` as `CustomFieldValue::String("8.23")` (stringified for precision; never f64 for money).
+
+The single most important non-obvious decision surfaced during Phase 2: **the OpenCode CLI's actual flag set differs from what the plan doc proposed**, and the doc-spike-against-vendor-docs pattern this exposed is reusable. The plan said `--prompt-stdin`, `--output-format json`, `--quiet`, `--continue <id>` — what `opencode.ai/docs` actually documents is `--format json` (no `--prompt-stdin` or `--quiet` needed; stdin auto-detected, JSON suppresses TUI) and `--session <id>` (bare `--continue` resumes only the *last* session globally — wrong for concurrent per-issue workspaces). Captured in `docs/v0.3-plan/02-opencode-VERIFY.md` and in the `opencode.rs` module rustdoc. The forward-relevant lesson for Phase 3: any time a plan doc references a vendor-CLI flag, OTel exporter env var, or third-party HTTP wire format, **verify it before writing code** — Phase 3 will need to do this for the `opentelemetry-otlp` crate's exporter config knobs.
 
 ---
 
@@ -40,7 +44,9 @@ The single most important non-obvious decision made during Phase 1 itself (forwa
 | `d7ad72d` (#7) | P1-H: bridge integration tests (wiremock-backed, 9 scenarios) | Code — `tests/bridge_e2e.rs` (~1.4k LOC: full daemon boot + per-test GitHub & Linear `MockServer`s + HMAC-signed webhook helper + per-scenario `LinearGraphqlMock` dispatcher); `storage.rs` drops `#[cfg(test)]` gate on `open_in_memory`; `Cargo.toml` adds `wiremock = "0.6"` + crypto dev-deps for the App-mode RSA test key |
 | `4789d8f` | STATUS: mark P1-H merged, queue P1-I as next deliverable | Docs — this file |
 | `a057218` (#8) | P1-I: Phase 1 documentation (BRIDGE.example.md, SPEC §11.6, CHANGELOG, README stub) | Docs — `BRIDGE.example.md` (new, repo root; 243-line fully-commented working config that parses cleanly under `--check` with no env vars); `docs/SPEC.md` §11.6 (217-line draft bridge extension contract in RFC-2119 voice, inserted between §11.5 and §12); `CHANGELOG.md` adds `## [0.3.0-alpha.1] — 2026-05-21`; `README.md` adds "What's new in v0.3 (preview)" stub above §"Sinfonia vs. Symphony" |
-| (this commit) | STATUS: mark P1-I merged, Phase 1 complete | Docs — this file |
+| `1ce6c0e` | STATUS: mark P1-I merged, Phase 1 complete | Docs — this file |
+| `3b84a20` (#9) | P2: OpenCode agent backend | Code + docs — `crates/sinfonia/src/agent/opencode.rs` (new, 686 LOC: `OpenCodeAgent` impl + 8 unit tests, mirroring `cli.rs`'s parser + spawn + continuation pattern); `agent/mod.rs` + `config/typed.rs` factory + enum wiring; `which = "8"` added to `[workspace.dependencies]` + consumed in `crates/sinfonia/Cargo.toml` for the preflight binary check; `tests/spec_conformance.rs::opencode_provider_parses` (new) exercises all three §4 WORKFLOW shapes; `WORKFLOW.example.md` + README backend table + `docs/SPEC.md` §18.2 + CHANGELOG `[Unreleased]` all carry the OpenCode entry; `docs/v0.3-plan/02-opencode-VERIFY.md` (new, 204 LOC) captures the doc-spike findings and §5.3 manual-verification steps (pending real-world run before tag) |
+| (this commit) | STATUS: mark Phase 2 merged, queue Phase 3 as next deliverable | Docs — this file |
 
 ### Phase 1 sub-task status
 
@@ -56,14 +62,22 @@ The single most important non-obvious decision made during Phase 1 itself (forwa
 | **P1-H** integration tests with `wiremock` | §9.2 | ✅ merged | `tests/bridge_e2e.rs` — all nine §9.2 scenarios as `#[tokio::test]`s; per-test GitHub + Linear `MockServer`s; `LinearGraphqlMock` dispatches by GraphQL query keyword; App-mode test mints a real RS256 JWT against a generated test RSA key |
 | **P1-I** Phase 1 docs (BRIDGE.example.md, SPEC §11.6 draft, CHANGELOG, README stub) | §12 | ✅ merged | `BRIDGE.example.md` (parses under `--check` with no env vars); `docs/SPEC.md` §11.6 draft (10 subsections, RFC-2119 voice); `CHANGELOG.md` `[0.3.0-alpha.1]`; `README.md` "What's new in v0.3 (preview)" stub. **All Phase 1 boxes on `01-bridge-mvp.md` §12 are now checked.** |
 
+### Phase 2 sub-task status
+
+Phase 2 shipped as a single atomic commit (one PR), unlike Phase 1's nine-sub-task split. The mapping back to the `02-opencode-backend.md` §8 deliverable checklist:
+
+| Deliverable | Plan section | Status | Notes |
+|---|---|---|---|
+| **P2** OpenCode agent backend (`opencode.rs` + enum variant + factory wiring + `which` dep + unit tests + integration parse-test + WORKFLOW/README/SPEC §18.2/CHANGELOG/VERIFY.md docs) | §3, §4, §5, §6 | ✅ merged | All eleven §8 boxes checked in one PR (#9, commit `3b84a20`, merge `f26aca7`). Manual end-to-end verification per §5.3 is the one deferred item — tracked in `docs/v0.3-plan/02-opencode-VERIFY.md` as "pending real-world run before tagging v0.3.0-alpha.x." Doc spike (plan §7 open question 1) resolved against `opencode.ai/docs` + the upstream `sst/opencode` source; flag deltas vs. the plan's proposed surface are noted at the top of `opencode.rs` and in the VERIFY doc. |
+
 ### Test baseline on `main`
 
-- `cargo test --workspace --no-fail-fast` → **149 tests pass, 0 failures**
-  - 32 sinfonia unit tests (mostly under `crates/sinfonia/src/agent/cli/tests`, `config/`, `orchestrator/`, `template/`, `workspace/`)
-  - 12 `spec_conformance.rs` integration tests
-  - 7 sinfonia-tracker tests (1 base64 + 6 custom_fields)
-  - 89 sinfonia-bridge unit tests (67 from P1-D+P1-E+P1-F plus 22 from P1-G covering `github::auth`, `selftest`, and the `config::server.public_url` round-trips)
-  - 9 sinfonia-bridge integration tests (`tests/bridge_e2e.rs`, one per §9.2 scenario)
+- `cargo test --workspace --no-fail-fast` → **158 tests pass, 0 failures** (up from Phase 1's 149 by +9)
+  - **40** sinfonia unit tests (up from 32 by +8 in `agent::opencode::tests`: `build_command_line_first_turn`, `build_command_line_pending_session`, `build_command_line_resumed_session`, `parse_init_event`, `parse_token_event`, `parse_full_stdout_picks_last_text`, `preflight_missing_binary`, `opencode_provider_is_cli_provider`)
+  - **13** `spec_conformance.rs` integration tests (up from 12 by +1: `opencode_provider_parses` covers all three §4 WORKFLOW shapes round-tripping through `ServiceConfig::from_workflow()`)
+  - 7 sinfonia-tracker tests (1 base64 + 6 custom_fields) — unchanged
+  - 89 sinfonia-bridge unit tests — unchanged (Phase 2 doesn't touch the bridge crate)
+  - 9 sinfonia-bridge integration tests (`tests/bridge_e2e.rs`) — unchanged
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --check` → `ok` (exit 0) on valid, descriptive error (exit 1) on invalid.
 - `cargo run -p sinfonia-bridge -- BRIDGE.example.md --check` → `ok` (exit 0) with no environment variables set. The example doc is its own CI gate — when CI lands for the bridge crate, this command catches schema drift between the parser and the example.
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --self-test` → one labelled `PASS`/`FAIL`/`SKIP` line per check; exit code = number of `FAIL` lines (SKIPs don't count). App-mode token-mint + REST round-trip now covered by `bridge_e2e.rs` scenario 8.
@@ -77,41 +91,58 @@ The single most important non-obvious decision made during Phase 1 itself (forwa
 
 ---
 
-## 2. What's next: Phase 2 — OpenCode agent backend
+## 2. What's next: Phase 3 — Telemetry + budget enforcement
 
-Phase 1 is shippable. The natural next pickup is **Phase 2 — OpenCode agent backend** (`docs/v0.3-plan/02-opencode-backend.md`). Phase 2 has been runnable in parallel since the P1-A workspace conversion landed (deferred plan-checker finding M-1, now in §7 below) — the v0.3 milestone just queued it behind Phase 1's natural left-to-right ordering.
+Phase 1 + Phase 2 are shippable. The next pickup is **Phase 3 — Telemetry + budget enforcement** (`docs/v0.3-plan/03-telemetry-budget.md`). Phase 3's plan-doc-stated dependencies were "Phase 1 (bridge + custom-fields + `Issue.fields` template plumbing) AND Phase 2 (so the OpenCode backend emits the same spans)" — both are now resolved. Per `00-overview.md`'s suggested execution order, Phase 3 is the natural serial successor to Phase 2.
 
-### Scope (per `02-opencode-backend.md`)
+### Scope (per `03-telemetry-budget.md`)
 
-Add `provider: opencode` as a first-class subprocess-driven coding-agent backend, joining `claude_code` and `codex`. Raw LLM backends (`anthropic` / `openai` / `google` / `ollama`) stay. The plan estimates **~400 LOC of Rust + ~150 LOC of tests + ~100 LOC of docs**.
+Phase 3 is materially larger than Phase 2: **~1 100 LOC of Rust + ~300 LOC of tests + ~500 LOC of docs**, with a reference OpenTelemetry Collector → Postgres setup landing alongside the code. Four headline deliverables:
 
-The work is naturally a sibling of `crates/sinfonia/src/agent/cli.rs` — the existing CLI-subprocess pattern that drives `claude_code` and `codex` is the blueprint. OpenCode joins that family rather than inventing a new abstraction. The OpenCode CLI owns auth and provider selection internally (75+ providers including Ollama), so Sinfonia's surface is just: spawn, pipe prompt via stdin, parse the line-delimited JSON event stream on stdout, support `--continue <session_id>` for retry turns.
+1. **OTel emission, opt-in by configuration.** `tracing-opentelemetry` layered onto the existing `tracing` subscriber in both binaries (the json/pretty stdout subscribers stay unchanged). When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset and no `telemetry:` block is configured, the OTel layer is `None` and behavior matches today. See plan §2.
+2. **Tenancy from day one.** Every span and every metric carries a `tenant_id` attribute. Resolution precedence: `telemetry.tenant_id` from config → `SINFONIA_TENANT_ID` env → literal `"default"`. Resource-level `service.namespace = tenant_id` lets a Collector routing-processor split per-tenant data without touching emission code. See plan §3.
+3. **Sinfonia↔bridge typed HTTP event channel.** Replaces the original "bridge runs its own OTLP receiver" design (which would have re-implemented the OTel SDK). Sinfonia POSTs typed events (`session.token_usage`, `session.cost`, etc.) to the bridge over HTTPS, HMAC-signed with `telemetry.sinfonia_events_secret` (shared between the two configs; mismatch → bridge returns 401 + Sinfonia logs WARN on retry exhaustion). See plan §7.2.
+4. **Budget caps.** Token + cost limits enforced by the bridge at the tracker write boundary. When a cap is hit, the bridge transitions the ticket to its configured `over_budget_state` (or `blocked_state` if unconfigured) and writes the `sinfonia_budget_exhausted_*` custom fields. Cost values write as `CustomFieldValue::String("8.23")` per the §5.1 decision (NEVER f64 for money). See plan §5 + §6.
 
-### What's already prepared for Phase 2 (inherited from Phase 1)
+### What's already prepared for Phase 3 (inherited from Phases 1 + 2)
 
-- **Workspace shape.** `crates/sinfonia/src/agent/` is the right home for `opencode.rs`. The workspace conversion (P1-A) was Phase 2's blocking dependency.
-- **CLI backend pattern.** `crates/sinfonia/src/agent/cli/` already has the parser + spawn + continuation infrastructure that OpenCode reuses. Read `cli.rs` end-to-end before writing `opencode.rs`; the goal is to drop a sibling backend in, not to refactor the surrounding module.
-- **Liquid template scope with `issue.fields`.** Any new backend automatically gets `{{ issue.fields.sinfonia_* }}` access in its per-state prompt — wired in P1-C, well-known keys pre-seeded by `template.rs` (§5.2). Phase 2 doesn't need to touch this.
-- **Per-state runner overrides.** `WORKFLOW.md`'s `states:` block (and the `StateOverride` parser in `config/typed.rs`) already lets users route specific tracker states at OpenCode. No state-machine change is required for Phase 2 routing; the wiring is already there.
+- **Custom-field write path.** Phase 1's `IssueTracker` extension already exposes `update_issue_custom_field` (Linear impl) and `CustomFieldValue::String/Number/Null`. Phase 3's budget bookkeeping (`sinfonia_session_cost_usd`, `sinfonia_total_cost_usd`, `sinfonia_token_total`, `sinfonia_budget_exhausted_at`, etc.) just routes through these. Phase 3 needs to add the new keys to `WELL_KNOWN_FIELDS` in `custom_fields.rs` so template authors can use `| default:` against them (see §5.2 in this file).
+- **Per-turn token accounting in every backend.** `OpenCodeAgent::run_turn` (Phase 2) parses `provider/usage` stream events and surfaces `(prompt_tokens, completion_tokens, total_tokens)` per turn; `cli.rs` does the same for `claude_code` and `codex`; raw-LLM backends already aggregate via `TurnOutcome`. The instrumentation surface for Phase 3's `runner.session` span is "read existing struct fields and emit as OTel attributes" — not "instrument fresh code paths."
+- **The bridge tracker write path is exercised.** Phase 1's wiremock integration tests (`tests/bridge_e2e.rs`) cover the bridge's "fetch issue → mutate → transition → write custom fields" flow end-to-end for every §9.2 scenario. Phase 3's budget-cap-hit path layers on top of this without re-plumbing the GraphQL call shape.
+- **HMAC verification helper exists.** `crates/sinfonia-bridge/src/webhook/verify.rs` (P1-E) already has the constant-time HMAC-SHA256 compare. Phase 3's typed event channel will share this helper (move it up to a shared module if a third caller materializes; one new caller is below the threshold for refactoring).
+- **`server.public_url`** (added in P1-G for App-mode webhook delivery). Phase 3's `/events` endpoint on the bridge will land under the same URL prefix; no new public-URL plumbing is required.
 
-### Phase 1 → Phase 2 hand-off pointer
+### Phase 2 → Phase 3 hand-off pointer
 
-Read these in this order before starting Phase 2:
+Read these in this order before starting Phase 3:
 
-1. `docs/v0.3-plan/02-opencode-backend.md` — the Phase 2 plan. Source of truth for scope, validation rules, test coverage.
-2. `crates/sinfonia/src/agent/cli.rs` (and `cli/`) — the existing subprocess-backend pattern OpenCode mirrors.
-3. `crates/sinfonia/src/agent/mod.rs` — provider enumeration and dispatch.
-4. `WORKFLOW.example.md` — the `provider: claude_code` / `provider: codex` examples are what `provider: opencode` should slot next to.
+1. `docs/v0.3-plan/03-telemetry-budget.md` — the Phase 3 plan. Source of truth for scope, OTel attribute shapes, the typed-event wire format, validation rules, test coverage.
+2. `docs/v0.3-plan/00-overview.md` "Cross-cutting concerns" — Phase 3 sits at the cross-cutting OTel/Tenancy/Budget intersection; the overview is shorter than re-reading every per-phase doc.
+3. `crates/sinfonia/src/main.rs` (subscriber init) — Phase 3 wraps this with the OTel layer.
+4. `crates/sinfonia-bridge/src/main.rs` — same; the bridge gets the symmetric subscriber init plus a new `/events` route.
+5. `crates/sinfonia/src/agent/turn.rs` + `crates/sinfonia/src/orchestrator/runner.rs` — where `runner.session` and `runner.turn` spans land (per plan §4).
+6. `crates/sinfonia-tracker/src/custom_fields.rs` — Phase 3 adds new keys to `WELL_KNOWN_FIELDS` (see §5.2 below for why this is mandatory before the bridge can write them).
+7. `crates/sinfonia-bridge/src/webhook/verify.rs` (HMAC helper) — the typed event channel reuses the same algorithm.
 
-Then `git checkout -b v0.3-phase-2-opencode` off `main` (149-test baseline) and start there.
+Then `git checkout -b v0.3-phase-3-telemetry` off `main` (158-test baseline) and start there.
 
-### Other Phase 1 follow-up work (not blocking Phase 2)
+### Phase 3 follow-up watch list
 
-These items surfaced during Phase 1 but were not in P1-A..P1-I scope. They are not blockers; surface them at the right time:
+Items the plan doc surfaces that Phase 3 should explicitly resolve before merge — not Phase 1/2 hangover:
+
+- **Deferred plan-checker finding M-2** (cost-table drift gate): refuse cost caps when the embedded cost table is >180 days old. Token caps stay accepted. Phase 3 implementation. See §7 below.
+- **OTel exporter env-var verification spike.** Per Phase 2's lesson (the OpenCode flag-set spike found multiple plan-doc deltas), Phase 3 should verify the `opentelemetry-otlp` crate's actual env-var names and feature-flag knobs against the upstream crate docs *before* writing the exporter wrapper. Findings get pasted into the plan doc and the `init_observability` rustdoc.
+- **Postgres schema for the reference Collector setup.** Plan §6 references a Postgres-backed cost ledger. Decide at implementation time whether to ship the schema in `docker/postgres/init.sql` (Phase 6 territory) or as `docs/v0.3-plan/03-telemetry-budget-EXAMPLES/` companion files (Phase 3 territory). Default: docs-side under `docs/v0.3-plan/03-...` so Phase 6 can pick it up wholesale without a re-spec.
+
+### Other follow-up work (not blocking Phase 3)
+
+These items surfaced during Phases 1 or 2 but were not in scope. They are not blockers; surface them at the right time:
 
 - **CI for the bridge crate.** Wire `cargo run -p sinfonia-bridge -- BRIDGE.example.md --check` into CI so schema drift between `config.rs` and the example doc fails the build. Listed in §1 as one of the Phase 1 deliverables' implicit guarantees but not currently enforced by a CI job — add it when CI is being touched anyway.
-- **Manual verification.** The Phase 1 plan §9.3 calls for end-to-end verification against a real Linear project + sandbox GitHub repo before declaring the milestone shippable. The 149 automated tests cover the logic; manual verification confirms the credentials/auth dance against real services. Plan §9.3 says this is documented in `docs/v0.3-plan/01-bridge-mvp-VERIFY.md` (not yet written; do this before tagging v0.3.0-alpha.1 if it goes to actual release).
-- **STATUS doc retire path.** Once Phase 2..7 work begins, this file's "Phase 1" framing becomes archaeological. Two options: (a) keep accreting new sections per phase, (b) freeze this as `docs/v0.3-plan/STATUS-phase-1.md` and start a fresh `STATUS.md` for the active phase. Decide at the start of whichever phase first feels noisy in this layout.
+- **Manual verification.** Two docs are pending real-world manual runs:
+  - `docs/v0.3-plan/01-bridge-mvp-VERIFY.md` (NOT yet written; plan §9.3 calls for end-to-end verification against a real Linear project + sandbox GitHub repo before declaring v0.3.0-alpha.1 shippable).
+  - `docs/v0.3-plan/02-opencode-VERIFY.md` (written in P2; manual run against a real OpenCode install + Linear project still pending). Both should be exercised before tagging `v0.3.0-alpha.x` to an actual release. The 158 automated tests cover the logic; manual verification confirms the auth/credential dance against real services.
+- **STATUS doc retire path.** This file's "Phase 1 + 2" framing accretes per merged phase. Two options: (a) keep accreting new sections per phase, (b) freeze this as `docs/v0.3-plan/STATUS-phase-1-2.md` (or `STATUS-archive.md`) and start a fresh `STATUS.md` once Phase 3 is in flight. Decide if/when this file starts to feel noisy — current length (~390 lines) is still manageable.
 
 ---
 
@@ -125,7 +156,7 @@ sinfonia/
 │   ├── sinfonia/                # the daemon (existing)
 │   │   ├── Cargo.toml
 │   │   ├── src/
-│   │   │   ├── agent/           # raw + CLI agent backends
+│   │   │   ├── agent/           # raw + CLI agent backends (incl. opencode.rs from P2)
 │   │   │   ├── config/          # WORKFLOW.md parser; typed config
 │   │   │   ├── domain.rs        # orchestrator-only types + re-exports
 │   │   │   ├── errors.rs        # sinfonia::Error (wraps tracker::Error)
@@ -178,7 +209,7 @@ sinfonia/
 
 ## 5. Implementation decisions you'll need to know
 
-These are deltas from the plan docs — choices made during P1-A/B/C implementation that future work needs to respect.
+These are deltas from the plan docs — choices made during Phase 1 + Phase 2 implementation that future work needs to respect. §5.1–§5.9 are Phase 1 decisions; §5.10–§5.12 are Phase 2 deltas.
 
 ### 5.1 `CustomFieldValue` has THREE variants, not five
 
@@ -252,6 +283,34 @@ The script exists because the workspace-move commit needed a verifiable "logic u
 
 **Implication:** P1-F can treat `pr_ticket_map` as canonical for all three actions and doesn't need a separate "did this PR get re-pointed at a different ticket?" code path.
 
+### 5.10 OpenCode CLI flag set differs from the Phase 2 plan-doc proposal
+
+**Plan doc (02-opencode-backend.md §2 / §3.1):** proposed `--prompt-stdin --output-format json --quiet [--continue <id>] [--model <name>]`.
+**Implementation (`crates/sinfonia/src/agent/opencode.rs::build_command_line`):** uses `--format json [--session <id>] [--model <name>]`.
+
+**Why:** the doc-spike against `opencode.ai/docs` + the upstream `sst/opencode` source (`packages/opencode/src/cli/cmd/run.ts::RunCommand` and `emit()`) found the plan's flag names were a reasonable analogy to `claude` / `codex` but did not match OpenCode's actual surface:
+- `--prompt-stdin` doesn't exist — OpenCode auto-detects non-TTY stdin via `resolveRunInput()` and uses it as the message.
+- `--output-format json` is spelled `--format json`. There is no `--output-format`.
+- `--quiet` doesn't exist — passing `--format json` already suppresses the TUI (the two are mutually exclusive with `--interactive`).
+- `--continue` exists but resumes only the *last* session globally — wrong for Sinfonia's concurrent per-issue workspaces. The correct flag for "resume *this* session" is `--session <id>`.
+- Session ID on every event is `sessionID` (camelCase), not `session_id`.
+
+**Implication for future backends:** when a plan doc references a vendor-CLI flag, OTel env var, or third-party HTTP wire format, **verify against vendor docs before writing code**. Phase 3 will need to do this for the `opentelemetry-otlp` crate's exporter env vars (the OpenCode lesson generalizes: plan-doc proposed surfaces are reasonable analogies, not authoritative wire specs). Findings get pasted into the plan doc and a top-of-file rustdoc block in the implementation file (see `opencode.rs` for the pattern; full deltas table in `docs/v0.3-plan/02-opencode-VERIFY.md`).
+
+### 5.11 OpenCode model names use `provider/model` wire format; Sinfonia passes through verbatim
+
+**Implementation:** `AgentProvider::OpenCode` has no `default_model` — `LlmConfig::model` is passed through to `opencode run --model <name>` exactly as authored.
+
+**Why:** OpenCode routes internally to 75+ providers, and the model string includes the provider prefix (e.g. `anthropic/claude-sonnet-4-6`, `ollama/qwen2.5-coder:32b`, `openai/gpt-5`). A Sinfonia-side default would either (a) lock users to one provider or (b) require provider-detection logic Sinfonia has no business owning.
+
+**Implication:** users authoring `WORKFLOW.md` for `provider: opencode` MUST use the `provider/model` syntax — `WORKFLOW.example.md` documents this; the README backend table documents this; the `02-opencode-VERIFY.md` doc captures it. If a future skill (Phase 5's `setup-agent-backend`) generates an OpenCode block, it must surface the same wire format. Don't normalize the model string in `OpenCodeAgent::new` — let OpenCode error on unknown providers itself; coupling Sinfonia to OpenCode's provider registry is a maintenance trap.
+
+### 5.12 `which` is now a workspace-level dependency
+
+**Implementation:** Phase 2 added `which = "8"` to `[workspace.dependencies]` in the root `Cargo.toml` and consumed it from `crates/sinfonia/Cargo.toml`'s `[dependencies]`. Used by `OpenCodeAgent`'s preflight check (returns a clear "opencode not on PATH" error before the daemon tries to spawn).
+
+**Implication:** if Phase 3 (or any later phase) needs preflight binary checks — Phase 6's docker image bootstrap might, Phase 5's setup skills definitely will — reuse `which` instead of shelling out to `command -v`. The crate handles Windows path-extension semantics that `command -v` doesn't. The pre-existing `cli.rs` preflight (for `claude` and `codex`) was written before `which` was a workspace dep; refactoring it to use `which` is below the threshold for Phase 3's scope but could happen as part of Phase 6's docker work if `cli.rs` gets touched anyway.
+
 ---
 
 ## 6. Resume protocol — first commands a fresh agent should run
@@ -261,32 +320,36 @@ The script exists because the workspace-move commit needed a verifiable "logic u
 git checkout main
 git pull --ff-only origin main
 
-# 2. Confirm test baseline (should be 149 passing tests, zero failures).
+# 2. Confirm test baseline (should be 158 passing tests, zero failures).
 cargo test --workspace --no-fail-fast 2>&1 | grep -E "test result"
 
 # 3. Read the rolling status (this file), the milestone overview, and the
-#    Phase 2 plan.
+#    Phase 3 plan.
 cat docs/v0.3-plan/STATUS.md
 cat docs/v0.3-plan/00-overview.md
-cat docs/v0.3-plan/02-opencode-backend.md
+cat docs/v0.3-plan/03-telemetry-budget.md
 
-# 4. Spot-check Phase 1's deliverables on disk (none of these should error).
+# 4. Spot-check Phase 1 + 2 deliverables on disk (none of these should error).
 ls crates/sinfonia-bridge/src/        # expect: config.rs, lib.rs, main.rs, storage.rs, labels.rs, selftest.rs, webhook/, feedback/, github/
 ls crates/sinfonia-bridge/tests/      # expect: bridge_e2e.rs
+ls crates/sinfonia/src/agent/opencode.rs    # Phase 2: the OpenCode CLI backend
 ls BRIDGE.example.md                  # Phase 1 docs, P1-I
 cargo run -q -p sinfonia-bridge -- BRIDGE.example.md --check  # expect: ok
 
-# 5. Read the Phase-2 hand-off blueprint (the existing CLI backend OpenCode
-#    mirrors) before writing any code.
-cat crates/sinfonia/src/agent/cli.rs
+# 5. Read the Phase-3 hand-off blueprint before writing any code.
+#    Phase 3 layers tracing-opentelemetry over the existing subscribers and
+#    adds a typed Sinfonia→bridge event channel; the existing tracing wiring
+#    in both main.rs files is what gets wrapped.
+cat crates/sinfonia/src/main.rs            # subscriber init
+cat crates/sinfonia-bridge/src/main.rs     # symmetric init; will gain /events route
+cat crates/sinfonia/src/agent/turn.rs      # where runner.turn / runner.session spans land
+cat crates/sinfonia/src/orchestrator/runner.rs
 
-# 6. Start a Phase 2 branch off main and TaskCreate a fresh sub-task list
-#    per `02-opencode-backend.md` §2 (the surface-area table is the natural
-#    seed for tasks).
-git checkout -b v0.3-phase-2-opencode
+# 6. Start a Phase 3 branch off main.
+git checkout -b v0.3-phase-3-telemetry
 ```
 
-Phase 1 of v0.3 is complete: P1-A through P1-I are all merged. Phase 2 (OpenCode agent backend) is the next pickup; Phases 3..7 follow in plan-doc order unless a parallel run is desired (see §7 below for which inter-phase dependencies are real).
+Phase 1 + Phase 2 of v0.3 are complete (P1-A..P1-I + P2 all merged). Phase 3 (Telemetry + budget enforcement) is the next pickup; Phases 4..7 follow in plan-doc order unless a parallel run is desired (see §7 below for which inter-phase dependencies are real — Phase 4 is the next plausible parallel candidate after Phase 3 starts, since it only depends on Phase 1 and touches disjoint code).
 
 ---
 
@@ -298,8 +361,8 @@ From the second-pass `gsd-plan-checker` review. The originals are in `docs/v0.3-
 
 | ID | Gist | Resolve when |
 |---|---|---|
-| **M-1** | Phase 2 depends only on Phase 1's workspace conversion, not the rest of P1. Parallelism unlock. | Already unlocked since P1-A; with Phase 1 now fully complete this is moot — Phase 2 is simply the next phase to start. |
-| **M-2** | Cost-table drift gate is asymmetric. Refuse cost caps (not token caps) when table >180 days old. | Phase 3 implementation. |
+| **M-1** | Phase 2 depends only on Phase 1's workspace conversion, not the rest of P1. Parallelism unlock. | ✅ Closed by Phase 2 merge (PR #9, commit `3b84a20`, merge `f26aca7`). No longer applicable. |
+| **M-2** | Cost-table drift gate is asymmetric. Refuse cost caps (not token caps) when table >180 days old. | Phase 3 implementation (next pickup). The embedded cost table lives in the budget-enforcement module per `03-telemetry-budget.md`; the drift gate fires at config-load time. |
 | **M-4** | (Closed) §6's "tracker poll every 60s" was rewritten to webhook-driven. | N/A — done. |
 | **M-8** | `inquire` should be `crates/sinfonia/Cargo.toml`-scoped, not workspace-scoped. | Phase 5. |
 
@@ -307,11 +370,19 @@ From the second-pass `gsd-plan-checker` review. The originals are in `docs/v0.3-
 
 | Topic | Where | When to address |
 |---|---|---|
-| `WELL_KNOWN_FIELDS` boundary semantics — what happens when the bridge writes a key outside the list | `custom_fields.rs` | ✅ documented in `docs/SPEC.md` §11.6.4 (P1-I). |
+| `WELL_KNOWN_FIELDS` boundary semantics — what happens when the bridge writes a key outside the list | `custom_fields.rs` | ✅ documented in `docs/SPEC.md` §11.6.4 (P1-I). Phase 3 must add the new budget-related keys (`sinfonia_session_cost_usd`, `sinfonia_total_cost_usd`, `sinfonia_token_total`, `sinfonia_budget_exhausted_at`, etc.) to `WELL_KNOWN_FIELDS` before the bridge writes them — see §5.2. |
 | `comments(first: 100)` upper limit when bot has >100 interactions | `linear.rs` ISSUE_FRAGMENT | ✅ documented in `docs/SPEC.md` §11.6.7 (P1-I) with RECOMMENDED mitigations. Open: implement `comments(orderBy: createdAt, first: 5)` or marker-by-author filtering if anyone hits the limit. |
 | `JiraTracker` raw_graphql returns the tracker crate's stock "not supported" error since we moved it; sinfonia's old behavior was equivalent. No action needed unless someone files an issue. | `linear.rs::raw_graphql` vs `jira.rs::raw_graphql` | N/A — confirmed equivalent. |
 | CI hookup for the bridge crate (`cargo run -p sinfonia-bridge -- BRIDGE.example.md --check` as a docs-side gate) | repo CI config | When CI is being touched anyway — surface as a follow-up if not already in scope. |
-| Manual end-to-end verification against a real Linear project + sandbox GitHub repo (`docs/v0.3-plan/01-bridge-mvp-VERIFY.md`, plan §9.3) | manual ops doc | Before tagging `v0.3.0-alpha.1` to an actual release. The 149 automated tests cover logic; manual run confirms the auth dance. |
+| Manual end-to-end verification against a real Linear project + sandbox GitHub repo (`docs/v0.3-plan/01-bridge-mvp-VERIFY.md`, plan §9.3) | manual ops doc | Before tagging `v0.3.0-alpha.1` to an actual release. The 158 automated tests cover logic; manual run confirms the auth dance. |
+
+### Found during P2 implementation
+
+| Topic | Where | When to address |
+|---|---|---|
+| Vendor-CLI flag deltas (Phase 2 plan-doc surface didn't match `opencode.ai/docs`) | `opencode.rs` rustdoc + `docs/v0.3-plan/02-opencode-VERIFY.md` | ✅ resolved in P2; pattern documented in §5.10 for future phases (especially Phase 3's OTel exporter env vars). |
+| Manual end-to-end verification of OpenCode against a real Linear project | `docs/v0.3-plan/02-opencode-VERIFY.md` §5.3 | Before tagging `v0.3.0-alpha.x` to an actual release. The 9 new tests cover logic; manual run confirms the OpenCode auth dance and the per-state routing. |
+| `cli.rs` preflight could migrate to `which` now that it's a workspace dep | `crates/sinfonia/src/agent/cli.rs` preflight helper | Optional; below threshold for Phase 3. Could fold into Phase 6 if `cli.rs` gets touched anyway for docker-image work. See §5.12. |
 
 ---
 
@@ -322,9 +393,11 @@ For the next agent's first message to itself when context is fresh:
 ```
 Working directory: /Users/brettlee/work/sinfonia
 Current branch: main (assumed; verify with `git branch --show-current`)
-Last merged work: P1-I Phase 1 documentation (PR #8, commit a057218, merge e8f224a)
-                  — **Phase 1 of v0.3 is now complete.**
-Earlier merges: P1-H wiremock integration tests (PR #7, commit d7ad72d, merge 749c9c4);
+Last merged work: P2 OpenCode agent backend (PR #9, commit 3b84a20, merge f26aca7)
+                  — **Phase 2 of v0.3 is now complete.**
+Earlier merges: P1-I Phase 1 docs (PR #8, commit a057218, merge e8f224a)
+                  — closed out Phase 1 of v0.3;
+                P1-H wiremock integration tests (PR #7, commit d7ad72d, merge 749c9c4);
                 P1-G GitHub auth (PR #6, commit b0d7272, merge 8055659);
                 P1-F feedback loop (PR #5, commit 9d33d51);
                 P1-E webhook layer (PR #4, commit 69eb8e0);
@@ -334,20 +407,35 @@ Earlier merges: P1-H wiremock integration tests (PR #7, commit d7ad72d, merge 74
 Read these in this order:
   1. docs/v0.3-plan/STATUS.md   (this file — rolling milestone status)
   2. docs/v0.3-plan/00-overview.md   (milestone index, phase deps)
-  3. docs/v0.3-plan/02-opencode-backend.md   (Phase 2 plan; next pickup)
-     — and skim crates/sinfonia/src/agent/cli.rs (the existing CLI backend
-     pattern OpenCode mirrors) before writing code.
+  3. docs/v0.3-plan/03-telemetry-budget.md   (Phase 3 plan; next pickup)
+     — and skim the four hand-off files in §2 above before writing code:
+     crates/sinfonia/src/main.rs (subscriber init that Phase 3 wraps),
+     crates/sinfonia-bridge/src/main.rs (symmetric init + future /events),
+     crates/sinfonia/src/agent/turn.rs and
+     crates/sinfonia/src/orchestrator/runner.rs (where the runner.session
+     / runner.turn spans land).
 
 Source of truth for the underlying change set:
   /Users/brettlee/Downloads/sinfonia-change-proposal.md
 
 Workspace shape:
-  crates/sinfonia/         — the daemon (Phase 2 lives under src/agent/opencode.rs as a sibling of cli.rs)
-  crates/sinfonia-tracker/ — shared tracker (Linear + Jira adapters, custom_fields) — Phase 1 complete
-  crates/sinfonia-bridge/  — bridge binary — Phase 1 complete; ships as v0.3.0-alpha.1
+  crates/sinfonia/         — the daemon; Phase 2 added src/agent/opencode.rs
+                             as a sibling of cli.rs. Phase 3 wraps
+                             src/main.rs subscriber init and adds an OTel
+                             layer.
+  crates/sinfonia-tracker/ — shared tracker (Linear + Jira adapters,
+                             custom_fields). Phase 3 adds new
+                             budget-related keys to WELL_KNOWN_FIELDS
+                             (see §5.2 and the §7 "Found during P1"
+                             checklist).
+  crates/sinfonia-bridge/  — bridge binary; Phase 1 complete, ships as
+                             v0.3.0-alpha.1. Phase 3 adds the /events
+                             route + budget-enforcement module.
 
-Test baseline: 149 passing, 0 failures. Phase 2 adds ~150 LOC of tests
-(per 02-opencode-backend.md); do not regress the existing 149.
+Test baseline: 158 passing, 0 failures (40 sinfonia unit + 13 conformance
++ 7 tracker + 89 bridge unit + 9 bridge integration). Phase 3 adds
+~300 LOC of tests per 03-telemetry-budget.md; do not regress the
+existing 158.
 ```
 
 ---
@@ -386,4 +474,35 @@ Phase 1 of v0.3 is **shippable on its own** as `v0.3.0-alpha.1`. Phases 2–7 la
 
 ---
 
-**Last actionable step before clearing context:** check `docs/v0.3-plan/STATUS.md` reads cleanly (this file), then `git push` if any local-only changes remain. Phase 2 picks up from a fresh context with this doc as the entry point.
+## 10. What Phase 2 shipped (closing summary)
+
+All success criteria from the Phase 2 deliverable checklist (`02-opencode-backend.md` §8) are met:
+
+- `crates/sinfonia/src/agent/opencode.rs` implements `CodingAgent` for `OpenCodeAgent` (686 LOC including rustdoc + 8 unit tests). Mirrors `cli.rs`'s parser + spawn + continuation pattern; does not refactor `cli.rs` or invent a new abstraction.
+- `AgentProvider::OpenCode` variant in `crates/sinfonia/src/config/typed.rs` with `parse()` arm (`"opencode" => Ok(Self::OpenCode)`), `is_cli()` membership, default command (`"opencode run --format json"`), `default_llm_env()`, and `validate_for_dispatch()` hook.
+- Factory wiring in `crates/sinfonia/src/agent/mod.rs` (`mod opencode;` declaration + the `AgentProvider::OpenCode => Arc::new(opencode::OpenCodeAgent::new(cfg, llm)?)` arm).
+- `which = "8"` added to `[workspace.dependencies]` and consumed by `crates/sinfonia/Cargo.toml` for the preflight binary check.
+- Unit tests per §5.1 of the Phase 2 plan, plus two beyond the minimum: `build_command_line_first_turn` / `build_command_line_pending_session` / `build_command_line_resumed_session` / `parse_init_event` / `parse_token_event` / `parse_full_stdout_picks_last_text` / `preflight_missing_binary` / `opencode_provider_is_cli_provider`.
+- Integration parse-test `opencode_provider_parses` in `tests/spec_conformance.rs` covers all three §4 WORKFLOW.md example shapes (default-lane, state-machine routing, local-only Ollama).
+- `WORKFLOW.example.md` gains a commented OpenCode states block with an inline note that OpenCode owns auth via its own CLI (`opencode auth login`) and Sinfonia does NOT pass an api_key.
+- Module-level rustdoc on `opencode.rs` matches the comment density of `cli.rs`: doc comments on the struct, on `start_session` / `run_turn` / `stop_session`, on the `pending-` prefix convention, and on every non-obvious helper.
+- README backend table adds OpenCode as a supported coding-agent CLI alongside `claude_code` / `codex`; the conformance scorecard marks OpenCode as a delivered SPEC §18.2 extension.
+- `docs/SPEC.md` §18.2 lists `OpenCode backend` as a recommended extension.
+- `CHANGELOG.md` `[Unreleased]` section carries the OpenCode entry (when v0.3.0-alpha.2 — or whatever the next tag is — gets cut, this is what the release notes will pull from).
+- `docs/v0.3-plan/02-opencode-VERIFY.md` (204 LOC) captures the doc-spike findings (flag deltas table), the §5.3 manual-verification steps, and the "pending real-world run before v0.3.0-alpha.x tag" deferral.
+- The full `cargo test --workspace --no-fail-fast` count is **158 tests passing, zero failures** — up from Phase 1's 149 by +9 (40 sinfonia + 13 conformance + 7 tracker + 89 bridge unit + 9 bridge integration).
+
+Phase 2 of v0.3 is **shippable on top of Phase 1**. Phases 3–7 layer on top of both.
+
+---
+
+**Phase 2 retrospective bullets** (for the v0.3 retro, when one is written):
+
+- The doc-spike-against-vendor-docs pattern (plan §7 open question 1) caught five concrete deltas in OpenCode's CLI surface before any code was written. Generalizing this for Phase 3: anywhere a plan doc references a vendor wire format (OTel exporter env vars, OTLP transport knobs, Postgres routing-processor config), verify it against upstream docs in the same ~30-minute spike before writing. The five-line "Deltas vs. plan" table at the top of `opencode.rs` is the model.
+- Adding `which` to `[workspace.dependencies]` (vs. `crates/sinfonia/Cargo.toml`'s `[dependencies]`) cost nothing at this scale and gives future phases (Phase 5's setup skills, Phase 6's docker bootstrap, possibly a `cli.rs` cleanup) a free reuse path. The `inquire`-was-workspace-scoped lesson (§7 M-8) cuts the other way — workspace-scoping crates used by exactly one crate creates the impression of broader use. Phase 3 should put `tracing-opentelemetry` and `opentelemetry-otlp` at workspace scope (both binaries consume them) but anything single-crate (e.g. a Phase 3 budget-table-only helper) stays crate-scoped.
+- Shipping Phase 2 as one PR (vs. Phase 1's nine) was right-sized — the work was naturally one unit (~400 LOC of Rust + ~150 LOC of tests + ~100 LOC of docs, all interdependent). The Phase 1 nine-way split made sense because each P1-x sub-task was independently shippable; Phase 2 wasn't. Phase 3 estimates ~1 100 LOC + 300 + 500 = ~1 900; that's plausibly two or three PRs (e.g. P3-A: subscriber init + tenant resolution, P3-B: spans + metrics + collector reference, P3-C: budget enforcement + typed event channel). Decide at plan-phase start, not partway through.
+- The OpenCode `provider/model` wire format (§5.11) is the second instance of "the integration's wire format isn't Sinfonia's wire format" — the first was Linear's marker-comment envelope in P1-C. Both ended with "pass through verbatim; don't normalize." Phase 3's `tenant_id` resolution (config → env → "default") is on the other side of that line — it IS Sinfonia's concern because Sinfonia owns the multi-tenant taxonomy. Distinguishing "Sinfonia owns this taxonomy" vs. "Sinfonia consumes a vendor's taxonomy" is the load-bearing call.
+
+---
+
+**Last actionable step before clearing context:** check `docs/v0.3-plan/STATUS.md` reads cleanly (this file), then `git push` if any local-only changes remain. Phase 3 picks up from a fresh context with this doc as the entry point.
