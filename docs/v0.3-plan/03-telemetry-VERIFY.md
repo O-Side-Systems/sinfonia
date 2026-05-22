@@ -123,6 +123,39 @@ The reference Collector config + Postgres schema ship in
 will templatize them (per-deployment endpoints, per-tenant DSNs).
 **Disposition:** Phase 5 work — not in scope for Phase 3.
 
+### 2.5 Wire-level integration tests (`tests/telemetry_e2e.rs`, `tests/budget_e2e.rs`)
+
+Plan §9.2 calls for two integration test files:
+
+- `tests/telemetry_e2e.rs` — spin up an in-process OTLP receiver, run
+  Sinfonia against a mocked tracker + agent for a few ticks, assert
+  captured spans contain the expected attribute shapes.
+- `tests/budget_e2e.rs` — wire the bridge + a mocked tracker, feed
+  synthesized `runner.session.completed` events crossing
+  `max_cost_per_ticket_usd`, assert the ticket transitions to
+  `budget_exceeded_state` and gets the `sinfonia:budget-exceeded`
+  label, AND a subsequent CI failure on the same ticket does NOT
+  transition back to a needs-fixes state.
+
+**Disposition:** deferred to Phase 3.1 alongside the OTel metrics
+layer (§2.1). The unit suite already pins the algorithmic surface:
+
+| Concern | Pinned by |
+|---|---|
+| HMAC algorithm + header format | `hmac_signature_format_matches_sinfonia` (bridge), `sign_produces_sha256_prefixed_hex` (sinfonia) |
+| Cap detection (under / at-tokens / at-cost) | `accumulates_under_cap`, `token_cap_hit_returns_cap_hit_outcome`, `cost_cap_hit_when_cost_caps_accepted` |
+| Flush writes correct field types per STATUS §5.1 | `flush_writes_to_tracker_and_clears_pending` |
+| Cost table lookup + freshness gates | the 9 tests in `feedback::cost::tests` |
+| Tenant resolver precedence | 4 tests each in both crates' `telemetry::tenant::tests` |
+| Subscriber registry idempotency + recent-buffer cap | 3 tests in `sinfonia::http::events::tests` |
+| Event schema round-trip parse | `parses_session_completed_event_shape` |
+
+The plan §9.3 manual-verification protocol (§3 below) covers the
+remaining wire-level concern: full event POST → HMAC verify →
+cap-hit → tracker transition. Promote the integration tests when
+that protocol runs against a real Linear project, OR earlier if a
+regression surfaces against the unit-tested surface.
+
 ---
 
 ## 3. Manual verification — pending
