@@ -6,9 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-## [0.3.0] — 2026-MM-DD
+## [0.3.0-alpha.2] — 2026-05-22
 
-This release makes Sinfonia legible as a team-grade orchestrator alongside its existing single-user shape. Six additions, all opt-in: the `sinfonia-bridge` companion daemon that closes the CI → fix loop (with bounded attempts, failure categorization, and budget caps), OpenCode as a first-class agent backend, OpenTelemetry emission tenant-tagged from day one, six setup skills for AI-coding-tool-driven scaffolding, six published Docker images, and the finalized doc set. The daemon's behaviour against an unchanged v0.2 `WORKFLOW.md` is preserved — see [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md).
+Second v0.3 preview. Makes Sinfonia legible as a team-grade orchestrator alongside its existing single-user shape. Six additions over `[0.3.0-alpha.1]`, all opt-in: OpenTelemetry emission tenant-tagged from day one (Phase 3), the Jira bridge write surface (Phase 4), six setup skills + `sinfonia --check` / `sinfonia init` CLIs for AI-coding-tool-driven scaffolding (Phase 5), six published Docker images (Phase 6), and the finalized doc set with `docs/DEPLOYMENT.md` + `docs/CLIENT_SETUP.md` + `docs/MIGRATION-v0.2-to-v0.3.md` (Phase 7). The daemon's behaviour against an unchanged v0.2 `WORKFLOW.md` is preserved — see [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md). v0.3.0 GA waits on a manual readthrough of the doc set and the carried-forward manual-verification debts (Linear bridge end-to-end, OpenCode + Linear, Collector + Postgres cap-hit cycle, real Jira sandbox).
 
 ### Added
 
@@ -141,7 +141,7 @@ Initial public release.
 - The Codex app-server stdio protocol backend is stubbed; this release targets the `codex exec` CLI surface instead.
 - One project per running daemon. Multi-project deployments use one daemon per project.
 
-[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...v0.3.0
+[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.2...HEAD
+[0.3.0-alpha.2]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...v0.3.0-alpha.2
 [0.3.0-alpha.1]: https://github.com/O-Side-Systems/sinfonia/compare/v0.1.0...v0.3.0-alpha.1
 [0.1.0]: https://github.com/O-Side-Systems/sinfonia/releases/tag/v0.1.0
