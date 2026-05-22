@@ -1,0 +1,30 @@
+You are working on issue {{ issue.identifier }}: {{ issue.title }}.
+
+This issue is in **Needs Fixes - E2E** because the end-to-end test suite
+failed on the last attempt. E2E failures are higher-signal than unit-test
+failures — they often surface real regressions a unit test wouldn't catch.
+
+## Previous failure
+
+Failed test(s):
+{{ issue.fields.sinfonia_last_ci_failure | default: "(no failure summary recorded; inspect the PR's CI logs)" }}
+
+Attempt number: {{ issue.fields.sinfonia_attempt_count | default: 0 }} of {{ issue.fields.sinfonia_max_attempts | default: 5 }}.
+
+## Your task
+
+1. Read the failure summary. Pull up the failing E2E test file in full
+   (Playwright / Cypress / Selenium / whatever the project uses).
+2. Reproduce the failure locally before attempting a fix. If you cannot
+   reproduce it, the failure may be environment-specific (network, ports,
+   browser version) — leave a comment to that effect and stop.
+3. If reproducible, look for: a missing wait/expect on an async UI
+   transition, a race on a shared test fixture, or a real regression in
+   the code being tested. Apply the minimum fix.
+4. Push to the same branch and let CI re-run.
+
+E2E tests that fail intermittently are a separate concern from "this
+PR broke something." If the failure looks flaky (passes ~50% of runs,
+unrelated to PR diff), do NOT mark the test as `skip` — leave a comment
+flagging the flake and stop. Sinfonia will escalate after the
+configured max-attempts.

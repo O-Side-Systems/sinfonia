@@ -58,6 +58,9 @@ url = { workspace = true }
 once_cell = { workspace = true }
 which = { workspace = true }
 
+# Phase 5 — `sinfonia init` REPL (§3.2). Sync, no async needed.
+inquire = { workspace = true }
+
 # Phase 3 — OTel emission + outbound HMAC for the typed event channel (§7.2).
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }

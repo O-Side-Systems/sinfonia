@@ -1,0 +1,37 @@
+# Actions-only topology — every PR's CI run posts its outcome to the
+# bridge via this workflow. No public bridge endpoint required.
+#
+# Place at `.github/workflows/sinfonia-ci-report.yml`. The
+# `BRIDGE_WEBHOOK_URL` repo secret should point at the bridge's webhook
+# endpoint (often a private tunnel like ngrok or a Cloudflare Tunnel).
+
+name: Report CI status to Sinfonia bridge
+
+on:
+  check_suite:
+    types: [completed]
+  workflow_run:
+    types: [completed]
+  pull_request:
+    types: [opened, closed, ready_for_review]
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST to bridge
+        env:
+          SECRET: ${{ "{{ secrets.BRIDGE_WEBHOOK_SECRET }}" }}
+          URL: ${{ "{{ secrets.BRIDGE_WEBHOOK_URL }}" }}
+        run: |
+          PAYLOAD=$(cat <<'JSON'
+          ${{ "{{ toJSON(github.event) }}" }}
+          JSON
+          )
+          SIG="sha256=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
+          curl -fsSL -X POST "$URL" \
+            -H "Content-Type: application/json" \
+            -H "X-GitHub-Event: ${{ "{{ github.event_name }}" }}" \
+            -H "X-GitHub-Delivery: ${{ "{{ github.run_id }}-${{ github.run_attempt }}" }}" \
+            -H "X-Hub-Signature-256: $SIG" \
+            --data "$PAYLOAD"

@@ -1,0 +1,32 @@
+# Sibling-daemon topology — Sinfonia + sinfonia-bridge on the same host,
+# bridge webhook exposed on port {{ webhook.port }} via a reverse proxy.
+version: "3.9"
+
+services:
+  sinfonia:
+    image: oside/sinfonia:{{ image_tag | default: "latest" }}
+    command: ["sinfonia", "/etc/sinfonia/WORKFLOW.md", "--port", "{{ server.port }}"]
+    volumes:
+      - ./WORKFLOW.md:/etc/sinfonia/WORKFLOW.md:ro
+      - ./workspaces:/var/sinfonia/workspaces
+    environment:
+      - LINEAR_API_KEY
+      - ANTHROPIC_API_KEY
+    restart: unless-stopped
+
+  sinfonia-bridge:
+    image: oside/sinfonia-bridge:{{ image_tag | default: "latest" }}
+    command: ["sinfonia-bridge", "/etc/sinfonia/BRIDGE.md"]
+    volumes:
+      - ./BRIDGE.md:/etc/sinfonia/BRIDGE.md:ro
+      - bridge-state:/var/sinfonia/bridge
+    environment:
+      - GITHUB_TOKEN
+      - LINEAR_API_KEY
+      - SINFONIA_BRIDGE_WEBHOOK_SECRET
+    ports:
+      - "{{ webhook.port }}:{{ webhook.port }}"
+    restart: unless-stopped
+
+volumes:
+  bridge-state: {}

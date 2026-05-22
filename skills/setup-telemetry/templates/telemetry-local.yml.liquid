@@ -1,0 +1,7 @@
+# Local Collector + Postgres. Mirrors `examples/telemetry/`.
+telemetry:
+  otel_enabled: true
+  otlp_endpoint: http://otel-collector:4317
+  # The local Collector accepts un-authenticated OTLP; the GitHub-actions
+  # webhook + the typed event channel still carry their own HMAC.
+  tenant_id: {{ tenant_id | default: "default" }}

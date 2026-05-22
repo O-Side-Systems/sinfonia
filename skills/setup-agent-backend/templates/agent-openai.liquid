@@ -1,0 +1,6 @@
+agent:
+  provider: openai
+
+llm:
+  api_key: $OPENAI_API_KEY
+  model: {{ model | default: "gpt-4" }}

@@ -1,0 +1,9 @@
+# Honeycomb OTLP export. Append to the `telemetry:` block in WORKFLOW.md
+# (and BRIDGE.md if the bridge is deployed).
+telemetry:
+  otel_enabled: true
+  otlp_endpoint: https://api.honeycomb.io
+  headers:
+    x-honeycomb-team: $HONEYCOMB_API_KEY
+    x-honeycomb-dataset: {{ honeycomb.dataset | default: "sinfonia" }}
+  tenant_id: {{ tenant_id | default: "default" }}

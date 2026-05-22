@@ -1,0 +1,6 @@
+agent:
+  provider: anthropic
+
+llm:
+  api_key: $ANTHROPIC_API_KEY
+  model: {{ model | default: "claude-opus-4-7" }}

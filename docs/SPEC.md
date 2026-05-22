@@ -2400,6 +2400,20 @@ Use the same validation profiles as Section 17:
   routing-processor split per-tenant data without touching emission code. See §11.6.11 for the
   bridge's typed Sinfonia↔bridge event channel (a separate concern from OTel emission) and
   §11.6.12 for the budget-enforcement surface that consumes it.
+- Setup skills + CLI extensions — a daemon implementation MAY ship setup skills at a
+  conventional `skills/` directory at the repo root, each as a self-contained folder containing
+  a `SKILL.md` (YAML front-matter format with `name`, `description`, `version` keys + a
+  procedural runbook body), a `templates/*.liquid` directory for the artifacts the skill
+  produces, and an optional `validators/*.sh` directory wrapping CLI gates. AI coding tools
+  invoke skills directly; humans MAY read each `SKILL.md` as a runbook. A `--check` flag on
+  the daemon binary that validates a workflow file (with documented exit codes per failure
+  class: `0` ok / `2` YAML parse / `3` schema / `4` template / `5` tracker auth) lets skills
+  branch on the exit code for specific remediation. An interactive `init` subcommand provides
+  an AI-tool-free equivalent of the canonical `setup-workflow` skill. State-machine prompt
+  templates that reference bridge-managed custom fields (e.g.
+  `issue.fields.sinfonia_last_ci_failure`) MUST guard every reference with a `| default:`
+  filter — strict-mode Liquid rejects absent fields, and the guard is what lets a human drop a
+  ticket into Needs Fixes without any prior bridge run.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.
