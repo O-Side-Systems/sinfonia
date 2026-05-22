@@ -1,6 +1,6 @@
 # v0.3.0 milestone — status & handoff
 
-**Last updated:** 2026-05-22 (P4 merged via #11 — **Phase 4 complete**; Phase 5 is the next pickup)
+**Last updated:** 2026-05-22 (P5 landed on branch `v0.3-phase-5-skills-cli`; PR pending. Phases 1–4 merged to `main`.)
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
 **Branch state:** `main` contains the **complete Phase 1, Phase 2, and Phase 3 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`). Phase 3 (#10 — P3: telemetry + budget enforcement) lands an opt-in OTel emission layer over both binaries (12 spans total + tenant tagging from day one), the typed Sinfonia↔bridge event channel that replaces the dropped OTLP receiver (`AgentEvent::SessionCompleted` + HMAC-signed POST/verify reusing the GitHub webhook scheme), the cost / budget pipeline (`BudgetManager` + embedded cost table + 30 s idle-flush debounce + M-2 freshness gates), terminal-state detection via `pull_request.closed.merged=true`, the `examples/telemetry/` reference Collector + Postgres deployment, and the SPEC §11.6.11 / §11.6.12 / §18.2 + CHANGELOG + README + VERIFY doc surface.
 
@@ -18,7 +18,9 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 **Phase 4 of v0.3 is also complete (merged via #11, `17f5213`).** The five `IssueTracker` bridge-write methods (`transition_issue` / `read_custom_field` / `write_custom_field` / `ensure_custom_field` / `post_comment`) are implemented for `JiraTracker` against the Atlassian Cloud REST API. The bridge-key→display-name resolver + cached `customfield_NNNNN` lookup, the narrow-scope Markdown→ADF converter (paragraphs / fenced code blocks / lists / inline strong/em/code/link), and the best-effort screen-scheme bind (with `docs/JIRA-SCREEN-SCHEME.md` fallback) all ship in this phase. Bridge-config Rule 2 swapped from "Jira deferred to Phase 4" to two positive rules (`endpoint` required; `email` required when endpoint is `*.atlassian.net`). Self-hosted Jira Server / Data Center is supported via PAT-only Bearer auth. The Phase 3 budget pipeline composes without a patch — `CustomFieldValue::String("8.23")` round-trips through a Jira text customfield without semantic loss.
 
-The next pickup is **Phase 5 — `setup-bridge` skills CLI** (`docs/v0.3-plan/05-skills-cli.md`).
+**Phase 5 of v0.3 is now landed on branch `v0.3-phase-5-skills-cli` (PR pending).** Three deliverable clusters: (a) `sinfonia --check <WORKFLOW.md>` with documented per-failure-class exit codes (0/2/3/4/5) plus `sinfonia init` as the AI-tool-free REPL equivalent of `setup-workflow`; (b) six setup skills at `skills/` (setup-workflow / setup-bridge / setup-state-machine / setup-telemetry / setup-agent-backend / migrate-from-symphony) with `SKILL.md` runbooks, Liquid templates, and shell validators; (c) `docs/SKILLS.md` cross-vendor pointer table, SPEC §18.2 extension entry, CHANGELOG additions, README v0.3 paragraph, `docs/v0.3-plan/05-skills-VERIFY.md`. The state-machine prompt templates satisfy the §8 box-2 grep invariant by construction — every `{{ issue.fields.* }}` reference is followed by `| default:`. The `sinfonia-bridge --self-test` surface called out in plan §3.3 was already shipped by P1-G; Phase 5 §3.3 needed no work on the bridge side.
+
+The next pickup after Phase 5 merges is **Phase 6 — refreshed Docker image** (`docs/v0.3-plan/06-docker.md`).
 
 The single most important non-obvious decision the Phase 1+2 work bequeathed to Phase 3 (resolved this phase): **the agent-side token-accounting plumbing was already in place across every CLI backend**, and `TurnOutcome::Completed` now exposes the per-turn `usage: TokenUsage` directly (the runner aggregates session totals without re-parsing the event channel). Phase 3 instrumented six daemon span sites with `tracing::field::Empty` placeholders + late `span.record()` for runtime values; no fresh code paths needed instrumentation.
 
@@ -65,7 +67,11 @@ The single most important non-obvious decision surfaced during Phase 3: **OTel m
 | `3f9eb1c` (#11) | P4: docs (SPEC §11.6 + CHANGELOG + README + BRIDGE.example + VERIFY + JIRA-SCREEN-SCHEME) | Docs — SPEC §11.6.2 Jira bullet rewrite, CHANGELOG `[Unreleased]` 3 new bullets, README Phase 4 paragraph, BRIDGE.example Jira section refresh, `docs/v0.3-plan/04-jira-VERIFY.md` (new, ~140 LOC), `docs/JIRA-SCREEN-SCHEME.md` (new, ~95 LOC). |
 | `b975510` (#11) | STATUS: mark Phase 4 landed on branch; baseline +27 tests; queue Phase 5 | Docs — this file (pre-merge prep on the branch) |
 | `17f5213` | Merge pull request #11 from O-Side-Systems/v0.3-phase-4-jira-bridge | Merge commit |
-| (this commit) | STATUS: mark Phase 4 merged, queue Phase 5 as next deliverable | Docs — this file |
+| `c024a67` | STATUS: mark Phase 4 merged, queue Phase 5 as next deliverable | Docs — this file |
+| `1257f2d` (P5 branch) | P5-A: `sinfonia --check` + `sinfonia init` (§3.1, §3.2) | Code — `crates/sinfonia/src/main.rs` clap restructure, new `check.rs` + `init_repl.rs`; `inquire` promoted to workspace dep; +11 tests (6 check + 5 init_repl). |
+| (P5 branch) | P5-B: six setup skills with SKILL.md + Liquid templates + validators (§2) | Skills — `skills/setup-{workflow,bridge,state-machine,telemetry,agent-backend}/`, `skills/migrate-from-symphony/`; 33 files across the six folders; state-machine prompts pass the §8 box-2 grep invariant. |
+| (P5 branch) | P5-C: docs (SKILLS.md + SPEC §18.2 + CHANGELOG + README + VERIFY) + integration tests + STATUS bump | Docs + tests — `docs/SKILLS.md` (new), `docs/SPEC.md` §18.2 extension entry, CHANGELOG `[Unreleased]` Phase 5 block, README Phase 5 paragraph, `docs/v0.3-plan/05-skills-VERIFY.md` (new), `crates/sinfonia/tests/skills_integration.rs` (new, 6 tests). |
+| (this commit) | STATUS: mark Phase 5 landed on branch; baseline +17 tests; queue Phase 6 | Docs — this file (pre-merge prep on the branch) |
 
 ### Phase 1 sub-task status
 
@@ -130,6 +136,22 @@ Phase 4 shipped as one PR (#11) with two intermediate commits (code + docs) plus
 | CHANGELOG entry | — | ✅ merged | Three new bullets in `[Unreleased]` covering the Jira write surface, the config validation rule swap, and the `--self-test` Jira probe. |
 | `main.rs` + `selftest.rs` Jira wiring | §6 (inherited) | ✅ merged | `main.rs` arm replaced "not supported until Phase 4" error with `Arc::new(JiraTracker::new(&tracker_cfg)?)`. `selftest.rs` Jira probe routes through `fetch_candidate_issues` (`POST /rest/api/3/search`) as the reachability + auth check. |
 
+### Phase 5 sub-task status
+
+Phase 5 is shipping as one PR off branch `v0.3-phase-5-skills-cli` with three intermediate commits (CLI / skills / docs+tests) plus a pre-merge STATUS prep commit. The mapping back to the `05-skills-cli.md` §8 deliverable checklist:
+
+| Deliverable | Plan section | Status | Notes |
+|---|---|---|---|
+| `skills/setup-workflow/`, `setup-bridge/`, `setup-state-machine/`, `setup-telemetry/`, `setup-agent-backend/`, `migrate-from-symphony/` — each with `SKILL.md`, `templates/` (Liquid only), optional `validators/` | §2 | ✅ landed | 33 files across the six folders. Each `SKILL.md` carries YAML front matter (`name` / `description` / `version`) enforced by `every_skill_md_has_required_front_matter`. Locked distribution model per proposal §5: Sinfonia ships the skills; auto-install into AI-tool-specific dirs is owned by each vendor. |
+| Generated templates pass the unguarded-`issue.fields` grep check | §8 box 2 | ✅ landed | The `setup-state-machine` prompt templates use `\| default:` on every `{{ issue.fields.X }}` reference by construction. `state_machine_prompts_have_no_unguarded_issue_fields` runs the §8 regex `\{\{[^}]*issue\.fields\.[^\|]*\}\}` against the templates; empty match set. |
+| `sinfonia --check` with documented exit codes | §3.1 | ✅ landed | `crates/sinfonia/src/check.rs`. Exit codes: 0 ok / 2 yaml / 3 schema / 4 template / 5 tracker-auth. Loads workflow, runs `validate_for_dispatch`, renders every prompt template (workflow body + per-state overrides) against a stub Issue. 6 unit tests covering every exit code + the ok path + a second template-error variant. |
+| `sinfonia init` subcommand with the REPL flow | §3.2 | ✅ landed | `crates/sinfonia/src/init_repl.rs`. `inquire`-driven REPL mirrors `setup-workflow` step-by-step: tracker kind, project slug, endpoint/email, active/terminal states, agent backend, workspace root. Linear flow with abort-on-error (plan §7 #2). Live tracker probe deferred to the skill version. 5 unit tests covering Linear/Jira-Cloud/Jira-Server rendering + render→parse→validate roundtrip. |
+| `sinfonia-bridge --self-test` with the canonical output format | §3.3 | ✅ already shipped (P1-G) | `crates/sinfonia-bridge/src/selftest.rs` carries the PASS/FAIL/SKIP format. Phase 4 wired the Jira probe through it; Phase 5 had no work on the bridge side. |
+| `docs/SKILLS.md` with the vendor pointer table | §4 | ✅ landed | Includes the six-skill catalog, the four-step recommended invocation order, the cross-vendor install table (Claude Code / OpenCode / Codex CLI), the skill contract (front-matter keys), and the strict-Liquid invariant section. |
+| Tests per §5.1 and §5.2 | §5 | ✅ landed | §5.1 unit tests inlined per module (`check::tests`, `init_repl::tests`). §5.2 integration suite at `crates/sinfonia/tests/skills_integration.rs`: 6 tests covering skill presence, front-matter parsing, Liquid syntax, unguarded-field grep, validator executability, and template→`validate_for_dispatch` roundtrip. |
+| Manual verification recorded in `docs/v0.3-plan/05-skills-VERIFY.md` | §5.3 | ⏳ matrix recorded, runs pending | The VERIFY doc captures the seven-row verification matrix (V-1 through V-7) with status; runs against a real Claude Code + Linear + sandbox GitHub + Honeycomb path are pending before `v0.3.0-alpha.x` tag. |
+| CHANGELOG entry | §8 | ✅ landed | `[Unreleased]` gains five new bullets under Added covering the six skills, the two CLI extensions, the state-machine prompt invariant, and `docs/SKILLS.md`. |
+
 ### Test baseline on `main`
 
 - `cargo test --workspace --no-fail-fast` on `main` → **183 tests pass, 0 failures** (Phase 3 final baseline).
@@ -140,6 +162,15 @@ Phase 4 shipped as one PR (#11) with two intermediate commits (code + docs) plus
   - **6** sinfonia-tracker integration tests (`tests/jira_wiremock.rs`, NEW in Phase 4).
   - **110** sinfonia-bridge unit tests (up from 107 by +3: 3 new Jira-config tests in `config::tests::rule2_jira_*` — replacing the single deferral test).
   - **9** sinfonia-bridge integration tests (`tests/bridge_e2e.rs`) — unchanged (Linear-only path, no Jira mirror per VERIFY §3.1).
+- `cargo test --workspace --no-fail-fast` on branch `v0.3-phase-5-skills-cli` → **227 tests pass, 0 failures** (+17 over Phase 4):
+  - **47** sinfonia unit tests — unchanged.
+  - **11** sinfonia binary unit tests (NEW in Phase 5): 6 in `check::tests` (one per `--check` exit code + the ok path + a second template-error variant) + 5 in `init_repl::tests` (Linear/Jira-Cloud/Jira-Server rendering, CLI-backend-omits-llm-block, comma-list helper).
+  - **13** `spec_conformance.rs` integration tests — unchanged.
+  - **6** `skills_integration.rs` integration tests (NEW in Phase 5): skill-folder presence, front-matter validity, Liquid template syntax, unguarded-`issue.fields` grep, validator executability, and the `setup-workflow` template→`validate_for_dispatch` roundtrip.
+  - **25** sinfonia-tracker unit tests — unchanged.
+  - **6** sinfonia-tracker integration tests — unchanged.
+  - **110** sinfonia-bridge unit tests — unchanged.
+  - **9** sinfonia-bridge integration tests — unchanged.
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --check` → `ok` (exit 0) on valid, descriptive error (exit 1) on invalid.
 - `cargo run -p sinfonia-bridge -- BRIDGE.example.md --check` → `ok` (exit 0) with no environment variables set. The example doc is its own CI gate — when CI lands for the bridge crate, this command catches schema drift between the parser and the example.
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --self-test` → one labelled `PASS`/`FAIL`/`SKIP` line per check; exit code = number of `FAIL` lines (SKIPs don't count). App-mode token-mint + REST round-trip now covered by `bridge_e2e.rs` scenario 8.
@@ -153,9 +184,9 @@ Phase 4 shipped as one PR (#11) with two intermediate commits (code + docs) plus
 
 ---
 
-## 2. What's next: Phase 5 — `setup-bridge` skills CLI
+## 2. What's next: Phase 6 — refreshed Docker image
 
-Phases 1–4 are merged to `main`. The next pickup is **Phase 5 — `setup-bridge` skills CLI** (`docs/v0.3-plan/05-skills-cli.md`). Phase 5's stated dependencies are Phase 1 (config schema) and Phase 4 (Jira branch in the prompts) — both resolved.
+Phases 1–4 are merged to `main`; Phase 5 is landed on branch `v0.3-phase-5-skills-cli` (PR pending). The next pickup after Phase 5 merges is **Phase 6 — refreshed Docker image** (`docs/v0.3-plan/06-docker.md`). Phase 6 depends on Phase 1 (the bridge binary needs to exist in the image) and Phase 5 (the skills directory needs to exist if the image is to bundle it) — both will be resolved when Phase 5 merges.
 
 The historical Phase 4 narrative kept below for the hand-off record:
 

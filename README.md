@@ -31,7 +31,9 @@ If you're upgrading from v0.1 and don't want the bridge, you don't have to do an
 
 **Phase 4 (Jira bridge support, currently being landed)** fills in the five `IssueTracker` bridge-write methods on the Jira side — state transitions via `POST /rest/api/3/issue/{id}/transitions`, custom-field reads/writes via cached `customfield_NNNNN` resolution, and ADF-rendered comments. Bridge config no longer rejects `tracker.kind: jira`. Self-hosted Jira (Server / Data Center) is supported via PAT-only auth. See `docs/v0.3-plan/04-jira-bridge.md` and `docs/v0.3-plan/04-jira-VERIFY.md`.
 
-Still alpha — Phases 5–7 land a `setup-bridge` skills CLI, a refreshed Docker image, and finalized docs.
+**Phase 5 (setup skills + CLI extensions, currently being landed)** ships six setup skills at `skills/` (`setup-workflow`, `setup-bridge`, `setup-state-machine`, `setup-telemetry`, `setup-agent-backend`, `migrate-from-symphony`) that AI coding tools can invoke to scaffold a working deployment without hand-editing YAML. Two CLI extensions back the skills: `sinfonia --check <WORKFLOW.md>` validates a workflow file (exit codes per failure class) and `sinfonia init` is the AI-tool-free interactive REPL. `docs/SKILLS.md` is the cross-vendor pointer table.
+
+Still alpha — Phases 6–7 land a refreshed Docker image and finalized docs.
 
 ## Observability (Phase 3 preview)
 
