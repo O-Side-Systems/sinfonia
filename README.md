@@ -453,7 +453,9 @@ states:
     provider: claude_code      # use the `claude` CLI for initial investigation
     model: claude-sonnet-4-6
     prompt: |
-      Investigate {{ issue.identifier }} and sketch a plan in .sinfonia/plan.md
+      Investigate {{ issue.identifier }} and sketch a plan in
+      .sinfonia/plans/{{ issue.identifier | downcase }}.md (gitignored scratchpad —
+      per-issue path keeps parallel agent branches from merge-conflicting).
   "In Progress":
     provider: claude_code      # implementation pass on a stronger model
     model: claude-opus-4-7

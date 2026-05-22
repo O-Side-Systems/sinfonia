@@ -26,6 +26,12 @@ workspace:
 hooks:
   after_create: |
     git init -q
+    # `.sinfonia/` is a per-workspace scratchpad used by prompts (plans,
+    # notes, intermediate state). Keeping it gitignored stops parallel
+    # agent branches from merge-conflicting on a shared scratchpad file
+    # when their PRs land on main.
+    touch .gitignore
+    grep -qxF '.sinfonia/' .gitignore || echo '.sinfonia/' >> .gitignore
   before_run: |
     git status >/dev/null 2>&1 || true
   after_run: |
@@ -79,7 +85,12 @@ states:
       ## What to do
 
       1. Read the repo to understand the existing patterns.
-      2. Sketch a plan in `.sinfonia/plan.md` (create the dir if needed).
+      2. Sketch a plan in `.sinfonia/plans/{{ issue.identifier | downcase }}.md`
+         (create the dir if needed). The `.sinfonia/` tree is a per-workspace
+         scratchpad — do NOT commit it. If the repo's `.gitignore` doesn't
+         already cover it, add a line for `.sinfonia/` and commit that change
+         on its own. Per-issue filenames also keep parallel agent branches
+         from merge-conflicting on a single shared plan file.
       3. Make a minimal first cut of the change.
       4. When you've made meaningful progress, transition the issue to "In Progress" in the
          tracker (use the `shell` tool with `linear-cli` / `gh` / `jira` as appropriate).
@@ -92,9 +103,10 @@ states:
     prompt: |
       Resume implementation of **{{ issue.identifier }}**.
 
-      The previous turn left state in this workspace and in `.sinfonia/plan.md`. Pick up
-      from there. Run the project's tests. When the change is complete and tests pass,
-      transition the issue to "In Review" in the tracker.
+      The previous turn left state in this workspace and in
+      `.sinfonia/plans/{{ issue.identifier | downcase }}.md`. Pick up from there. Run
+      the project's tests. When the change is complete and tests pass, transition the
+      issue to "In Review" in the tracker.
 
   "In Review":
     # Review pass: small fast raw-LLM call, no tool loop subprocess overhead.
