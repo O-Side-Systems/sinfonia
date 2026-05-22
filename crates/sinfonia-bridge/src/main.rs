@@ -139,15 +139,14 @@ async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     );
 
     // Construct the tracker adapter once and share it as a trait object
-    // so handlers can do tracker writes without per-request setup. Phase
-    // 1 only supports Linear (Jira deferred to Phase 4 — BridgeConfig
-    // validation already rejects `kind: jira`).
+    // so handlers can do tracker writes without per-request setup. Phase 4
+    // adds Jira alongside Linear; both implement the full §11.6 write
+    // surface. Config validation already rejects unsupported combinations
+    // (missing endpoint, missing email for Cloud, etc.).
     let tracker_cfg = cfg.tracker.to_tracker_config();
     let tracker: Arc<dyn IssueTracker> = match tracker_cfg.kind {
         TrackerKind::Linear => Arc::new(LinearTracker::new(&tracker_cfg)?),
-        TrackerKind::Jira => {
-            return Err("BRIDGE.md tracker.kind 'jira' not supported until Phase 4".into());
-        }
+        TrackerKind::Jira => Arc::new(sinfonia_tracker::JiraTracker::new(&tracker_cfg)?),
     };
 
     // GitHub client. PAT vs App is selected inside `build_gh_ops` from

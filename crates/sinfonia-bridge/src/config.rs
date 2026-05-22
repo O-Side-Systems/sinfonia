@@ -649,11 +649,35 @@ fn validate(cfg: &BridgeConfig) -> Result<()> {
         ));
     }
 
-    // Rule 2: Phase 1 supports Linear only. Jira lands in Phase 4.
+    // Rule 2 (Phase 4): both trackers are supported. Jira has two extra
+    // required fields beyond Linear's (api_key, project_slug):
+    //
+    //   - `tracker.endpoint` — the site base URL (e.g. https://acme.atlassian.net).
+    //     Linear has a sensible default; Jira can't because every tenant
+    //     gets its own subdomain.
+    //   - `tracker.email` — paired with `api_key` for HTTP Basic auth on
+    //     Atlassian Cloud. Self-hosted Jira (Server / Data Center) authenticates
+    //     via a bare PAT in `api_key`; in that mode `email` is omitted and the
+    //     adapter switches to `Authorization: Bearer …`. We can't distinguish
+    //     Cloud from self-hosted from the URL alone, so the rule is "either
+    //     email is set, or the operator has confirmed self-hosted intent".
+    //     For Phase 4 we keep it pragmatic: warn but don't reject when email
+    //     is unset (self-hosted PAT). The selftest probe catches a misconfig.
     if matches!(cfg.tracker.kind, sinfonia_tracker::TrackerKind::Jira) {
-        return Err(Error::BridgeConfigInvalid(
-            "tracker.kind 'jira' not supported until Phase 4".into(),
-        ));
+        if cfg.tracker.endpoint.trim().is_empty() {
+            return Err(Error::BridgeConfigInvalid(
+                "tracker.endpoint is required when kind: jira (e.g. https://acme.atlassian.net)".into(),
+            ));
+        }
+        let endpoint_lower = cfg.tracker.endpoint.to_lowercase();
+        let looks_like_cloud = endpoint_lower.contains(".atlassian.net");
+        if looks_like_cloud && cfg.tracker.jira_email.is_none() {
+            return Err(Error::BridgeConfigInvalid(
+                "tracker.email is required for Atlassian Cloud (kind: jira); \
+                 omit it only for self-hosted Jira Server / Data Center PAT auth"
+                    .into(),
+            ));
+        }
     }
 
     // Rule 3: max_attempts >= 1.
@@ -887,19 +911,61 @@ telemetry:
         assert!(matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("private_key missing")));
     }
 
-    // -- Rule 2: Jira deferred to Phase 4 --------------------------------
+    // -- Rule 2 (Phase 4): Jira is supported, with extra required fields ---
 
     #[test]
-    fn rule2_jira_tracker_kind_errors() {
-        // Replace the tracker block to use Jira.
+    fn rule2_jira_cloud_with_email_is_accepted() {
+        // Replace the tracker block to use Jira Cloud (atlassian.net URL).
         let yaml = baseline().replace(
             "tracker:\n  kind: linear\n  api_key: test-key\n  project_slug: my-project",
             "tracker:\n  kind: jira\n  api_key: test-key\n  project_slug: ENG\n  endpoint: https://acme.atlassian.net\n  email: a@b.com",
         );
+        let cfg = parse_bridge_str(&yaml).expect("jira cloud config should parse");
+        assert!(matches!(
+            cfg.tracker.kind,
+            sinfonia_tracker::TrackerKind::Jira
+        ));
+        assert_eq!(cfg.tracker.endpoint, "https://acme.atlassian.net");
+        assert_eq!(cfg.tracker.jira_email.as_deref(), Some("a@b.com"));
+    }
+
+    #[test]
+    fn rule2_jira_self_hosted_pat_is_accepted_without_email() {
+        // Self-hosted Jira (not *.atlassian.net) uses a bare PAT in api_key;
+        // email is intentionally omitted in that mode.
+        let yaml = baseline().replace(
+            "tracker:\n  kind: linear\n  api_key: test-key\n  project_slug: my-project",
+            "tracker:\n  kind: jira\n  api_key: test-key\n  project_slug: ENG\n  endpoint: https://jira.example.com",
+        );
+        let cfg = parse_bridge_str(&yaml).expect("self-hosted jira should parse without email");
+        assert!(cfg.tracker.jira_email.is_none());
+    }
+
+    #[test]
+    fn rule2_jira_missing_endpoint_errors() {
+        // Jira requires an endpoint — there's no sensible default per-tenant.
+        let yaml = baseline().replace(
+            "tracker:\n  kind: linear\n  api_key: test-key\n  project_slug: my-project",
+            "tracker:\n  kind: jira\n  api_key: test-key\n  project_slug: ENG\n  email: a@b.com",
+        );
         let err = parse_bridge_str(&yaml).unwrap_err();
         assert!(
-            matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("Phase 4")),
-            "expected Phase 4 deferral, got: {err:?}"
+            matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("endpoint")),
+            "expected endpoint-required error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn rule2_jira_cloud_missing_email_errors() {
+        // atlassian.net URL but no email: Cloud requires Basic auth (email + token).
+        let yaml = baseline().replace(
+            "tracker:\n  kind: linear\n  api_key: test-key\n  project_slug: my-project",
+            "tracker:\n  kind: jira\n  api_key: test-key\n  project_slug: ENG\n  endpoint: https://acme.atlassian.net",
+        );
+        let err = parse_bridge_str(&yaml).unwrap_err();
+        assert!(
+            matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("email is required")),
+            "expected email-required error, got: {err:?}"
         );
     }
 

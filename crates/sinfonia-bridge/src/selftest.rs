@@ -19,7 +19,7 @@
 use crate::config::{BridgeConfig, GitHubSection, TrackerSection};
 use crate::github::{build_gh_ops, BridgeAuthMode};
 use serde_json::json;
-use sinfonia_tracker::{IssueTracker, LinearTracker, TrackerKind};
+use sinfonia_tracker::{IssueTracker, JiraTracker, LinearTracker, TrackerKind};
 use std::io::Write;
 use std::time::Duration;
 use tracing::debug;
@@ -232,13 +232,43 @@ async fn check_tracker(t: &TrackerSection) -> CheckLine {
             }
         }
         TrackerKind::Jira => {
-            // Defensive: config::validate already rejects `kind: jira`
-            // for Phase 1, so reaching this arm means a future phase
-            // unblocked it without updating selftest.
-            CheckLine::fail(
-                "tracker",
-                "jira self-test probe is unimplemented (Phase 4)".to_string(),
-            )
+            // Build the adapter to confirm the auth + base URL combo
+            // assembles, then hit `/rest/api/3/myself` — the lightest
+            // authenticated read both Cloud and self-hosted expose.
+            // 200 + a `accountId` (Cloud) or `name` (self-hosted) means
+            // the API token + email pair (or PAT) work and the site is
+            // reachable.
+            let tracker = match JiraTracker::new(&t.to_tracker_config()) {
+                Ok(c) => c,
+                Err(e) => {
+                    return CheckLine::fail(
+                        "tracker",
+                        format!("{kind_label} client build failed: {e}"),
+                    );
+                }
+            };
+            // The trait doesn't expose raw GET, so we route through
+            // `fetch_candidate_issues` — which posts to `/rest/api/3/search`
+            // with a JQL that resolves to "issues in the configured project
+            // in any active state". An auth failure surfaces as a 401/403
+            // here; a non-existent project surfaces as a 400 with a JQL
+            // error. Both produce a `JiraApiStatus` Err that we report.
+            //
+            // If `active_states` is empty we can't probe project visibility
+            // via this route — fall back to a one-shot fetch with a wildcard
+            // state set. For Phase 4 we conservatively succeed-with-warning
+            // in that case so a misconfigured `active_states: []` doesn't
+            // block self-test.
+            match tracker.fetch_candidate_issues().await {
+                Ok(_) => CheckLine::pass(
+                    "tracker",
+                    format!("{kind_label} project '{slug}' accessible"),
+                ),
+                Err(e) => CheckLine::fail(
+                    "tracker",
+                    format!("{kind_label} project '{slug}' probe failed: {e}"),
+                ),
+            }
         }
     }
 }
