@@ -25,6 +25,7 @@ pub mod config;
 pub mod custom_fields;
 pub mod error;
 pub mod jira;
+pub mod jira_adf;
 pub mod linear;
 pub mod types;
 

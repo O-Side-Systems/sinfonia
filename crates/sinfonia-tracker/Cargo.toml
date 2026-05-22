@@ -26,3 +26,9 @@ chrono = { workspace = true }
 async-trait = { workspace = true }
 regex = { workspace = true }
 url = { workspace = true }
+
+[dev-dependencies]
+# Backs the Jira REST adapter integration tests in `tests/jira_wiremock.rs`.
+# Plan §5.2 calls for the recorded shape of Jira's REST responses against
+# wiremock; the same crate is already a dev-dep on sinfonia-bridge.
+wiremock = "0.6"

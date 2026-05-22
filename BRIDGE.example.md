@@ -8,7 +8,7 @@
 # `$ENV_VAR` reference — see the "Production note" at the bottom of
 # this file.
 tracker:
-  kind: linear                          # linear (Phase 1) | jira (Phase 4)
+  kind: linear                          # linear | jira  (both supported as of Phase 4)
   # endpoint: https://api.linear.app/graphql   # optional; default shown
   api_key: lin_api_REPLACE_ME
   project_slug: my-awesome-project-abc123def456
@@ -19,16 +19,31 @@ tracker:
   active_states: ["Todo", "In Progress", "In Review"]
   terminal_states: ["Done", "Cancelled", "Duplicate"]
 
-# Jira example (Phase 4; the bridge rejects this with a friendly error in
-# v0.3.0-alpha.1 — `tracker.kind 'jira' not supported until Phase 4`):
+# Jira Cloud example (active as of Phase 4):
 # tracker:
 #   kind: jira
-#   endpoint: https://acme.atlassian.net
-#   api_key: ATATT_REPLACE_ME
-#   email: you@example.com               # required for Atlassian Cloud Basic auth
-#   project_slug: ABC                    # Jira project key (the prefix in ABC-123)
+#   endpoint: https://acme.atlassian.net         # required — no per-tenant default
+#   api_key: ATATT_REPLACE_ME                    # Atlassian API token
+#   email: you@example.com                       # required for Cloud Basic auth
+#   project_slug: ABC                            # Jira project key (the prefix in ABC-123)
 #   active_states: ["To Do", "In Progress", "In Review"]
 #   terminal_states: ["Done", "Cancelled"]
+#
+# Jira Server / Data Center (self-hosted) — omit `email` and put a PAT
+# in `api_key` to switch the adapter to Bearer auth:
+# tracker:
+#   kind: jira
+#   endpoint: https://jira.internal.example.com
+#   api_key: $JIRA_PAT
+#   project_slug: ABC
+#   active_states: ["To Do", "In Progress", "In Review"]
+#   terminal_states: ["Done", "Cancelled"]
+#
+# First-run note: on a fresh Jira project the bridge creates the
+# `sinfonia_*` custom fields automatically and tries to bind them to a
+# screen so they show up in the UI. The bind call requires admin perms;
+# if it fails the bridge logs a WARN and continues (reads + writes via
+# REST still work). See `docs/JIRA-SCREEN-SCHEME.md` for the manual bind.
 
 # ---- GitHub ----
 # The bridge subscribes to webhooks from one or more GitHub repositories
