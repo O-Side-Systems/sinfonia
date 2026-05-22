@@ -1,0 +1,17 @@
+{% comment %}
+  Inserted into the WORKFLOW.md front matter. The skill renderer fills in
+  the actual state names from the operator's `tracker.active_states`
+  (e.g. `Triage`, `Ready`, `Needs Fixes`, `Human Review`).
+
+  This skeleton uses the canonical names; rename if your tracker differs.
+{% endcomment %}
+states:
+  "{{ state_names.triage | default: 'Triage' }}":
+    prompt_template_file: prompts/triage.md
+  "{{ state_names.ready | default: 'Ready' }}":
+    prompt_template_file: prompts/ready.md
+  "{{ state_names.needs_fixes | default: 'Needs Fixes' }}":
+    prompt_template_file: prompts/needs-fixes.md
+  "{{ state_names.human_review | default: 'Human Review' }}":
+    # Sinfonia does not dispatch on this state — listed for completeness.
+    prompt_template_file: prompts/human-review.md

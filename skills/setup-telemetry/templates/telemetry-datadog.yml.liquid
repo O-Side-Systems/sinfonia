@@ -1,0 +1,10 @@
+# Datadog OTLP export. Endpoint depends on your Datadog region — the
+# operator should look up the OTLP intake URL in their Datadog account.
+# US1: https://api.datadoghq.com/api/intake/otel
+# EU:  https://api.datadoghq.eu/api/intake/otel
+telemetry:
+  otel_enabled: true
+  otlp_endpoint: {{ datadog.endpoint }}
+  headers:
+    dd-api-key: $DATADOG_API_KEY
+  tenant_id: {{ tenant_id | default: "default" }}

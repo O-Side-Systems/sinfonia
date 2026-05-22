@@ -1,0 +1,5 @@
+hooks:
+  after_create:
+    - "cargo fetch"
+  before_run:
+    - "cargo test --no-run"

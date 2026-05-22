@@ -1,0 +1,5 @@
+hooks:
+  after_create:
+    - "{% if has_poetry %}poetry install{% else %}pip install -r requirements.txt{% endif %}"
+  before_run:
+    - "pytest -q"

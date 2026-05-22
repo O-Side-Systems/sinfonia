@@ -1,0 +1,29 @@
+You are working on issue {{ issue.identifier }}: {{ issue.title }}.
+
+This issue is in **Needs Fixes** because a previous attempt's CI run failed.
+
+## Previous failure
+
+Category: {{ issue.fields.sinfonia_failure_category | default: "(uncategorized)" }}
+
+Failure summary:
+{{ issue.fields.sinfonia_last_ci_failure | default: "(no prior CI failure recorded; check PR comments)" }}
+
+Attempt number: {{ issue.fields.sinfonia_attempt_count | default: 0 }} of {{ issue.fields.sinfonia_max_attempts | default: 5 }}.
+
+## Your task
+
+1. Read the failure summary above. Open the PR linked from the issue and
+   inspect the failing CI logs in full.
+2. Diagnose root cause. Do **not** suppress the failing check (e.g. by
+   deleting tests or adding `it.skip`). If you believe the test is
+   incorrect, leave a comment explaining why and stop — Sinfonia will
+   escalate to Human Review.
+3. Apply the minimum fix that resolves the failure.
+4. Push to the same branch. CI will re-run; the bridge will reset this
+   ticket to **Ready** on success or keep it here on failure.
+
+If the same failure recurs after a fix attempt, write a comment
+summarizing what you tried and stop — repeat failures often indicate a
+flaky test or an issue in the test infrastructure rather than the code
+under test.

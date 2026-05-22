@@ -1,0 +1,5 @@
+hooks:
+  after_create:
+    - "go mod download"
+  before_run:
+    - "go test ./..."

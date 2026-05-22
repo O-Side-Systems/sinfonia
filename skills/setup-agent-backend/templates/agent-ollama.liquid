@@ -1,0 +1,6 @@
+agent:
+  provider: ollama
+
+llm:
+  endpoint: {{ endpoint | default: "http://localhost:11434" }}
+  model: {{ model | default: "llama3.2" }}

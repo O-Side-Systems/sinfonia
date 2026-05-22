@@ -1,0 +1,8 @@
+# Grafana Cloud Tempo. The auth header is `Basic <base64(instance:api_key)>`;
+# pre-compute and stash in $GRAFANA_BASIC_AUTH.
+telemetry:
+  otel_enabled: true
+  otlp_endpoint: {{ grafana.tempo_endpoint }}
+  headers:
+    authorization: $GRAFANA_BASIC_AUTH
+  tenant_id: {{ tenant_id | default: "default" }}

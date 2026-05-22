@@ -1,0 +1,41 @@
+# OpenTelemetry Collector config rendered by `setup-telemetry`.
+# Receives OTLP from Sinfonia + bridge, splits per-tenant via routing
+# processor, exports to Postgres via the `postgres` exporter.
+#
+# Mirrors `examples/telemetry/otel-collector-config.yaml`; regenerate
+# from the example if upstream changes.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  routing:
+    from_attribute: service.namespace
+    default_exporters: [postgres]
+    table:
+      {% for tenant in tenants %}- value: {{ tenant }}
+        exporters: [postgres/{{ tenant }}]
+      {% endfor %}
+
+exporters:
+  postgres:
+    dsn: ${env:POSTGRES_DSN}
+    schema: telemetry
+    tables:
+      sessions: sessions
+      attempts: attempts
+      events: events
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [routing, batch]
+      exporters: [postgres]
