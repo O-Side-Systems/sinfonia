@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0-alpha.4] — 2026-05-22
+
+Re-publish of `[0.3.0-alpha.3]`. The Rust toolchain bump in alpha.3 fixed the cargo build, but the Docker publish pipeline still failed on a second, independent layer: the upstream Codex CLI install script (`https://github.com/openai/codex/releases/latest/download/install.sh`) errors with `Could not find SHA-256 digest for codex-package-x86_64-unknown-linux-musl.tar.gz in codex-package_SHA256SUMS` when invoked from inside the slim builder. The same `awk` lookup against the same file succeeds locally and resolves the expected digest cleanly — the failure is reproducible inside the `debian:bookworm-slim`-based build environment and resists remote debugging.
+
+### Changed
+
+- **Skip upstream install scripts for Codex and OpenCode in the Docker images.** Both `sinfonia-with-codex` and `sinfonia-with-opencode` (and the combined `sinfonia-all-agents`) now download the bare-binary tarballs directly (`codex-${triple}.tar.gz` from `openai/codex` releases; `opencode-linux-${arch}.tar.gz` from `sst/opencode` releases), extract, install to `/usr/local/bin/`, and self-verify with a `--version` smoke. Versions are pinned via Dockerfile `ARG CODEX_VERSION=rust-v0.133.0` / `ARG OPENCODE_VERSION=v1.15.9`; bump on each release after confirming the upstream tarballs exist for both linux/amd64 + linux/arm64. Bypasses the install scripts' SHA256SUMS-verification dance entirely. `curl --retry 3 --retry-delay 5` provides transient-network resilience. The pinned versions are operator-overridable via `docker buildx bake --set sinfonia-with-codex.args.CODEX_VERSION=<tag>`.
+- **`docker-bake.hcl` comments updated** — both pinned upstreams now ship arm64-linux binaries, so the prior "MAY not publish linux/arm64" caveat is removed from the `PLATFORMS` and per-target comments.
+
 ## [0.3.0-alpha.3] — 2026-05-22
 
 Re-publish of `[0.3.0-alpha.2]` with the toolchain fix below. The
@@ -163,7 +172,8 @@ Initial public release.
 - The Codex app-server stdio protocol backend is stubbed; this release targets the `codex exec` CLI surface instead.
 - One project per running daemon. Multi-project deployments use one daemon per project.
 
-[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.3...HEAD
+[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.4...HEAD
+[0.3.0-alpha.4]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.3...v0.3.0-alpha.4
 [0.3.0-alpha.3]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.2...v0.3.0-alpha.3
 [0.3.0-alpha.2]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...v0.3.0-alpha.2
 [0.3.0-alpha.1]: https://github.com/O-Side-Systems/sinfonia/compare/v0.1.0...v0.3.0-alpha.1

@@ -27,9 +27,10 @@ variable "VERSION_MINOR" {
   default = regex_replace(VERSION, "^(\\d+\\.\\d+)\\..*$", "$1")
 }
 
-# Common platform list. Codex and OpenCode upstream install scripts MAY not
-# publish linux/arm64 binaries; the build will fail for those targets on
-# arm64 if so. CI overrides this per-target where needed via `--set`.
+# Common platform list. Both Codex and OpenCode upstream ship arm64-linux
+# binaries as of the pinned `CODEX_VERSION` / `OPENCODE_VERSION` in the
+# Dockerfile; bump those args (and re-verify arm64 tarballs exist on
+# upstream) on each release.
 variable "PLATFORMS" {
   default = "linux/amd64,linux/arm64"
 }
@@ -76,8 +77,6 @@ target "sinfonia-with-claude-code" {
   tags     = tags("sinfonia-with-claude-code")
 }
 
-# Codex upstream may not publish linux/arm64 binaries; release notes call
-# this out per image.
 target "sinfonia-with-codex" {
   inherits = ["_base"]
   target   = "sinfonia-with-codex"
@@ -90,9 +89,6 @@ target "sinfonia-with-opencode" {
   tags     = tags("sinfonia-with-opencode")
 }
 
-# All-agents inherits the platform constraints of its narrowest CLI agent.
-# If either Codex or OpenCode lacks arm64 in a given release, CI builds
-# this target amd64-only via `--set sinfonia-all-agents.platform=linux/amd64`.
 target "sinfonia-all-agents" {
   inherits = ["_base"]
   target   = "sinfonia-all-agents"

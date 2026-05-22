@@ -15,6 +15,21 @@
 # `Dockerfile.dev` and is driven by `docker-compose.dev.yml`. That file
 # is unchanged; this one is new.
 
+# ----------------------------------------------------------------------------
+# Global build args (defined before the first FROM so they're inheritable in
+# every stage via a bare `ARG NAME` redeclaration).
+#
+# Versions of the upstream Codex + OpenCode CLIs that ship inside the
+# sinfonia-with-codex / sinfonia-with-opencode / sinfonia-all-agents images.
+# Bump on each Sinfonia release after verifying the new tarballs exist for
+# both linux/amd64 + linux/arm64 and the `--version` smoke passes. We pin
+# rather than tracking `latest` because the upstream `install.sh` scripts'
+# SHA256SUMS-verification dance breaks inside our slim builder; we bypass
+# their install scripts entirely and pull the bare-binary tarballs.
+# ----------------------------------------------------------------------------
+ARG CODEX_VERSION=rust-v0.133.0
+ARG OPENCODE_VERSION=v1.15.9
+
 # ============================================================================
 # Build stage — shared across all production images. Compiles both binaries
 # once with cargo's registry + target dirs mounted as BuildKit caches.
@@ -93,15 +108,23 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # ============================================================================
 # Image: sinfonia-with-codex — daemon + `codex` CLI.
 # Audience: operators who want the Codex CLI subprocess backend.
-# The install script is upstream; pin the asset URL at release time if
-# upstream changes the layout.
 # ============================================================================
 FROM sinfonia AS sinfonia-with-codex
+ARG CODEX_VERSION
+ARG TARGETARCH
 USER root
-RUN curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh \
-        -o /tmp/install-codex.sh \
-    && bash /tmp/install-codex.sh \
-    && rm -f /tmp/install-codex.sh
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) triple=x86_64-unknown-linux-musl ;; \
+      arm64) triple=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported TARGETARCH for codex: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${triple}.tar.gz"; \
+    curl -fsSL --retry 3 --retry-delay 5 -o /tmp/codex.tgz "$url"; \
+    tar -xzf /tmp/codex.tgz -C /tmp; \
+    install -m 0755 "/tmp/codex-${triple}" /usr/local/bin/codex; \
+    rm -f /tmp/codex.tgz "/tmp/codex-${triple}"; \
+    codex --version >/dev/null
 
 # ============================================================================
 # Image: sinfonia-with-opencode — daemon + `opencode` binary.
@@ -109,24 +132,50 @@ RUN curl -fsSL https://github.com/openai/codex/releases/latest/download/install.
 # provider backends incl. Ollama-with-LSP).
 # ============================================================================
 FROM sinfonia AS sinfonia-with-opencode
+ARG OPENCODE_VERSION
+ARG TARGETARCH
 USER root
-RUN curl -fsSL https://opencode.ai/install \
-        -o /tmp/install-opencode.sh \
-    && bash /tmp/install-opencode.sh \
-    && rm -f /tmp/install-opencode.sh
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) arch=x64 ;; \
+      arm64) arch=arm64 ;; \
+      *) echo "unsupported TARGETARCH for opencode: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/sst/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-${arch}.tar.gz"; \
+    curl -fsSL --retry 3 --retry-delay 5 -o /tmp/opencode.tgz "$url"; \
+    tar -xzf /tmp/opencode.tgz -C /tmp; \
+    install -m 0755 /tmp/opencode /usr/local/bin/opencode; \
+    rm -f /tmp/opencode.tgz /tmp/opencode; \
+    opencode --version >/dev/null
 
 # ============================================================================
 # Image: sinfonia-all-agents — daemon + all three CLI agents in one image.
 # Audience: state-machine deployments that route across agents per state.
-# Starts from the Claude Code image so we don't re-install Node.
+# Starts from the Claude Code image so we don't re-install Node. Re-runs
+# the same direct-tarball logic for codex + opencode.
 # ============================================================================
 FROM sinfonia-with-claude-code AS sinfonia-all-agents
+ARG CODEX_VERSION
+ARG OPENCODE_VERSION
+ARG TARGETARCH
 USER root
-RUN curl -fsSL https://github.com/openai/codex/releases/latest/download/install.sh \
-        -o /tmp/install-codex.sh \
-    && bash /tmp/install-codex.sh \
-    && rm -f /tmp/install-codex.sh \
-    && curl -fsSL https://opencode.ai/install \
-        -o /tmp/install-opencode.sh \
-    && bash /tmp/install-opencode.sh \
-    && rm -f /tmp/install-opencode.sh
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) codex_triple=x86_64-unknown-linux-musl; oc_arch=x64 ;; \
+      arm64) codex_triple=aarch64-unknown-linux-musl; oc_arch=arm64 ;; \
+      *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -o /tmp/codex.tgz \
+        "https://github.com/openai/codex/releases/download/${CODEX_VERSION}/codex-${codex_triple}.tar.gz"; \
+    tar -xzf /tmp/codex.tgz -C /tmp; \
+    install -m 0755 "/tmp/codex-${codex_triple}" /usr/local/bin/codex; \
+    rm -f /tmp/codex.tgz "/tmp/codex-${codex_triple}"; \
+    codex --version >/dev/null; \
+    curl -fsSL --retry 3 --retry-delay 5 \
+        -o /tmp/opencode.tgz \
+        "https://github.com/sst/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-${oc_arch}.tar.gz"; \
+    tar -xzf /tmp/opencode.tgz -C /tmp; \
+    install -m 0755 /tmp/opencode /usr/local/bin/opencode; \
+    rm -f /tmp/opencode.tgz /tmp/opencode; \
+    opencode --version >/dev/null
