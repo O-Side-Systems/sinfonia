@@ -1,6 +1,6 @@
 # v0.3.0 milestone — status & handoff
 
-**Last updated:** 2026-05-22 (P4 code + docs landed on `v0.3-phase-4-jira-bridge` — **Phase 4 awaiting PR merge**; Phase 5 is the next pickup)
+**Last updated:** 2026-05-22 (P4 merged via #11 — **Phase 4 complete**; Phase 5 is the next pickup)
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
 **Branch state:** `main` contains the **complete Phase 1, Phase 2, and Phase 3 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`). Phase 3 (#10 — P3: telemetry + budget enforcement) lands an opt-in OTel emission layer over both binaries (12 spans total + tenant tagging from day one), the typed Sinfonia↔bridge event channel that replaces the dropped OTLP receiver (`AgentEvent::SessionCompleted` + HMAC-signed POST/verify reusing the GitHub webhook scheme), the cost / budget pipeline (`BudgetManager` + embedded cost table + 30 s idle-flush debounce + M-2 freshness gates), terminal-state detection via `pull_request.closed.merged=true`, the `examples/telemetry/` reference Collector + Postgres deployment, and the SPEC §11.6.11 / §11.6.12 / §18.2 + CHANGELOG + README + VERIFY doc surface.
 
@@ -16,9 +16,9 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 **Phase 3 of v0.3 is also complete.** Opt-in OTel emission layers over both binaries (six daemon spans + six bridge spans, all carrying the resolved `tenant_id`; `service.namespace = tenant_id` at the resource level so a Collector routing-processor splits per-tenant without touching emission code). The typed Sinfonia↔bridge event channel (`AgentEvent::SessionCompleted` → HMAC-SHA256 POST to `POST /api/v1/sinfonia-events`, reusing the GitHub-webhook verify helper) replaces the originally-proposed bridge-side OTLP receiver. Per-ticket token + cost caps are enforced at the tracker-write boundary with a 30 s idle-flush debounce that coalesces under-cap writes (Linear's marker-comment is read-modify-write, so a busy ticket benefits ~10×). The embedded cost table at `config/cost_table.yaml` (Anthropic / OpenAI / Google / Ollama-zero) ships with two freshness gates — WARN at 90 days, the M-2 asymmetric cost-cap block at 180 days. Workspace test count: **183 passing** (44 sinfonia + 14 conformance + 7 tracker + 107 bridge unit + 9 bridge integration + 2 sinfonia http events), zero failures — up from Phase 1+2's 158 by +25.
 
-**Phase 4 of v0.3 has landed on the branch `v0.3-phase-4-jira-bridge` (PR pending).** The five `IssueTracker` bridge-write methods (`transition_issue` / `read_custom_field` / `write_custom_field` / `ensure_custom_field` / `post_comment`) are implemented for `JiraTracker` against the Atlassian Cloud REST API. The bridge-key→display-name resolver + cached `customfield_NNNNN` lookup, the narrow-scope Markdown→ADF converter (paragraphs / fenced code blocks / lists / inline strong/em/code/link), and the best-effort screen-scheme bind (with `docs/JIRA-SCREEN-SCHEME.md` fallback) all ship in this phase. Bridge-config Rule 2 swapped from "Jira deferred to Phase 4" to two positive rules (`endpoint` required; `email` required when endpoint is `*.atlassian.net`). Self-hosted Jira Server / Data Center is supported via PAT-only Bearer auth. The Phase 3 budget pipeline composes without a patch — `CustomFieldValue::String("8.23")` round-trips through a Jira text customfield without semantic loss.
+**Phase 4 of v0.3 is also complete (merged via #11, `17f5213`).** The five `IssueTracker` bridge-write methods (`transition_issue` / `read_custom_field` / `write_custom_field` / `ensure_custom_field` / `post_comment`) are implemented for `JiraTracker` against the Atlassian Cloud REST API. The bridge-key→display-name resolver + cached `customfield_NNNNN` lookup, the narrow-scope Markdown→ADF converter (paragraphs / fenced code blocks / lists / inline strong/em/code/link), and the best-effort screen-scheme bind (with `docs/JIRA-SCREEN-SCHEME.md` fallback) all ship in this phase. Bridge-config Rule 2 swapped from "Jira deferred to Phase 4" to two positive rules (`endpoint` required; `email` required when endpoint is `*.atlassian.net`). Self-hosted Jira Server / Data Center is supported via PAT-only Bearer auth. The Phase 3 budget pipeline composes without a patch — `CustomFieldValue::String("8.23")` round-trips through a Jira text customfield without semantic loss.
 
-The next pickup is **Phase 5 — `setup-bridge` skills CLI** once Phase 4 merges.
+The next pickup is **Phase 5 — `setup-bridge` skills CLI** (`docs/v0.3-plan/05-skills-cli.md`).
 
 The single most important non-obvious decision the Phase 1+2 work bequeathed to Phase 3 (resolved this phase): **the agent-side token-accounting plumbing was already in place across every CLI backend**, and `TurnOutcome::Completed` now exposes the per-turn `usage: TokenUsage` directly (the runner aggregates session totals without re-parsing the event channel). Phase 3 instrumented six daemon span sites with `tracing::field::Empty` placeholders + late `span.record()` for runtime values; no fresh code paths needed instrumentation.
 
@@ -61,9 +61,11 @@ The single most important non-obvious decision surfaced during Phase 3: **OTel m
 | `cc9f1a1` (#10) | P3: docs (SPEC §11.6/§18.2 + CHANGELOG + README + VERIFY) + reference assets | Docs — `docs/SPEC.md` gains §11.6.11 (typed Sinfonia↔bridge event channel, full wire shape + HMAC contract) + §11.6.12 (budget enforcement surface, freshness gates, per-ticket overrides) + a §18.2 entry for OpenTelemetry emission with `tenant_id`. CHANGELOG `[Unreleased]` adds the Phase 3 Added / Changed / Deferred entries. README gains a Phase 3 What's-new bullet + new Observability section showing the env-var path. `docs/v0.3-plan/03-telemetry-VERIFY.md` (new, ~240 LOC): captures the OTel crate-version delta (plan-doc 0.24/0.17/0.25 → actual 0.32/0.33), the SDK API rename, the `semconv_experimental` gating decision, the metrics-layer deferral with span-derived equivalents listed per metric, and the §9.3 manual-verification protocol. `examples/telemetry/` (new): `postgres-schema.sql` (sessions / attempts / events tables + indexes), `otel-collector-config.yaml` (OTLP receiver + routing-by-tenant + Postgres exporter starter), three `queries/*.sql` (tenant monthly cost, first-try rate, budget-heavy tickets), and `README.md` (wiring guide + full span / attribute reference + multi-tenant notes). |
 | `2fa8d8c` (#10) | P3: VERIFY notes — defer wire-level integration tests to Phase 3.1 | Docs — `03-telemetry-VERIFY.md` §2.5 captures the integration-test deferral with a cross-reference table mapping each wire-level concern (HMAC algo + format, cap detection, flush field types, cost table + freshness gates, tenant resolver, subscriber registry, schema round-trip) to the unit test that pins it. Manual verification per plan §9.3 covers the remaining end-to-end concern. |
 | `b1ecf96` | STATUS: mark Phase 3 merged, queue Phase 4 as next deliverable | Docs — this file |
-| `2d166aa` (branch) | P4: Jira bridge write surface — five IssueTracker methods + ADF converter (§11.6, plan 04) | Code on `v0.3-phase-4-jira-bridge` — `jira.rs` (+563 LOC), `jira_adf.rs` (+453 LOC), `tests/jira_wiremock.rs` (+250 LOC), `config.rs` Rule 2 swap, `main.rs` + `selftest.rs` Jira wiring. +27 tests (210 total). |
-| `3f9eb1c` (branch) | P4: docs (SPEC §11.6 + CHANGELOG + README + BRIDGE.example + VERIFY + JIRA-SCREEN-SCHEME) | Docs on `v0.3-phase-4-jira-bridge` — SPEC §11.6.2 Jira bullet rewrite, CHANGELOG `[Unreleased]` 3 new bullets, README Phase 4 paragraph, BRIDGE.example Jira section refresh, `docs/v0.3-plan/04-jira-VERIFY.md` (new, ~140 LOC), `docs/JIRA-SCREEN-SCHEME.md` (new, ~95 LOC). |
-| (this commit, branch) | STATUS: mark Phase 4 landed on branch; baseline +27 tests; queue Phase 5 | Docs — this file |
+| `2d166aa` (#11) | P4: Jira bridge write surface — five IssueTracker methods + ADF converter (§11.6, plan 04) | Code — `jira.rs` (+563 LOC), `jira_adf.rs` (+453 LOC), `tests/jira_wiremock.rs` (+250 LOC), `config.rs` Rule 2 swap, `main.rs` + `selftest.rs` Jira wiring. +27 tests (210 total). |
+| `3f9eb1c` (#11) | P4: docs (SPEC §11.6 + CHANGELOG + README + BRIDGE.example + VERIFY + JIRA-SCREEN-SCHEME) | Docs — SPEC §11.6.2 Jira bullet rewrite, CHANGELOG `[Unreleased]` 3 new bullets, README Phase 4 paragraph, BRIDGE.example Jira section refresh, `docs/v0.3-plan/04-jira-VERIFY.md` (new, ~140 LOC), `docs/JIRA-SCREEN-SCHEME.md` (new, ~95 LOC). |
+| `b975510` (#11) | STATUS: mark Phase 4 landed on branch; baseline +27 tests; queue Phase 5 | Docs — this file (pre-merge prep on the branch) |
+| `17f5213` | Merge pull request #11 from O-Side-Systems/v0.3-phase-4-jira-bridge | Merge commit |
+| (this commit) | STATUS: mark Phase 4 merged, queue Phase 5 as next deliverable | Docs — this file |
 
 ### Phase 1 sub-task status
 
@@ -110,28 +112,28 @@ Phase 3 shipped as one PR (#10) with five intermediate commits walking the work 
 | OTel metrics layer (`MeterProvider` + 9 instruments per §6) | §6 | ⏳ deferred to v0.3.1 | Plan §8.2 dashboards read span attributes from the `events` table (not OTel metric points), so exit criteria are met span-derived. Rationale + per-metric span-derived equivalent in `03-telemetry-VERIFY.md` §2.1. |
 | Wire-level integration tests (`tests/telemetry_e2e.rs`, `tests/budget_e2e.rs`) | §9.2 | ⏳ deferred to v0.3.1 | Algorithmic surface pinned by the unit suite — cross-reference table in `03-telemetry-VERIFY.md` §2.5 maps each wire-level concern (HMAC algo + format, cap detection, flush field types, cost table + freshness gates, tenant resolver, subscriber registry, schema round-trip) to the unit test that pins it. Plan §9.3 manual verification covers the end-to-end wire concern. |
 
-### Phase 4 sub-task status (on branch `v0.3-phase-4-jira-bridge`)
+### Phase 4 sub-task status
 
-Phase 4 shipped as two atomic commits on the branch (code + docs), staged for PR after this STATUS update lands. The mapping back to the `04-jira-bridge.md` §8 deliverable checklist:
+Phase 4 shipped as one PR (#11) with two intermediate commits (code + docs) plus a pre-merge STATUS prep commit, squash-merged on `main` as `17f5213`. The mapping back to the `04-jira-bridge.md` §8 deliverable checklist:
 
 | Deliverable | Plan section | Status | Notes |
 |---|---|---|---|
-| Five `IssueTracker` methods implemented in `crates/sinfonia-tracker/src/jira.rs` | §3.1–§3.3, §3.5 | ✅ landed (branch) | `transition_issue` / `read_custom_field` / `write_custom_field` / `ensure_custom_field` / `post_comment`. Field-ID cache: `Arc<tokio::sync::RwLock<HashMap<String, String>>>` on `JiraTracker`. Helpers: `jira_field_type` / `jira_searcher_key` / `display_name_for_key` / `parse_field_value` / `serialize_field_value`. |
-| Markdown → ADF converter | §3.5, §7 #4 | ✅ landed (branch) | `crates/sinfonia-tracker/src/jira_adf.rs` (new, 453 LOC incl. 11 unit tests). Subset: paragraphs / fenced code blocks / bullet + ordered lists / inline strong + em + code + link. Unsupported features fall through to plain paragraphs (per §7 #4). |
-| Bridge config validation no longer rejects `tracker.kind: jira` | §4 | ✅ landed (branch) | `config.rs` Rule 2 swapped from rejection to positive rules. `tracker.endpoint` required; `tracker.email` required when endpoint contains `.atlassian.net`. Four new tests: `rule2_jira_cloud_with_email_is_accepted`, `rule2_jira_self_hosted_pat_is_accepted_without_email`, `rule2_jira_missing_endpoint_errors`, `rule2_jira_cloud_missing_email_errors`. |
-| Screen-scheme binding attempt + clear error path + `docs/JIRA-SCREEN-SCHEME.md` | §3.4 | ✅ landed (branch) | `JiraTracker::bind_field_to_default_screen` walks `/rest/api/3/screens` → first matching screen → first tab → `POST /screens/{id}/tabs/{tab}/fields`. Failure path: `tracing::warn!` with link to manual-bind doc. The doc (new, ~95 lines) covers Cloud + Server/DC and includes the seven-field reference table. |
-| Unit tests per §5.1 | §5.1 | ✅ landed (branch) | 25 sinfonia-tracker unit tests (8 new for Jira: `field_type_mapping_covers_all_kinds`, `searcher_key_mapping_covers_all_kinds`, `display_name_round_trip_for_well_known_keys`, `parse_field_value_handles_each_shape`, `serialize_field_value_emits_bare_primitives`, `transition_lookup_happy_path`, `transition_lookup_no_match`; 11 ADF tests). |
+| Five `IssueTracker` methods implemented in `crates/sinfonia-tracker/src/jira.rs` | §3.1–§3.3, §3.5 | ✅ merged | `transition_issue` / `read_custom_field` / `write_custom_field` / `ensure_custom_field` / `post_comment`. Field-ID cache: `Arc<tokio::sync::RwLock<HashMap<String, String>>>` on `JiraTracker`. Helpers: `jira_field_type` / `jira_searcher_key` / `display_name_for_key` / `parse_field_value` / `serialize_field_value`. |
+| Markdown → ADF converter | §3.5, §7 #4 | ✅ merged | `crates/sinfonia-tracker/src/jira_adf.rs` (new, 453 LOC incl. 11 unit tests). Subset: paragraphs / fenced code blocks / bullet + ordered lists / inline strong + em + code + link. Unsupported features fall through to plain paragraphs (per §7 #4). |
+| Bridge config validation no longer rejects `tracker.kind: jira` | §4 | ✅ merged | `config.rs` Rule 2 swapped from rejection to positive rules. `tracker.endpoint` required; `tracker.email` required when endpoint contains `.atlassian.net`. Four new tests: `rule2_jira_cloud_with_email_is_accepted`, `rule2_jira_self_hosted_pat_is_accepted_without_email`, `rule2_jira_missing_endpoint_errors`, `rule2_jira_cloud_missing_email_errors`. |
+| Screen-scheme binding attempt + clear error path + `docs/JIRA-SCREEN-SCHEME.md` | §3.4 | ✅ merged | `JiraTracker::bind_field_to_default_screen` walks `/rest/api/3/screens` → first matching screen → first tab → `POST /screens/{id}/tabs/{tab}/fields`. Failure path: `tracing::warn!` with link to manual-bind doc. The doc (new, ~95 lines) covers Cloud + Server/DC and includes the seven-field reference table. |
+| Unit tests per §5.1 | §5.1 | ✅ merged | 25 sinfonia-tracker unit tests (8 new for Jira: `field_type_mapping_covers_all_kinds`, `searcher_key_mapping_covers_all_kinds`, `display_name_round_trip_for_well_known_keys`, `parse_field_value_handles_each_shape`, `serialize_field_value_emits_bare_primitives`, `transition_lookup_happy_path`, `transition_lookup_no_match`; 11 ADF tests). |
 | Integration tests per §5.2 mirroring Phase 1's Linear scenarios | §5.2 | ⚠️ scope-narrowed | Instead of re-mirroring the 1.4k-LOC bridge_e2e harness for Jira's REST API, Phase 4 ships `crates/sinfonia-tracker/tests/jira_wiremock.rs` (250 LOC, 6 scenarios) that drives every write method through a real HTTP path against wiremock. Feedback-loop logic is tracker-agnostic and already covered by the Linear bridge_e2e harness. Rationale in `docs/v0.3-plan/04-jira-VERIFY.md` §3.1. |
 | Manual verification recorded in `docs/v0.3-plan/04-jira-VERIFY.md` | §5.3 | ⏳ matrix recorded, runs pending | The VERIFY doc captures the six-row verification matrix (V-1 through V-6) with status; runs against a real Atlassian sandbox are pending before `v0.3.0-alpha.x` tag. |
-| `BRIDGE.example.md` updated with both `kind: linear` and `kind: jira` sections | §4 | ✅ landed (branch) | Removed "rejected with friendly error" comment; added Server/DC PAT variant + first-run screen-binding note. |
-| `docs/SPEC.md` §11.6 reflects both tracker implementations | — | ✅ landed (branch) | §11.6.2 Jira bullet rewritten: documents the bridge-key→display-name→`customfield_NNNNN` resolution path, the field-id cache, and the ADF requirement for `post_comment`. |
-| CHANGELOG entry | — | ✅ landed (branch) | Three new bullets in `[Unreleased]` covering the Jira write surface, the config validation rule swap, and the `--self-test` Jira probe. |
-| `main.rs` + `selftest.rs` Jira wiring | §6 (inherited) | ✅ landed (branch) | `main.rs` arm replaced "not supported until Phase 4" error with `Arc::new(JiraTracker::new(&tracker_cfg)?)`. `selftest.rs` Jira probe routes through `fetch_candidate_issues` (`POST /rest/api/3/search`) as the reachability + auth check. |
+| `BRIDGE.example.md` updated with both `kind: linear` and `kind: jira` sections | §4 | ✅ merged | Removed "rejected with friendly error" comment; added Server/DC PAT variant + first-run screen-binding note. |
+| `docs/SPEC.md` §11.6 reflects both tracker implementations | — | ✅ merged | §11.6.2 Jira bullet rewritten: documents the bridge-key→display-name→`customfield_NNNNN` resolution path, the field-id cache, and the ADF requirement for `post_comment`. |
+| CHANGELOG entry | — | ✅ merged | Three new bullets in `[Unreleased]` covering the Jira write surface, the config validation rule swap, and the `--self-test` Jira probe. |
+| `main.rs` + `selftest.rs` Jira wiring | §6 (inherited) | ✅ merged | `main.rs` arm replaced "not supported until Phase 4" error with `Arc::new(JiraTracker::new(&tracker_cfg)?)`. `selftest.rs` Jira probe routes through `fetch_candidate_issues` (`POST /rest/api/3/search`) as the reachability + auth check. |
 
 ### Test baseline on `main`
 
 - `cargo test --workspace --no-fail-fast` on `main` → **183 tests pass, 0 failures** (Phase 3 final baseline).
-- `cargo test --workspace --no-fail-fast` on `v0.3-phase-4-jira-bridge` → **210 tests pass, 0 failures** (+27 over Phase 3):
+- `cargo test --workspace --no-fail-fast` on `main` post-#11 → **210 tests pass, 0 failures** (+27 over Phase 3):
   - **47** sinfonia unit tests (up from 44 by +3 across the `telemetry::tenant` helpers — pre-existing on the branch).
   - **13** `spec_conformance.rs` integration tests (was 14 — adjustment from Phase 3 settlement; still 0 failures).
   - **25** sinfonia-tracker unit tests (up from 7 by +18: 8 new Jira tests in `jira::tests`, 11 new ADF tests in `jira_adf::tests`).
@@ -153,7 +155,7 @@ Phase 4 shipped as two atomic commits on the branch (code + docs), staged for PR
 
 ## 2. What's next: Phase 5 — `setup-bridge` skills CLI
 
-Phase 1 + Phase 2 + Phase 3 are merged to `main`; Phase 4 has landed on `v0.3-phase-4-jira-bridge` and is awaiting PR + merge. Once Phase 4 merges, the next pickup is **Phase 5 — `setup-bridge` skills CLI** (`docs/v0.3-plan/05-skills-cli.md`). Phase 5's stated dependencies are Phase 1 (config schema) and Phase 4 (Jira branch in the prompts) — both resolved on `main` after the Phase 4 merge.
+Phases 1–4 are merged to `main`. The next pickup is **Phase 5 — `setup-bridge` skills CLI** (`docs/v0.3-plan/05-skills-cli.md`). Phase 5's stated dependencies are Phase 1 (config schema) and Phase 4 (Jira branch in the prompts) — both resolved.
 
 The historical Phase 4 narrative kept below for the hand-off record:
 
@@ -187,7 +189,7 @@ Read these in this order before starting Phase 4:
 
 Then `git checkout -b v0.3-phase-4-jira` off `main` (183-test baseline) and start there.
 
-**Update (this commit):** the above is now the historical record. Phase 4 landed on `v0.3-phase-4-jira-bridge` with both branch commits and 210/210 workspace tests green. The two plan-doc deltas surfaced during impl are captured in `docs/v0.3-plan/04-jira-VERIFY.md` §1 (field-discovery endpoint, identification by display name).
+**Update (this commit):** the above is now the historical record. Phase 4 merged via #11 (`17f5213`) with 210/210 workspace tests green on `main`. The two plan-doc deltas surfaced during impl are captured in `docs/v0.3-plan/04-jira-VERIFY.md` §1 (field-discovery endpoint, identification by display name).
 
 ### Phase 4 follow-up watch list
 
@@ -271,7 +273,7 @@ sinfonia/
 │       ├── 01-bridge-mvp.md     # Phase 1 plan
 │       ├── 02-opencode-backend.md / 02-opencode-VERIFY.md  # Phase 2 plan + verify
 │       ├── 03-telemetry-budget.md / 03-telemetry-VERIFY.md # Phase 3 plan + verify
-│       ├── 04-jira-bridge.md    # Phase 4 plan (next pickup)
+│       ├── 04-jira-bridge.md    # Phase 4 plan (merged via #11)
 │       ├── 05-skills-cli.md     # Phase 5 plan
 │       ├── 06-docker.md         # Phase 6 plan
 │       ├── 07-docs.md           # Phase 7 plan
@@ -550,7 +552,7 @@ grep -n "tracker.kind 'jira' not supported" crates/sinfonia-bridge/src/config.rs
 git checkout -b v0.3-phase-4-jira
 ```
 
-Phase 1 + Phase 2 + Phase 3 of v0.3 are complete (P1-A..P1-I + P2 + P3 all merged). Phase 4 (Jira bridge support) is the next pickup; Phases 5..7 follow in plan-doc order. After Phase 4 lands, Phase 5 (setup skills + CLI), Phase 6 (Docker images), and Phase 7 (documentation) round out v0.3.
+Phases 1–4 of v0.3 are complete (P1-A..P1-I + P2 + P3 + P4 all merged). Phases 5–7 follow in plan-doc order: Phase 5 (`setup-bridge` skills CLI) is the next pickup, Phase 6 (Docker images), and Phase 7 (documentation) round out v0.3.
 
 ---
 
@@ -605,9 +607,10 @@ For the next agent's first message to itself when context is fresh:
 ```
 Working directory: /Users/brettlee/work/sinfonia
 Current branch: main (assumed; verify with `git branch --show-current`)
-Last merged work: P3 telemetry + budget enforcement (PR #10, merge 707a812)
-                  — **Phase 3 of v0.3 is now complete.**
-Earlier merges: P2 OpenCode agent backend (PR #9, commit 3b84a20, merge f26aca7);
+Last merged work: P4 Jira bridge support (PR #11, merge 17f5213)
+                  — **Phase 4 of v0.3 is now complete.**
+Earlier merges: P3 telemetry + budget enforcement (PR #10, merge 707a812);
+                P2 OpenCode agent backend (PR #9, commit 3b84a20, merge f26aca7);
                 P1-I Phase 1 docs (PR #8, commit a057218, merge e8f224a)
                   — closed out Phase 1 of v0.3;
                 P1-H wiremock integration tests (PR #7, commit d7ad72d, merge 749c9c4);
@@ -620,14 +623,18 @@ Earlier merges: P2 OpenCode agent backend (PR #9, commit 3b84a20, merge f26aca7)
 Read these in this order:
   1. docs/v0.3-plan/STATUS.md   (this file — rolling milestone status)
   2. docs/v0.3-plan/00-overview.md   (milestone index, phase deps)
-  3. docs/v0.3-plan/04-jira-bridge.md   (Phase 4 plan; next pickup)
-     — and skim the hand-off files in §2 above before writing code:
-     crates/sinfonia-tracker/src/jira.rs (current default impls),
-     crates/sinfonia-tracker/src/linear.rs (reference impl; different design),
-     crates/sinfonia-tracker/src/custom_fields.rs (WELL_KNOWN_FIELDS + marker scheme),
-     crates/sinfonia-bridge/src/config.rs (the Rule 2 Jira-rejection gate).
-     Vendor docs (Jira REST + ADF schema) MUST be re-verified before code
-     per the §5.13 / §5.10 lesson.
+  3. docs/v0.3-plan/05-skills-cli.md   (Phase 5 plan; next pickup)
+     — and skim these before designing the skill UX:
+     crates/sinfonia-bridge/src/config.rs (BRIDGE.md parser + validation rules,
+       including the Phase 4 positive Jira rules — `endpoint` required,
+       `email` required for *.atlassian.net),
+     crates/sinfonia-bridge/src/selftest.rs (the existing PASS/FAIL/SKIP runner
+       the skill will gate on),
+     crates/sinfonia-tracker/src/jira.rs (the Jira write surface the skill
+       can drive at first-run, especially `ensure_custom_field`'s screen-
+       bind warn path),
+     docs/JIRA-SCREEN-SCHEME.md (the operator-facing fallback the skill
+       should surface when admin perms are absent).
 
 Source of truth for the underlying change set:
   /Users/brettlee/Downloads/sinfonia-change-proposal.md
