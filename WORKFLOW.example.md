@@ -41,7 +41,7 @@ agent:
 
   # ---- Default LLM backend ----
   # Used for any state without a `states:` override below.
-  # Provider options: openai | anthropic | google | ollama | claude_code | codex
+  # Provider options: openai | anthropic | google | ollama | claude_code | codex | opencode
   provider: anthropic
   model: claude-sonnet-4-6
   # api_key resolves from ANTHROPIC_API_KEY / OPENAI_API_KEY / GOOGLE_API_KEY by default.
@@ -108,6 +108,29 @@ states:
       and produce a short review. If the change looks good, leave a "ship it" comment and
       transition to "Done". If not, leave a comment explaining what to fix and transition
       back to "In Progress".
+
+# ---- OpenCode alternative (uncomment to use) ----
+# OpenCode (https://opencode.ai) is a coding-agent CLI with LSP, MCP, and 75+ provider
+# backends. Like `claude_code` and `codex`, Sinfonia drives it as a subprocess in the
+# workspace.
+#
+# Auth: OpenCode owns its own credentials — Sinfonia does NOT pass an api_key. Run
+# `opencode auth login` once on the host before starting the daemon. The `model:` field
+# is passed through verbatim as `--model <name>`; OpenCode's wire format is
+# `provider/model` (e.g. `anthropic/claude-sonnet-4-6`, `ollama/qwen2.5-coder:32b`).
+#
+# states:
+#   Ready:
+#     provider: opencode
+#     model: anthropic/claude-sonnet-4-6
+#     turn_timeout_ms: 3600000
+#   "Needs Fixes":
+#     provider: opencode
+#     model: anthropic/claude-sonnet-4-6
+#     prompt: |
+#       Address the CI failures on {{ issue.identifier }}.
+#       Last failure:
+#       {{ issue.fields.sinfonia_last_ci_failure | default: "(see PR checks)" }}
 
 # ---- Optional HTTP dashboard ----
 server:

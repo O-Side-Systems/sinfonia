@@ -210,6 +210,118 @@ Default body for {{ issue.identifier }}.
 }
 
 #[test]
+fn opencode_provider_parses() {
+    // §4 of the Phase 2 plan documents three example `WORKFLOW.md` shapes
+    // for `provider: opencode`: a default-lane usage, a state-machine
+    // routing block, and a local Ollama-with-LSP setup. All three must
+    // round-trip cleanly through `ServiceConfig::from_workflow()` so the
+    // typed config layer recognizes the new provider variant.
+
+    // §4.1 — default-lane usage. OpenCode owns auth, so no api_key is
+    // wired here.
+    let default_lane = r#"---
+tracker:
+  kind: linear
+  api_key: x
+  project_slug: p
+agent:
+  provider: opencode
+  model: anthropic/claude-sonnet-4-6
+  command: opencode run --format json
+  turn_timeout_ms: 1800000
+---
+"#;
+    let def = sinfonia::config::parse_workflow_str(default_lane).unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    assert_eq!(cfg.llm.provider, AgentProvider::OpenCode);
+    assert_eq!(cfg.llm.model, "anthropic/claude-sonnet-4-6");
+    assert_eq!(cfg.llm.command, "opencode run --format json");
+    assert_eq!(cfg.llm.turn_timeout_ms, 1_800_000);
+    // OpenCode is in the CLI family, not the raw-LLM family.
+    assert!(cfg.llm.provider.is_cli());
+    assert!(!cfg.llm.provider.is_raw_llm());
+
+    // §4.2 — state-machine routing. Triage → cheap raw Haiku, Ready and
+    // "Needs Fixes" → OpenCode + Sonnet. The override in "Needs Fixes - E2E"
+    // exercises both the `model:` and `turn_timeout_ms:` per-state knobs.
+    let state_machine = r#"---
+tracker:
+  kind: linear
+  api_key: x
+  project_slug: p
+  active_states: ["Triage", "Ready", "Needs Fixes", "Needs Fixes - E2E"]
+agent:
+  provider: anthropic
+  model: claude-sonnet-4-6
+states:
+  Triage:
+    provider: anthropic
+    model: claude-haiku-4-5-20251001
+  Ready:
+    provider: opencode
+    model: anthropic/claude-sonnet-4-6
+    turn_timeout_ms: 3600000
+  "Needs Fixes":
+    provider: opencode
+    model: anthropic/claude-sonnet-4-6
+    prompt: |
+      Address the CI failures on {{ issue.identifier }}.
+  "Needs Fixes - E2E":
+    provider: opencode
+    model: anthropic/claude-opus-4-7
+    turn_timeout_ms: 5400000
+---
+body
+"#;
+    let def = sinfonia::config::parse_workflow_str(state_machine).unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    // Triage stays on the raw Anthropic backend.
+    let triage = cfg.effective_llm_for_state("Triage");
+    assert_eq!(triage.provider, AgentProvider::Anthropic);
+    // Ready → OpenCode with an extended turn timeout.
+    let ready = cfg.effective_llm_for_state("Ready");
+    assert_eq!(ready.provider, AgentProvider::OpenCode);
+    assert_eq!(ready.model, "anthropic/claude-sonnet-4-6");
+    assert_eq!(ready.turn_timeout_ms, 3_600_000);
+    // Switching provider re-applies the provider-shaped default command
+    // — same behaviour the claude_code / codex states get.
+    assert!(
+        ready.command.starts_with("opencode run"),
+        "expected opencode default command, got: {}",
+        ready.command
+    );
+    // "Needs Fixes" carries the prompt override verbatim.
+    let needs_fixes_prompt = cfg.effective_prompt_template("Needs Fixes", "fallback");
+    assert!(needs_fixes_prompt.contains("Address the CI failures"));
+    // E2E lane: stronger model + longer turn.
+    let e2e = cfg.effective_llm_for_state("Needs Fixes - E2E");
+    assert_eq!(e2e.provider, AgentProvider::OpenCode);
+    assert_eq!(e2e.model, "anthropic/claude-opus-4-7");
+    assert_eq!(e2e.turn_timeout_ms, 5_400_000);
+
+    // §4.3 — local Ollama-with-LSP. Sinfonia's model field is passed
+    // through verbatim; OpenCode's own config picks the underlying
+    // provider. No api_key needed.
+    let ollama_local = r#"---
+tracker:
+  kind: linear
+  api_key: x
+  project_slug: p
+agent:
+  provider: opencode
+  model: ollama/qwen2.5-coder:32b
+---
+body
+"#;
+    let def = sinfonia::config::parse_workflow_str(ollama_local).unwrap();
+    let cfg = ServiceConfig::from_workflow(&def).unwrap();
+    assert_eq!(cfg.llm.provider, AgentProvider::OpenCode);
+    assert_eq!(cfg.llm.model, "ollama/qwen2.5-coder:32b");
+    // No api_key resolution attempted (CLI providers own their own auth).
+    assert!(cfg.llm.api_key.is_none());
+}
+
+#[test]
 fn cli_provider_without_command_fails_validation() {
     let yaml = r#"---
 tracker:

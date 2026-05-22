@@ -4,9 +4,12 @@
 //!
 //! 1. **Raw LLM** backends (`openai`, `anthropic`, `google`, `ollama`) that drive an
 //!    LLM HTTP API directly and run a built-in tool loop (see `turn.rs`/`tools.rs`).
-//! 2. **CLI** backends (`claude_code`, `codex`) that delegate the entire reasoning
-//!    + tool loop to an external coding-agent CLI invoked as a subprocess in the
-//!    issue workspace (see `cli.rs`).
+//! 2. **CLI** backends (`claude_code`, `codex`, `opencode`) that delegate the
+//!    entire reasoning + tool loop to an external coding-agent CLI invoked as
+//!    a subprocess in the issue workspace. `claude_code` and `codex` share
+//!    `cli.rs`; `opencode` lives in `opencode.rs` as a sibling because its
+//!    event-stream shape, resume flag, and auth model are different enough
+//!    that a copy-and-adapt is cleaner than an abstraction.
 //!
 //! The workflow state machine (config `states:` block) picks one of these per
 //! tracker state, so e.g. "In Progress" can run under Claude Code while "In Review"
@@ -19,6 +22,7 @@ pub mod events;
 pub mod google;
 pub mod ollama;
 pub mod openai;
+pub mod opencode;
 pub mod tools;
 pub mod turn;
 
@@ -83,6 +87,7 @@ pub fn build_for(cfg: &ServiceConfig, llm: &LlmConfig) -> Result<Arc<dyn CodingA
         AgentProvider::Google => Arc::new(google::GoogleAgent::new(cfg, llm)?),
         AgentProvider::Ollama => Arc::new(ollama::OllamaAgent::new(cfg, llm)?),
         AgentProvider::ClaudeCode | AgentProvider::Codex => Arc::new(cli::build_for(llm)?),
+        AgentProvider::OpenCode => Arc::new(opencode::OpenCodeAgent::new(cfg, llm)?),
         AgentProvider::CodexAppServer => Arc::new(codex_stub::CodexStubAgent::new(llm)?),
     })
 }

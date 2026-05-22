@@ -53,6 +53,12 @@ pub enum AgentProvider {
     ClaudeCode,
     /// Drives OpenAI's `codex` CLI as a subprocess in the workspace.
     Codex,
+    /// Drives the `opencode` CLI (https://opencode.ai) as a subprocess in the
+    /// workspace. OpenCode brings LSP integration, MCP tool support, and 75+
+    /// provider backends (including local Ollama with LSP); auth is owned by
+    /// the OpenCode CLI itself, configured via `opencode auth login` — Sinfonia
+    /// does not pass an api_key. See `agent/opencode.rs`.
+    OpenCode,
     /// Original spec backend (Codex app-server stdio protocol). Stubbed.
     CodexAppServer,
 }
@@ -68,6 +74,7 @@ impl AgentProvider {
                 Ok(AgentProvider::ClaudeCode)
             }
             "codex" | "codex_cli" | "codex-cli" => Ok(AgentProvider::Codex),
+            "opencode" => Ok(Self::OpenCode),
             "codex_app_server" | "codex-app-server" => Ok(AgentProvider::CodexAppServer),
             other => Err(Error::ConfigInvalid(format!(
                 "unknown agent.provider: {other}"
@@ -88,7 +95,10 @@ impl AgentProvider {
 
     /// True for backends that delegate to an external coding-agent CLI.
     pub fn is_cli(&self) -> bool {
-        matches!(self, AgentProvider::ClaudeCode | AgentProvider::Codex)
+        matches!(
+            self,
+            AgentProvider::ClaudeCode | AgentProvider::Codex | AgentProvider::OpenCode
+        )
     }
 }
 
@@ -257,7 +267,10 @@ impl ServiceConfig {
         // CLI-based providers need a non-empty command line.
         if matches!(
             self.llm.provider,
-            AgentProvider::Codex | AgentProvider::ClaudeCode | AgentProvider::CodexAppServer
+            AgentProvider::Codex
+                | AgentProvider::ClaudeCode
+                | AgentProvider::OpenCode
+                | AgentProvider::CodexAppServer
         ) && self.llm.command.trim().is_empty()
         {
             return Err(Error::ConfigInvalid(format!(
@@ -476,6 +489,10 @@ fn parse_llm(config: &Json, _tracker_kind: &TrackerKind) -> Result<LlmConfig> {
         AgentProvider::Google => "gemini-1.5-pro",
         AgentProvider::Ollama => "llama3.1",
         AgentProvider::ClaudeCode => "claude-sonnet-4-6",
+        // OpenCode wants `provider/model` (e.g. `anthropic/claude-sonnet-4-6`);
+        // leaving this empty falls through to whatever the user's local
+        // `~/.config/opencode/config.json` selects.
+        AgentProvider::OpenCode => "",
         AgentProvider::Codex | AgentProvider::CodexAppServer => "",
     };
     let model = agent
@@ -561,6 +578,7 @@ fn default_llm_env(provider: &AgentProvider) -> Option<String> {
         AgentProvider::Ollama
         | AgentProvider::ClaudeCode
         | AgentProvider::Codex
+        | AgentProvider::OpenCode
         | AgentProvider::CodexAppServer => return None,
     };
     std::env::var(var).ok().filter(|s| !s.is_empty())
@@ -579,6 +597,16 @@ pub(crate) fn default_command(provider: &AgentProvider) -> &'static str {
             "claude -p --output-format stream-json --verbose --dangerously-skip-permissions"
         }
         AgentProvider::Codex => "codex exec --json",
+        AgentProvider::OpenCode => {
+            // `--format json` switches stdout from the TUI to one JSON event
+            // per line (see opencode `packages/opencode/src/cli/cmd/run.ts`,
+            // the `emit()` helper). The prompt body is piped on stdin —
+            // OpenCode auto-detects non-TTY stdin and uses it as the message
+            // (`resolveRunInput()`), so we don't need a `--prompt-stdin`-style
+            // flag. Session resume on later turns is wired by
+            // `OpenCodeAgent::build_command_line` via `--session <id>`.
+            "opencode run --format json"
+        }
         AgentProvider::CodexAppServer => "codex app-server",
         _ => "",
     }
