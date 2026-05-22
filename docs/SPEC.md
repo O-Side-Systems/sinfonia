@@ -1256,8 +1256,13 @@ Storage mechanism:
   updates are NOT permitted. This sidesteps Linear's lack of a stable custom-field surface (see
   §11.6.7).
 - **Jira** — the envelope is stored as real custom fields keyed by name. The bridge MUST call
-  `ensure_custom_field` for each `sinfonia_*` key at startup. (Jira bridge writes are deferred to a
-  later milestone in Sinfonia's reference implementation.)
+  `ensure_custom_field` for each `sinfonia_*` key at startup. The reference implementation
+  resolves each bridge-stable key to a stable display name (e.g. `sinfonia_attempt_count` →
+  `Sinfonia Attempt Count`), then looks up `customfield_NNNNN` via `GET /rest/api/3/field` and
+  caches the resolved id for the process lifetime. Comments emitted via `post_comment` MUST be
+  serialized as Atlassian Document Format (ADF); the reference implementation ships a
+  narrow-scope Markdown→ADF converter covering paragraphs, fenced code blocks, lists, and
+  inline strong/em/code/link marks.
 - **Other trackers** — implementations choose a single-writer storage mechanism that round-trips
   the entire envelope atomically. Splitting the envelope across multiple storage primitives is
   NOT RECOMMENDED.

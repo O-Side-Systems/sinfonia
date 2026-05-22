@@ -29,7 +29,9 @@ If you're upgrading from v0.1 and don't want the bridge, you don't have to do an
 
 **Phase 3 (telemetry + budget enforcement, currently being landed)** layers an OPT-IN OpenTelemetry exporter over both binaries' existing `tracing` subscribers, adds a typed Sinfonia→bridge event channel for the cost / budget pipeline, and enforces per-ticket token + cost caps at the bridge's tracker-write boundary. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset and no `telemetry:` block is configured in `WORKFLOW.md` / `BRIDGE.md`, behaviour matches v0.3.0-alpha.1 — the OTel layer is disabled and the binaries run stdout-only.
 
-Still alpha — Phases 4–7 land Jira bridge writes, a `setup-bridge` skills CLI, a refreshed Docker image, and finalized docs.
+**Phase 4 (Jira bridge support, currently being landed)** fills in the five `IssueTracker` bridge-write methods on the Jira side — state transitions via `POST /rest/api/3/issue/{id}/transitions`, custom-field reads/writes via cached `customfield_NNNNN` resolution, and ADF-rendered comments. Bridge config no longer rejects `tracker.kind: jira`. Self-hosted Jira (Server / Data Center) is supported via PAT-only auth. See `docs/v0.3-plan/04-jira-bridge.md` and `docs/v0.3-plan/04-jira-VERIFY.md`.
+
+Still alpha — Phases 5–7 land a `setup-bridge` skills CLI, a refreshed Docker image, and finalized docs.
 
 ## Observability (Phase 3 preview)
 
