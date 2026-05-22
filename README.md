@@ -27,7 +27,26 @@ If you're upgrading from v0.1 and don't want the bridge, you don't have to do an
 - Run `sinfonia-bridge BRIDGE.md --self-test` once you've filled in real credentials — it returns one `PASS` / `FAIL` / `SKIP` line per install-gate check.
 - See [`CHANGELOG.md`](CHANGELOG.md) for the full Added / Changed / Known limitations list.
 
-Still alpha — Phases 2–7 land budget caps + telemetry, Jira bridge writes, a `setup-bridge` skills CLI, a refreshed Docker image, and finalized docs.
+**Phase 3 (telemetry + budget enforcement, currently being landed)** layers an OPT-IN OpenTelemetry exporter over both binaries' existing `tracing` subscribers, adds a typed Sinfonia→bridge event channel for the cost / budget pipeline, and enforces per-ticket token + cost caps at the bridge's tracker-write boundary. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset and no `telemetry:` block is configured in `WORKFLOW.md` / `BRIDGE.md`, behaviour matches v0.3.0-alpha.1 — the OTel layer is disabled and the binaries run stdout-only.
+
+Still alpha — Phases 4–7 land Jira bridge writes, a `setup-bridge` skills CLI, a refreshed Docker image, and finalized docs.
+
+## Observability (Phase 3 preview)
+
+Set the standard OTel endpoint env var to enable structured trace emission to a Collector / Honeycomb / Datadog / etc.:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export SINFONIA_TENANT_ID=kyros-web-app   # or set telemetry.tenant_id in YAML
+sinfonia
+sinfonia-bridge
+```
+
+Or set the same values inside the `telemetry:` block of `WORKFLOW.md` / `BRIDGE.md` — see [`BRIDGE.example.md`](BRIDGE.example.md) for the schema.
+
+Six daemon-side spans (`orchestrator.tick`, `orchestrator.dispatch`, `runner.session`, `runner.turn`, `workspace.hook`, `tracker.fetch`) and six bridge-side spans (`bridge.webhook`, `bridge.ci_result`, `bridge.state_transition`, `bridge.cap_hit`, `bridge.cost_update`, `bridge.events_receive`) carry the resolved `tenant_id` as a per-span attribute. Resource-level `service.namespace = tenant_id` lets a Collector routing-processor split per-tenant data without touching emission code.
+
+A reference Collector + Postgres deployment ships under [`examples/telemetry/`](examples/telemetry/) — schema, Collector config, and three dashboard SQL queries (tenant monthly cost, first-try rate, top-budget tickets). See [`docs/SPEC.md` §11.6.11](docs/SPEC.md) for the typed Sinfonia↔bridge event-channel contract and §11.6.12 for the budget-enforcement surface.
 
 ## Sinfonia vs. Symphony
 

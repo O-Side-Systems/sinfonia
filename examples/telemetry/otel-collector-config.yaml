@@ -1,0 +1,68 @@
+# Sinfonia v0.3 — reference OpenTelemetry Collector config
+# (plan 03-telemetry-budget.md §8).
+#
+# This is a starter config for the local Collector→Postgres deployment.
+# It accepts spans from both `sinfonia` and `sinfonia-bridge` over OTLP/gRPC
+# on the default endpoint, splits by span name, and writes to the matching
+# Postgres tables (see `postgres-schema.sql`).
+#
+# Phase 5's `setup-telemetry` skill (not in v0.3) will templatize this
+# file for per-deployment knobs. For v0.3 it's a copy-paste-and-edit
+# reference.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+  # Per plan §3.3: resource-level `service.namespace = tenant_id` lets a
+  # routing-processor split per-tenant exporters cleanly without touching
+  # span-emission code. The example below routes two known tenants; add
+  # more entries or use a regex-routing variant for dynamic tenant lists.
+  routing/by_tenant:
+    from_attribute: service.namespace
+    default_exporters: [postgres/default]
+    table:
+      - value: kyros-web-app
+        exporters: [postgres/kyros]
+      - value: acme-internal
+        exporters: [postgres/acme]
+
+exporters:
+  postgres/default:
+    # Adjust DSN to match your reference deployment. The
+    # contrib-collector Postgres exporter consumes spans into a
+    # JSONB-flexible schema; see `postgres-schema.sql` for the tables
+    # this config writes to (sessions / attempts / events). The
+    # column-mapping is set per receiver in a production deployment.
+    endpoint: postgres://otel:otel@localhost:5432/sinfonia?sslmode=disable
+
+  postgres/kyros:
+    endpoint: postgres://otel:otel@localhost:5432/sinfonia_kyros?sslmode=disable
+
+  postgres/acme:
+    endpoint: postgres://otel:otel@localhost:5432/sinfonia_acme?sslmode=disable
+
+  # Local stdout exporter for the operator-facing debug pane during
+  # bring-up. Remove or gate behind a `--debug` flag in production.
+  logging:
+    verbosity: detailed
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, routing/by_tenant]
+      exporters: [logging]
+  telemetry:
+    logs:
+      level: info
