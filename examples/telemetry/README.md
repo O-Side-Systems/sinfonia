@@ -1,11 +1,11 @@
 # Reference OpenTelemetry → Postgres deployment
 
-Sinfonia v0.3 ships an opt-in OpenTelemetry emission layer (plan
-`docs/v0.3-plan/03-telemetry-budget.md` §2, §3) plus a typed
-Sinfonia↔bridge event channel for the cost / budget pipeline (§7.2).
-This directory holds a reference Collector + Postgres configuration —
-the v0.3 "starter kit" for operators who want to answer the three
-plan §8.2 dashboard questions without standing up Honeycomb / Datadog.
+Sinfonia v0.3 ships an opt-in OpenTelemetry emission layer (`docs/SPEC.md`
+§18.2) plus a typed Sinfonia↔bridge event channel for the cost / budget
+pipeline (§11.6.11). This directory holds a reference Collector + Postgres
+configuration — the v0.3 "starter kit" for operators who want to answer
+the three reference dashboard questions (tenant monthly cost, first-try
+rate, top-budget tickets) without standing up Honeycomb / Datadog.
 
 ## Files
 
@@ -79,7 +79,8 @@ table.
 
 ## What's NOT in v0.3
 
-The plan-doc-listed OTel metrics (`sinfonia.agent.tokens_total`,
-`bridge.cost_per_ticket_usd`, etc.) are deferred to a follow-up — see
-`docs/v0.3-plan/03-telemetry-VERIFY.md` for the rationale and the
-span-derived equivalents that close the dashboard gap.
+The 9-instrument OTel metrics layer (`sinfonia.agent.tokens_total`,
+`bridge.cost_per_ticket_usd`, etc.) is deferred to a follow-up release.
+The dashboard SQL above reads from span attributes via the `events`
+table, not from OTel metric points, so the reference dashboards work
+span-derived as-is.

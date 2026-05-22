@@ -1,6 +1,6 @@
 # markdownlint-cli2 configuration for Sinfonia docs.
 #
-# Style goals (from docs/v0.3-plan/07-docs.md §11.2):
+# Style goals:
 # - ATX headings (# Heading, not underline-style).
 # - Reference-style links allowed but consistent within each file.
 # - No bare URLs (`<https://example.com>` instead).

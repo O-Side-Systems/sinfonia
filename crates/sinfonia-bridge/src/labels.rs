@@ -27,9 +27,9 @@ use tracing::{debug, warn};
 /// base name. `Failure(category)` composes its name from the configured
 /// failure prefix (default `<prefix>:failure`) plus the category slug.
 ///
-/// `BudgetExceeded` exists for Phase 3 (`docs/v0.3-plan/03-telemetry-budget.md`).
-/// The variant is registered now so the v0.3 enum is stable, but P1-F
-/// never applies it.
+/// `BudgetExceeded` is applied by the budget-enforcement pipeline
+/// (`crates/sinfonia-bridge/src/feedback/budget.rs`; see `docs/SPEC.md`
+/// §11.6.12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BridgeLabel {
     InProgress,

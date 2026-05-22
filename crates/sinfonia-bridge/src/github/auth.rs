@@ -1,16 +1,14 @@
 //! GitHub authentication for the bridge.
 //!
-//! P1-F landed PAT-only auth as a single `match` in `main.rs::run`. P1-G
-//! consolidates that branch behind a [`build_gh_ops`] factory and adds
-//! GitHub App authentication, including a per-installation client cache
-//! so a single bridge process can serve multiple installations of the
-//! same App.
+//! The [`build_gh_ops`] factory consolidates the two supported modes
+//! (PAT, GitHub App). App mode keeps a per-installation client cache so a
+//! single bridge process can serve multiple installations of the same App.
 //!
 //! ## Modes
 //!
 //! - **PAT.** One `Octocrab` built with `personal_token`. Cheap to share
-//!   across handlers; PAT scopes (`repo`, `read:org`) are documented in
-//!   `docs/v0.3-plan/05-skills-cli.md`.
+//!   across handlers; required PAT scopes (`repo`, `read:org`) are
+//!   documented in `docs/DEPLOYMENT.md` and `docs/CLIENT_SETUP.md`.
 //! - **App.** A JWT-authenticated "bare app" `Octocrab` plus a
 //!   `tokio::sync::RwLock<HashMap<owner, Arc<Octocrab>>>` cache. On the
 //!   first GhOps call against an `owner/repo`, the bridge calls

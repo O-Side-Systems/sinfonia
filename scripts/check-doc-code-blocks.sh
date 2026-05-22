@@ -16,7 +16,6 @@
 #     fragments that don't stand alone; the Liquid + SQL blocks are
 #     covered by the skill integration tests and the
 #     examples/telemetry/queries/ runtime).
-#   - The plan docs under docs/v0.3-plan/ (they're internal scratch).
 #   - YAML blocks tagged `yaml-skip` (used for intentionally-incomplete
 #     fragments in doc prose).
 #
@@ -57,7 +56,7 @@ declare -a DOCS=(
 )
 while IFS= read -r f; do
   DOCS+=("$f")
-done < <(find docs -type f -name '*.md' -not -path 'docs/v0.3-plan/*' 2>/dev/null | sort)
+done < <(find docs -type f -name '*.md' 2>/dev/null | sort)
 while IFS= read -r f; do
   DOCS+=("$f")
 done < <(find examples -type f -name '*.md' 2>/dev/null | sort)

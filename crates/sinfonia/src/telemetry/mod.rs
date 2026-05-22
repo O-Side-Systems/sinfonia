@@ -1,40 +1,19 @@
-//! Observability layer (plan §2, §3).
+//! Observability layer.
 //!
 //! `init_observability` is the single subscriber-setup entry point for the
 //! Sinfonia daemon. It wraps today's `tracing_subscriber::fmt` layer with an
 //! optional OTel exporter layer when a `telemetry:` block is configured in
 //! WORKFLOW.md. When no endpoint is configured (and no
 //! `OTEL_EXPORTER_OTLP_ENDPOINT` env var is set), the OTel layer is `None`
-//! and behavior matches today's stdout-only logging — the feature is
-//! opt-in by configuration per plan §2.
+//! and behavior matches stdout-only logging — the feature is opt-in by
+//! configuration.
 //!
-//! ## Crate version pinning lesson (Phase 2 §5.10 generalization)
-//!
-//! The plan doc (`docs/v0.3-plan/03-telemetry-budget.md` §10) proposed:
-//!
-//! ```text
-//! opentelemetry         = "0.24"
-//! opentelemetry_sdk     = "0.24" + rt-tokio
-//! opentelemetry-otlp    = "0.17" + grpc-tonic + http-proto
-//! tracing-opentelemetry = "0.25"
-//! ```
-//!
-//! Verified against crates.io at impl time (2026-05-21): the OTel Rust
-//! crates moved roughly eight minors past those numbers in the intervening
-//! ~6 months. The set actually in use is `opentelemetry 0.32` /
-//! `opentelemetry_sdk 0.32` / `opentelemetry-otlp 0.32` /
-//! `tracing-opentelemetry 0.33` (the tracing bridge tracks one minor ahead
-//! of the OTel core it wraps). The feature-flag names the plan doc proposed
-//! (`grpc-tonic`, `http-proto`, `rt-tokio`) held up; only the version
-//! numbers needed re-pinning.
-//!
-//! ## API delta vs. plan-doc snippet
-//!
-//! Plan §2 sketched a `TracerProvider::builder().with_batch_exporter(exporter,
-//! runtime::Tokio)` call. The 0.32 API renamed the provider to
-//! `SdkTracerProvider` and `with_batch_exporter` now takes the exporter alone
-//! (the batch processor implicitly picks the runtime from
-//! `opentelemetry_sdk`'s features). Pattern in `build_otel_layer` below.
+//! Crate set in use: `opentelemetry 0.32` / `opentelemetry_sdk 0.32` /
+//! `opentelemetry-otlp 0.32` / `tracing-opentelemetry 0.33` (the tracing
+//! bridge tracks one minor ahead of the OTel core it wraps). The
+//! `with_batch_exporter` call is the 0.32-API form (exporter only;
+//! the batch processor picks the runtime from `opentelemetry_sdk`'s
+//! features). Pattern in `build_otel_layer` below.
 
 pub mod spans;
 pub mod tenant;

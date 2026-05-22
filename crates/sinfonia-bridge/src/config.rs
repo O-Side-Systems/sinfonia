@@ -1,18 +1,17 @@
 //! `BRIDGE.md` parser + schema + validation.
 //!
 //! Same YAML-front-matter convention as `WORKFLOW.md`. The Markdown body
-//! is for human notes and is not parsed. See `docs/v0.3-plan/01-bridge-mvp.md`
-//! §3 for the canonical schema; the validation rules below match the
-//! "Validation rules" table 1-to-1.
+//! is for human notes and is not parsed. See `BRIDGE.example.md` for a
+//! fully-commented working config and `docs/SPEC.md` §11.6 for the
+//! recommended-extension contract this schema implements.
 //!
 //! ## Why a private front-matter splitter
 //!
 //! The companion sinfonia crate has its own `split_front_matter` in
-//! `crates/sinfonia/src/config/loader.rs`. Per `docs/v0.3-plan/STATUS.md`
-//! §3 (and `01-bridge-mvp.md` §11 open question 2), Phase 1 deliberately
-//! copies the ~30-line splitter rather than introducing a shared
-//! `sinfonia-frontmatter` micro-crate. If a future phase wants the
-//! sharing, the extraction is mechanical.
+//! `crates/sinfonia/src/config/loader.rs`. We deliberately copy the
+//! ~30-line splitter rather than introducing a shared
+//! `sinfonia-frontmatter` micro-crate; if cross-crate sharing later
+//! becomes worth the dependency hop, the extraction is mechanical.
 
 use crate::{Error, Result};
 use regex::Regex;

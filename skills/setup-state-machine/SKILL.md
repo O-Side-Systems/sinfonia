@@ -97,7 +97,9 @@ Run `sinfonia --check WORKFLOW.md` (per `setup-workflow` step 9).
 
 ## Verification
 
-The §8 deliverable checklist (`docs/v0.3-plan/05-skills-cli.md`) includes
-a grep check that the rendered templates contain no unguarded
-`issue.fields.*` references. The skill's own templates pass this check;
-the operator's edits to the rendered output do not.
+The skill's own templates are pinned by the
+`state_machine_prompts_have_no_unguarded_issue_fields` integration test
+(in `crates/sinfonia/tests/skills_integration.rs`), which greps for any
+`{{ issue.fields.X }}` reference not followed by `| default:` and fails
+CI on a hit. The operator's edits to the rendered output are not
+covered — `sinfonia --check` is the right gate for those.

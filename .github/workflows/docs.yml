@@ -40,7 +40,6 @@ jobs:
             docs/**/*.md
             skills/**/SKILL.md
             examples/**/*.md
-            !docs/v0.3-plan/**
 
   link-rot-internal:
     name: link-rot (internal)
@@ -53,13 +52,10 @@ jobs:
         with:
           # Internal links only — external URLs are checked in the weekly job
           # below to avoid PR-time false negatives from flaky upstream hosts.
-          # docs/v0.3-plan/ is scratch / internal and not part of the public
-          # doc set; exclude it from PR-blocking checks.
           args: >-
             --offline
             --no-progress
             --include-fragments
-            --exclude-path docs/v0.3-plan
             './**/*.md'
           fail: true
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -79,7 +75,6 @@ jobs:
             --no-progress
             --include-fragments
             --max-concurrency 4
-            --exclude-path docs/v0.3-plan
             './**/*.md'
           fail: true
           token: ${{ secrets.GITHUB_TOKEN }}

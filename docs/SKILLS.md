@@ -112,8 +112,9 @@ is owned by the tool — Sinfonia doesn't ship a refresh mechanism.
 - [`docs/SPEC.md`](SPEC.md) §18.2 — the recommended-extension entry the
   skills system formalizes.
 
-## Source of truth
+## Reporting bugs
 
-The plan-doc for the skills system is at
-[`docs/v0.3-plan/05-skills-cli.md`](v0.3-plan/05-skills-cli.md). When the
-skills and the plan disagree, the skills are wrong — open an issue.
+If a skill produces a `WORKFLOW.md` / `BRIDGE.md` / compose snippet that
+`sinfonia --check` or `sinfonia-bridge --self-test` rejects, that's a
+skill bug — open an issue against the repo with the rejected output
+attached.

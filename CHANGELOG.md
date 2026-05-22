@@ -65,7 +65,7 @@ This release makes Sinfonia legible as a team-grade orchestrator alongside its e
 
 ### Deferred to v0.3.1
 
-The Phase 3 plan §6 OTel metrics layer (9 instruments: `sinfonia.agent.tokens_total`, `bridge.ci_outcome`, etc.) is deferred. The §8.2 dashboard SQL reads from span attributes via the `events` table, not from OTel metric points, so the plan's exit criteria are met span-derived. See `docs/v0.3-plan/03-telemetry-VERIFY.md` §2 for rationale and the span-derived equivalent for each deferred metric. The bridge `--once` single-shot mode described as one of the Topology 4 options in `docs/DEPLOYMENT.md` is also a v0.3.1 candidate — as of v0.3.0 the bridge always runs as a server. The four-topology guide in `docs/DEPLOYMENT.md` documents a working v0.3.0 alternative (POST to the existing `/webhook` handler from within the Action, then kill the bridge).
+The 9-instrument OTel metrics layer (`sinfonia.agent.tokens_total`, `bridge.ci_outcome`, etc.) is deferred. The reference dashboard SQL in `examples/telemetry/queries/*.sql` reads from span attributes via the `events` table, not from OTel metric points, so the dashboards work span-derived. Filing this here so a future maintainer knows the metrics layer was a deliberate scope cut, not an oversight. The bridge `--once` single-shot mode described as one of the Topology 4 options in `docs/DEPLOYMENT.md` is also a v0.3.1 candidate — as of v0.3.0 the bridge always runs as a server. The four-topology guide in `docs/DEPLOYMENT.md` documents a working v0.3.0 alternative (POST to the existing `/webhook` handler from within the Action, then kill the bridge).
 
 ### Migration
 

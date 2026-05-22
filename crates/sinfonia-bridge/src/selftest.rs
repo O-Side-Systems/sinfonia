@@ -1,6 +1,6 @@
 //! `sinfonia-bridge --self-test` runner.
 //!
-//! Plan source: `docs/v0.3-plan/01-bridge-mvp.md` §8 "Self-test".
+//! Implements the install-gate contract in `docs/SPEC.md` §11.6.10.
 //!
 //! Five checks run serially and print one labelled line each:
 //!
