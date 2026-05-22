@@ -1,6 +1,6 @@
 # v0.3.0 milestone — status & handoff
 
-**Last updated:** 2026-05-22 (P5 merged via #12 — **Phase 5 complete**; Phase 6 is the next pickup)
+**Last updated:** 2026-05-22 (Phase 6 landed on branch `v0.3-phase-6-docker` — **Phase 6 complete**; Phase 7 is the next pickup)
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
 **Branch state:** `main` contains the **complete Phase 1, Phase 2, and Phase 3 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`). Phase 3 (#10 — P3: telemetry + budget enforcement) lands an opt-in OTel emission layer over both binaries (12 spans total + tenant tagging from day one), the typed Sinfonia↔bridge event channel that replaces the dropped OTLP receiver (`AgentEvent::SessionCompleted` + HMAC-signed POST/verify reusing the GitHub webhook scheme), the cost / budget pipeline (`BudgetManager` + embedded cost table + 30 s idle-flush debounce + M-2 freshness gates), terminal-state detection via `pull_request.closed.merged=true`, the `examples/telemetry/` reference Collector + Postgres deployment, and the SPEC §11.6.11 / §11.6.12 / §18.2 + CHANGELOG + README + VERIFY doc surface.
 
@@ -20,7 +20,9 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 **Phase 5 of v0.3 is also complete (merged via #12, `6462c3a`).** Three deliverable clusters: (a) `sinfonia --check <WORKFLOW.md>` with documented per-failure-class exit codes (0/2/3/4/5) plus `sinfonia init` as the AI-tool-free REPL equivalent of `setup-workflow`; (b) six setup skills at `skills/` (setup-workflow / setup-bridge / setup-state-machine / setup-telemetry / setup-agent-backend / migrate-from-symphony) with `SKILL.md` runbooks, Liquid templates, and shell validators; (c) `docs/SKILLS.md` cross-vendor pointer table, SPEC §18.2 extension entry, CHANGELOG additions, README v0.3 paragraph, `docs/v0.3-plan/05-skills-VERIFY.md`. The state-machine prompt templates satisfy the §8 box-2 grep invariant by construction — every `{{ issue.fields.* }}` reference is followed by `| default:`. The `sinfonia-bridge --self-test` surface called out in plan §3.3 was already shipped by P1-G; Phase 5 §3.3 needed no work on the bridge side.
 
-The next pickup is **Phase 6 — refreshed Docker image** (`docs/v0.3-plan/06-docker.md`).
+**Phase 6 of v0.3 is also complete (landed on branch `v0.3-phase-6-docker`).** Six production images publish to `ghcr.io/o-side-systems/` from a single multi-stage `Dockerfile` driven by `docker-bake.hcl` — `sinfonia` (daemon only), `sinfonia-bridge` (bridge only, parented directly off `debian:bookworm-slim` rather than the shared `sinfonia-base` so the standalone-bridge image stays small), `sinfonia-with-claude-code`, `sinfonia-with-codex`, `sinfonia-with-opencode`, and `sinfonia-all-agents`. The build stage shares one `cargo build --release` across all six via BuildKit registry + target cache mounts. Each target gets a three-tag fan-out (`:VERSION` / `:VERSION_MINOR` / `:latest`) via the `tags(name)` HCL helper; `bake --print` confirms the expected shape. The new root `docker-compose.yml` demonstrates the production topology (daemon + bridge + OTel Collector + Postgres) with read-only user-credential bind mounts; the pre-existing dev-shell `Dockerfile` and `docker-compose.yml` move verbatim to `Dockerfile.dev` / `docker-compose.dev.yml` (the dev compose updates its inner `build.dockerfile` reference; otherwise unchanged). The publish workflow at `.github/workflows/docker-publish.yml` triggers on `v*` tags, runs `docker buildx bake --push`, then runs `tests/docker-smoke.sh` (per-image `--help`) and `tests/docker-compose-smoke.sh` (full stack up under the `docker-compose.ci.yml` overlay, polling `:8080/api/v1/state` and `:8081/health`), then per-image Trivy with `severity: CRITICAL,HIGH` and `exit-code: 1`. Phase 5's `setup-bridge` / `setup-telemetry` skills already generate the exact compose shape Phase 6 ships — no skill changes needed.
+
+The next pickup is **Phase 7 — finalized docs** (`docs/v0.3-plan/07-docs.md`).
 
 The single most important non-obvious decision the Phase 1+2 work bequeathed to Phase 3 (resolved this phase): **the agent-side token-accounting plumbing was already in place across every CLI backend**, and `TurnOutcome::Completed` now exposes the per-turn `usage: TokenUsage` directly (the runner aggregates session totals without re-parsing the event channel). Phase 3 instrumented six daemon span sites with `tracing::field::Empty` placeholders + late `span.record()` for runtime values; no fresh code paths needed instrumentation.
 
@@ -72,7 +74,9 @@ The single most important non-obvious decision surfaced during Phase 3: **OTel m
 | `4791207` (#12) | P5-B: six setup skills with SKILL.md + Liquid templates + validators (§2) | Skills — `skills/setup-{workflow,bridge,state-machine,telemetry,agent-backend}/`, `skills/migrate-from-symphony/`; 33 files across the six folders; state-machine prompts pass the §8 box-2 grep invariant. |
 | `f6c13b2` (#12) | P5-C: docs (SKILLS.md + SPEC §18.2 + CHANGELOG + README + VERIFY) + integration tests + STATUS bump | Docs + tests — `docs/SKILLS.md` (new), `docs/SPEC.md` §18.2 extension entry, CHANGELOG `[Unreleased]` Phase 5 block, README Phase 5 paragraph, `docs/v0.3-plan/05-skills-VERIFY.md` (new), `crates/sinfonia/tests/skills_integration.rs` (new, 6 tests). |
 | `6462c3a` | Merge pull request #12 from O-Side-Systems/v0.3-phase-5-skills-cli | Merge commit (true merge — three intermediate commits preserved) |
-| (this commit) | STATUS: mark Phase 5 merged, queue Phase 6 as next deliverable | Docs — this file |
+| `02b7774` | STATUS: mark Phase 5 merged, queue Phase 6 as next deliverable | Docs — this file |
+| (this branch) | P6: Phase 6 — Docker images + production compose + publish workflow + smoke harness | Code + docs — root `Dockerfile` (six-target multi-stage, BuildKit cache mounts shared across the build stage), `docker-bake.hcl` (registry/platform/tags + `tags(name)` HCL helper), new production `docker-compose.yml` (daemon + bridge + OTel Collector + Postgres) and `docker-compose.ci.yml` overlay (Compose v2.24+ `!reset` clears user-credential bind mounts), pre-existing dev files renamed to `Dockerfile.dev` / `docker-compose.dev.yml` (the latter's inner `build.dockerfile` updated), `.github/workflows/docker-publish.yml` (bake-push + per-image Trivy with `severity: CRITICAL,HIGH` / `exit-code: 1`), `tests/docker-smoke.sh` + `tests/docker-compose-smoke.sh` + `tests/fixtures/{WORKFLOW,BRIDGE}.smoke.md` (smoke fixtures validated by the existing `--check` gate before commit), README "Docker" section + CHANGELOG `[Unreleased]` Phase 6 block + `docs/v0.3-plan/06-docker-VERIFY.md` (new). |
+| (this commit) | STATUS: mark Phase 6 landed on branch, queue Phase 7 as next deliverable | Docs — this file |
 
 ### Phase 1 sub-task status
 
@@ -185,9 +189,9 @@ Phase 5 shipped as one PR (#12) with three intermediate commits (CLI / skills / 
 
 ---
 
-## 2. What's next: Phase 6 — refreshed Docker image
+## 2. What's next: Phase 7 — finalized docs
 
-Phases 1–5 are merged to `main`. The next pickup is **Phase 6 — refreshed Docker image** (`docs/v0.3-plan/06-docker.md`). Phase 6's stated dependencies are Phase 1 (the bridge binary needs to exist in the image) and Phase 5 (the skills directory needs to be bundled into the image) — both resolved.
+Phases 1–5 are merged to `main`. Phase 6 is complete on branch `v0.3-phase-6-docker` (pending merge of the Docker images + production compose + publish workflow + smoke harness). The next pickup is **Phase 7 — finalized docs** (`docs/v0.3-plan/07-docs.md`). Phase 7's stated dependencies are Phases 1–6 (the docs cover the bridge, OpenCode backend, telemetry, Jira support, skills, and the new image matrix) — all resolved or in-branch.
 
 The historical Phase 4 narrative kept below for the hand-off record:
 
@@ -318,8 +322,19 @@ sinfonia/
 │       └── queries/             # 01-tenant-monthly-cost, 02-first-try-rate, 03-budget-heavy-tickets
 ├── scripts/
 │   └── verify-workspace-move.sh # one-shot gate for the P1-A commit
-├── Dockerfile                   # current dev-shell image; refactored in Phase 6
-├── docker-compose.yml           # current dev-shell compose; refactored in Phase 6
+├── Dockerfile                   # P6 — production multi-stage; six build targets (one per image)
+├── Dockerfile.dev               # P6 — pre-existing dev-shell image (verbatim move from `Dockerfile`)
+├── docker-compose.yml           # P6 — production topology (daemon + bridge + OTel Collector + Postgres)
+├── docker-compose.dev.yml       # P6 — pre-existing dev compose (verbatim move; `build.dockerfile` updated)
+├── docker-compose.ci.yml        # P6 — overlay for `docker-compose-smoke.sh`; strips user-cred mounts
+├── docker-bake.hcl              # P6 — source of truth for image matrix (targets, platforms, tags)
+├── tests/                       # P6 — repo-root smoke harness
+│   ├── docker-smoke.sh          #     per-image `--help` + `sinfonia --check` against WORKFLOW.example.md
+│   ├── docker-compose-smoke.sh  #     full stack up under `docker-compose.ci.yml` overlay, HTTP polling
+│   └── fixtures/                #     {WORKFLOW,BRIDGE}.smoke.md — minimal configs that parse under `--check`
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml   # P6 — `bake --push` on `v*` tags, then smoke + per-image Trivy CRITICAL/HIGH
 ├── BRIDGE.example.md            # new in P1-I — fully-commented working bridge config (parses under `--check`)
 ├── README.md                    # "What's new in v0.3 (preview)" stub (P1-I) + P3 Observability section
 ├── CHANGELOG.md                 # [0.3.0-alpha.1] (P1) + Unreleased (P2 + P3)

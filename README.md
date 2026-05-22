@@ -33,7 +33,9 @@ If you're upgrading from v0.1 and don't want the bridge, you don't have to do an
 
 **Phase 5 (setup skills + CLI extensions, currently being landed)** ships six setup skills at `skills/` (`setup-workflow`, `setup-bridge`, `setup-state-machine`, `setup-telemetry`, `setup-agent-backend`, `migrate-from-symphony`) that AI coding tools can invoke to scaffold a working deployment without hand-editing YAML. Two CLI extensions back the skills: `sinfonia --check <WORKFLOW.md>` validates a workflow file (exit codes per failure class) and `sinfonia init` is the AI-tool-free interactive REPL. `docs/SKILLS.md` is the cross-vendor pointer table.
 
-Still alpha — Phases 6–7 land a refreshed Docker image and finalized docs.
+**Phase 6 (Docker images, currently being landed)** publishes six production images to `ghcr.io/o-side-systems/`: `sinfonia` (daemon only), `sinfonia-bridge` (bridge only), three single-agent variants (`sinfonia-with-claude-code`, `sinfonia-with-codex`, `sinfonia-with-opencode`), and the combined `sinfonia-all-agents`. A new root `docker-compose.yml` demonstrates the production topology (daemon + bridge + OTel Collector + Postgres). The pre-existing dev-shell image moves to `Dockerfile.dev` / `docker-compose.dev.yml`. See [the Docker section below](#docker).
+
+Still alpha — Phase 7 lands finalized docs.
 
 ## Observability (Phase 3 preview)
 
@@ -373,6 +375,57 @@ See [`WORKFLOW.example.md`](WORKFLOW.example.md) for a complete example with bot
 - `RUST_LOG=sinfonia=info,orchestrator=debug,…` — standard `tracing-subscriber` filter.
 
 The `$VAR` shorthand inside `WORKFLOW.md` is resolved at parse time (spec §6.1).
+
+## Docker
+
+Phase 6 publishes six production images to `ghcr.io/o-side-systems/`:
+
+| Image                          | Contents                                       | Audience                                                |
+|--------------------------------|------------------------------------------------|---------------------------------------------------------|
+| `sinfonia`                     | The `sinfonia` binary + bash / git / curl / gh | Anyone running just the daemon                          |
+| `sinfonia-bridge`              | The `sinfonia-bridge` binary only              | Bridge-as-standalone-host deployments                   |
+| `sinfonia-with-claude-code`    | `sinfonia` + Node 22 + `@anthropic-ai/claude-code` | Users on Claude Code                                |
+| `sinfonia-with-codex`          | `sinfonia` + `codex` CLI                       | Users on Codex                                          |
+| `sinfonia-with-opencode`       | `sinfonia` + `opencode` binary                 | Users on OpenCode                                       |
+| `sinfonia-all-agents`          | `sinfonia` + all three CLI agents              | State-machine deployments routing across agents         |
+
+Each is tagged with the full semver (`:0.3.0`), the moving minor (`:0.3`), and `:latest`. Built for `linux/amd64` and `linux/arm64` where the underlying CLI supports it.
+
+### Production compose
+
+The new root `docker-compose.yml` demonstrates the production topology: `sinfonia` (using `sinfonia-all-agents`) + `sinfonia-bridge` + an OTel Collector + Postgres. It bind-mounts your local `WORKFLOW.md` / `BRIDGE.md` and per-agent credential directories (`~/.claude`, `~/.codex`, `~/.opencode`) read-only — the in-container CLIs auth through your existing local credentials.
+
+```bash
+# Required (the bridge HMAC and Postgres passwords are user-chosen).
+export LINEAR_API_KEY="lin_api_…"
+export GH_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
+docker compose up -d
+```
+
+The `setup-bridge` and `setup-telemetry` skills (Phase 5) generate the same compose shape from a guided REPL.
+
+### Dev compose
+
+The pre-existing dev-shell image (Node + Rust toolchain + Claude Code + `gh`, intended for the `--dangerously-skip-permissions` bind-mount workflow) is unchanged — it lives at `Dockerfile.dev` / `docker-compose.dev.yml`:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d daemon
+# interactive shell:
+docker compose -f docker-compose.dev.yml run --rm shell
+```
+
+### Building images locally
+
+```bash
+# build all six targets:
+docker buildx bake
+
+# or one at a time:
+docker build --target sinfonia -t sinfonia:dev .
+```
+
+`docker-bake.hcl` is the source of truth for which targets exist and which tags they get. The publish pipeline at `.github/workflows/docker-publish.yml` runs `docker buildx bake --push` on every `v*` tag, then runs Trivy with `severity: CRITICAL,HIGH` against each pushed image.
 
 ## What's where
 

@@ -1,0 +1,32 @@
+# docker-compose.ci.yml — CI overlay for the Phase 6 smoke test.
+#
+# Composed on top of docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d
+#
+# Two changes vs. production:
+#   1. The `sinfonia` service swaps the all-agents image for the daemon-only
+#      image and clears the user-credential bind mounts (which don't exist in
+#      CI). The smoke fixture is mounted at /etc/sinfonia/WORKFLOW.md.
+#   2. The `sinfonia-bridge` service mounts a smoke BRIDGE.md fixture instead
+#      of the production ./BRIDGE.md.
+#
+# `!reset` is a Compose-spec tag that clears the inherited list value so the
+# overlay starts fresh. Requires Compose v2.24+ (any reasonably current
+# Docker Desktop / docker-compose-plugin). See:
+#   https://docs.docker.com/reference/compose-file/merge/
+
+services:
+  sinfonia:
+    image: ghcr.io/o-side-systems/sinfonia:${VERSION:-latest}
+    volumes:
+      - !reset []
+      - ./tests/fixtures/WORKFLOW.smoke.md:/etc/sinfonia/WORKFLOW.md:ro
+      - sinfonia-workspaces:/var/lib/sinfonia/workspaces
+
+  sinfonia-bridge:
+    image: ghcr.io/o-side-systems/sinfonia-bridge:${VERSION:-latest}
+    volumes:
+      - !reset []
+      - ./tests/fixtures/BRIDGE.smoke.md:/etc/sinfonia/BRIDGE.md:ro
+      - bridge-state:/var/lib/sinfonia/bridge

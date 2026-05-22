@@ -1,56 +1,90 @@
-# Shared base used by both services via YAML anchor.
-x-base: &base
-  image: sinfonia-claude:latest
-  build:
-    context: .
-    dockerfile: Dockerfile
-    args:
-      USER_UID: "501"
-      USER_GID: "20"
-  working_dir: /workspace
-  env_file:
-    - path: .env
-      required: false
-  environment:
-    TERM: xterm-256color
-    LINEAR_API_KEY: ${LINEAR_API_KEY:-}
-    GH_TOKEN: ${GH_TOKEN:-}
-    GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    RUST_LOG: ${RUST_LOG:-sinfonia=debug,orchestrator=debug,runner=debug}
-    GIT_USER_NAME: ${GIT_USER_NAME:-}
-    GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
-  volumes:
-    - .:/workspace
-    - ${HOME}/.claude:/home/dev/.claude
-    - ${HOME}/.claude.json:/home/dev/.claude.json
-    - sinfonia-cargo-registry:/home/dev/.cargo/registry
-    - sinfonia-cargo-git:/home/dev/.cargo/git
-    - sinfonia-target:/workspace/target
+# docker-compose.yml — sample production topology for Sinfonia v0.3+.
+#
+# This file demonstrates the four-service shape (sinfonia + bridge + OTel
+# Collector + Postgres) that the `setup-bridge` and `setup-telemetry`
+# skills generate. Adjust for your environment.
+#
+# The previous dev-shell compose (bind-mounted repo, builds from source,
+# Claude Code shell) lives at `docker-compose.dev.yml`. Pick one based on
+# what you're doing:
+#
+#   - Local development / debugging              → docker-compose.dev.yml
+#   - Production-shaped deployment / dry-run     → docker-compose.yml (this file)
+#
+# Both files coexist on disk; `docker compose` defaults to `docker-compose.yml`.
+# Use `docker compose -f docker-compose.dev.yml up …` to run the dev variant.
 
 services:
-  # Long-running sinfonia daemon. Start with `docker compose up -d daemon`.
-  daemon:
-    <<: *base
-    container_name: sinfonia-daemon
+  sinfonia:
+    image: ghcr.io/o-side-systems/sinfonia-all-agents:0.3.0
+    restart: unless-stopped
+    volumes:
+      - ./WORKFLOW.md:/etc/sinfonia/WORKFLOW.md:ro
+      - sinfonia-workspaces:/var/lib/sinfonia/workspaces
+      # Per-agent credential dirs are mounted read-only — the container
+      # needs to read your creds; it never writes them. Each CLI handles
+      # its own auth (claude /login, codex login, opencode auth login).
+      - ${HOME}/.claude:/root/.claude:ro
+      - ${HOME}/.codex:/root/.codex:ro
+      - ${HOME}/.opencode:/root/.opencode:ro
+    environment:
+      - LINEAR_API_KEY=${LINEAR_API_KEY}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - JIRA_EMAIL=${JIRA_EMAIL:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - SINFONIA_TENANT_ID=${TENANT_ID:-default}
     ports:
       - "8080:8080"
-    command:
-      - sh
-      - -c
-      - |
-        cargo build --release
-        exec ./target/release/sinfonia docker/WORKFLOW.md --port 8080 --log-format pretty
+    depends_on:
+      - otel-collector
 
-  # Interactive Claude Code session. Use with `docker compose run --rm shell`.
-  # Useful for signing in, debugging, or driving manual checks against the repo.
-  shell:
-    <<: *base
-    container_name: sinfonia-shell
-    stdin_open: true
-    tty: true
-    command: ["claude", "--dangerously-skip-permissions"]
+  sinfonia-bridge:
+    image: ghcr.io/o-side-systems/sinfonia-bridge:0.3.0
+    restart: unless-stopped
+    volumes:
+      - ./BRIDGE.md:/etc/sinfonia/BRIDGE.md:ro
+      - bridge-state:/var/lib/sinfonia/bridge
+    environment:
+      - LINEAR_API_KEY=${LINEAR_API_KEY}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - JIRA_EMAIL=${JIRA_EMAIL:-}
+      - GH_WEBHOOK_SECRET=${GH_WEBHOOK_SECRET}
+      - GH_APP_ID=${GH_APP_ID:-}
+      - GH_APP_KEY=${GH_APP_KEY:-}
+      - GH_PAT=${GH_PAT:-}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - SINFONIA_TENANT_ID=${TENANT_ID:-default}
+    ports:
+      - "8081:8081"
+    depends_on:
+      - otel-collector
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    restart: unless-stopped
+    volumes:
+      - ./examples/telemetry/otel-collector-config.yaml:/etc/otelcol/config.yaml:ro
+    command: ["--config", "/etc/otelcol/config.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=sinfonia_telemetry
+      - POSTGRES_USER=otel
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - sinfonia-telemetry-pg:/var/lib/postgresql/data
+      # Schema is applied on first boot only (entrypoint runs *.sql files
+      # in this dir against the freshly initialised DB).
+      - ./examples/telemetry/postgres-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
 
 volumes:
-  sinfonia-cargo-registry:
-  sinfonia-cargo-git:
-  sinfonia-target:
+  sinfonia-workspaces:
+  bridge-state:
+  sinfonia-telemetry-pg:
