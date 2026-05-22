@@ -58,6 +58,15 @@ url = { workspace = true }
 once_cell = { workspace = true }
 which = { workspace = true }
 
+# Phase 3 — OTel emission + outbound HMAC for the typed event channel (§7.2).
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { version = "1.41", features = ["test-util", "macros", "rt-multi-thread"] }

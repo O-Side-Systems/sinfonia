@@ -54,6 +54,10 @@ pub const WELL_KNOWN_FIELDS: &[&str] = &[
     "sinfonia_tokens_consumed",
     "sinfonia_cost_consumed_usd",
     "sinfonia_max_cost_usd",
+    // Phase 3 — written by the budget enforcer when a token/cost cap
+    // fires. Templates can reference it to show the operator-facing
+    // ticket-blocked timestamp (RFC-3339 string).
+    "sinfonia_budget_exhausted_at",
 ];
 
 /// Possible primitive shapes a custom-field value can take.

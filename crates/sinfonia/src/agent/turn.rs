@@ -116,10 +116,11 @@ pub async fn run_provider_turn<C: LlmCaller>(
                 thread_id: session.thread_id.clone(),
                 turn_id,
                 message: content.clone(),
-                usage: Some(total_usage),
+                usage: Some(total_usage.clone()),
             });
             return Ok(TurnOutcome::Completed {
                 final_message: content,
+                usage: total_usage,
             });
         }
 
@@ -150,10 +151,11 @@ pub async fn run_provider_turn<C: LlmCaller>(
                 thread_id: session.thread_id.clone(),
                 turn_id,
                 message: final_message.clone(),
-                usage: Some(total_usage),
+                usage: Some(total_usage.clone()),
             });
             return Ok(TurnOutcome::Completed {
                 final_message,
+                usage: total_usage,
             });
         }
     }

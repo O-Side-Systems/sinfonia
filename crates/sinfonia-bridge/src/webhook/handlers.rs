@@ -21,6 +21,7 @@
 //! See `01-bridge-mvp.md` §5 for the canonical event flow.
 
 use crate::feedback::{evaluate_ci, CiOutcome, EvaluateContext};
+use crate::telemetry::spans;
 use crate::webhook::{verify::verify_signature, AppState};
 use crate::Error;
 use axum::body::Bytes;
@@ -29,7 +30,18 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use serde_json::{json, Value};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn, Instrument};
+
+/// Resolve the tenant id from BridgeConfig for span tagging. Cheap helper
+/// that avoids re-stringifying `Option<String>` at each emission site.
+fn tenant_str(state: &AppState) -> String {
+    state
+        .config
+        .telemetry
+        .tenant_id
+        .clone()
+        .unwrap_or_else(|| crate::telemetry::tenant::DEFAULT_TENANT.to_string())
+}
 
 /// `GET /health` — liveness probe. Returns the configured service name,
 /// the tenant_id (when set), and the tracker kind so a load balancer or
@@ -52,6 +64,29 @@ const HEADER_DELIVERY: &str = "X-GitHub-Delivery";
 /// `POST /webhook` — full implementation. See module docs.
 pub async fn webhook(
     State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> axum::response::Response {
+    let span = info_span!(
+        target: "webhook",
+        spans::BRIDGE_WEBHOOK,
+        { spans::ATTR_TENANT_ID } = %tenant_str(&state),
+        { spans::ATTR_EVENT_TYPE } = tracing::field::Empty,
+        { spans::ATTR_DELIVERY_ID } = tracing::field::Empty,
+        { spans::ATTR_REPO } = tracing::field::Empty,
+        { spans::ATTR_DURATION_MS } = tracing::field::Empty,
+    );
+    let started = std::time::Instant::now();
+    let response = webhook_inner(state, headers, body).instrument(span.clone()).await;
+    span.record(
+        spans::ATTR_DURATION_MS,
+        started.elapsed().as_millis() as i64,
+    );
+    response
+}
+
+async fn webhook_inner(
+    state: AppState,
     headers: HeaderMap,
     body: Bytes,
 ) -> axum::response::Response {
@@ -126,6 +161,9 @@ pub async fn webhook(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    let current_span = tracing::Span::current();
+    current_span.record(spans::ATTR_EVENT_TYPE, event.as_str());
+    current_span.record(spans::ATTR_DELIVERY_ID, delivery_id.as_str());
     let payload: Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(e) => {
@@ -174,6 +212,7 @@ async fn handle_pull_request(
         .and_then(|v| v.get("full_name"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    tracing::Span::current().record(spans::ATTR_REPO, repo);
     let pr = payload.get("pull_request");
     let pr_number = payload
         .get("number")
@@ -194,9 +233,47 @@ async fn handle_pull_request(
         }
     };
 
+    // Phase 3 §6 terminal-state detection. When a PR closes with
+    // merged=true, look up the linked ticket, flush any pending
+    // accumulator deltas, and emit a transition-to-done span so the
+    // analytics layer can count attempts-to-close and cost-per-ticket
+    // histograms span-derived (per the M-2 / metrics-deferral note).
+    if action == "closed" {
+        let merged = pr.and_then(|p| p.get("merged")).and_then(|v| v.as_bool());
+        if matches!(merged, Some(true)) {
+            if let Some(ticket_id) = state.store.lookup_pr_ticket(repo, pr_number).await.ok().flatten() {
+                if let Err(e) = state.budget.flush_ticket(&ticket_id).await {
+                    warn!(
+                        target: "webhook",
+                        error = %e, ticket = %ticket_id,
+                        "pr.closed.merged budget flush failed"
+                    );
+                }
+                info!(
+                    target: "webhook",
+                    %delivery_id, repo, pr_number, %ticket_id,
+                    "pr closed (merged); ticket reached terminal-via-our-pipeline state"
+                );
+                return (
+                    StatusCode::ACCEPTED,
+                    Json(json!({
+                        "status": "merged",
+                        "event": "pull_request",
+                        "action": action,
+                        "repo": repo,
+                        "pr_number": pr_number,
+                        "ticket_id": ticket_id,
+                        "delivery_id": delivery_id,
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     // Only `opened` and `synchronize` populate the mapping. Other actions
-    // (closed, edited, labeled, …) don't change which ticket the PR
-    // belongs to, so we leave the row alone.
+    // (closed without merge, edited, labeled, …) don't change which
+    // ticket the PR belongs to, so we leave the row alone.
     if action != "opened" && action != "synchronize" && action != "reopened" {
         debug!(
             target: "webhook",
@@ -328,6 +405,13 @@ async fn dispatch_ci_event(
     delivery_id: &str,
     action: &str,
 ) -> axum::response::Response {
+    let repo = payload
+        .get("repository")
+        .and_then(|v| v.get("full_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    tracing::Span::current().record(spans::ATTR_REPO, repo);
+
     let ctx = EvaluateContext {
         config: state.config.as_ref(),
         store: state.store.as_ref(),
@@ -336,7 +420,20 @@ async fn dispatch_ci_event(
         labels: &state.labels,
     };
 
-    let outcomes = match evaluate_ci(ctx, event, payload).await {
+    let ci_span = info_span!(
+        target: "feedback",
+        spans::BRIDGE_CI_RESULT,
+        { spans::ATTR_TENANT_ID } = %tenant_str(state),
+        { spans::ATTR_EVENT_TYPE } = event,
+        { spans::ATTR_REPO } = repo,
+        { spans::ATTR_OUTCOME } = tracing::field::Empty,
+        { spans::ATTR_ATTEMPT_COUNT } = tracing::field::Empty,
+        { spans::ATTR_FAILURE_CATEGORY } = tracing::field::Empty,
+    );
+    let outcomes = match evaluate_ci(ctx, event, payload)
+        .instrument(ci_span.clone())
+        .await
+    {
         Ok(o) => o,
         Err(e) => {
             warn!(target: "webhook", event, %delivery_id, error = %e, "evaluate_ci failed");
@@ -347,6 +444,31 @@ async fn dispatch_ci_event(
                 .into_response();
         }
     };
+
+    // Annotate the bridge.ci_result span with the first-PR outcome shape.
+    // Most webhook deliveries carry a single PR's worth of outcomes; for
+    // the rare multi-PR fan-out the span attribute reflects the headline
+    // result and the JSON body still carries the full per-PR breakdown.
+    if let Some(first) = outcomes.first() {
+        let (outcome_label, category, attempt) = match first {
+            CiOutcome::Green => ("green", None, None),
+            CiOutcome::Red {
+                category,
+                next_attempt,
+                ..
+            } => ("red", Some(category.as_str()), Some(*next_attempt)),
+            CiOutcome::CapHit { .. } => ("cap_hit", None, None),
+            CiOutcome::Pending => ("pending", None, None),
+            CiOutcome::NoMappedPr => ("no_mapped_pr", None, None),
+        };
+        ci_span.record(spans::ATTR_OUTCOME, outcome_label);
+        if let Some(c) = category {
+            ci_span.record(spans::ATTR_FAILURE_CATEGORY, c);
+        }
+        if let Some(a) = attempt {
+            ci_span.record(spans::ATTR_ATTEMPT_COUNT, a as i64);
+        }
+    }
 
     let any_action = outcomes
         .iter()
@@ -517,7 +639,7 @@ telemetry:
         let tracker = Arc::new(LinearTracker::new(&tracker_cfg).expect("linear tracker"));
         let gh: Arc<dyn GhOps> = Arc::new(NoopGh);
         let labels = LabelManager::new(gh.clone(), false, "sinfonia", LabelAliases::default());
-        AppState::new(cfg, store, tracker, gh, labels)
+        AppState::with_default_budget(cfg, store, tracker, gh, labels)
     }
 
     fn sign(secret: &str, body: &[u8]) -> String {
@@ -876,7 +998,7 @@ telemetry:
             "sinfonia",
             LabelAliases::default(),
         );
-        AppState::new(cfg, store, tracker, gh_dyn, labels)
+        AppState::with_default_budget(cfg, store, tracker, gh_dyn, labels)
     }
 
     fn check_suite_payload(repo: &str, head_sha: &str, pr_number: u64) -> Vec<u8> {

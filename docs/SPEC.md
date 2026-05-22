@@ -1426,6 +1426,81 @@ of `FAIL` lines; `SKIP` lines do not contribute. RECOMMENDED check categories:
 The reference implementation's `--self-test` is the gate Phase 5's `setup-bridge` skill uses
 before declaring an install complete.
 
+#### 11.6.11 Typed Sinfonia↔Bridge Event Channel (v0.3 Phase 3)
+
+A conforming bridge MAY also receive a typed, versioned JSON event stream from the daemon over
+HTTPS. This OPTIONAL channel replaces the originally-proposed bridge-side OTLP receiver (the
+plan-review H-2 fix) — `opentelemetry-otlp` is a *client* crate and the receiver-side machinery
+is hundreds of LOC of plumbing for one consumer.
+
+When configured, the daemon emits one event per session terminator (the runner's
+`AgentEvent::SessionCompleted`) to every registered subscriber. The wire shape:
+
+```jsonc
+// Body of POST <subscriber.callback_url>, Content-Type: application/json
+{
+  "type": "runner.session.completed",
+  "version": 1,
+  "tenant_id": "kyros-web-app",
+  "issue_id": "lin_iss_abc123",
+  "issue_identifier": "ENG-42",
+  "state": "Needs Fixes - E2E",
+  "provider": "ClaudeCode",
+  "model": "claude-opus-4-7",
+  "turn_count": 8,
+  "prompt_tokens": 318404,
+  "completion_tokens": 12892,
+  "duration_ms": 542113,
+  "exit_reason": "completed",
+  "occurred_at": "2026-05-21T17:42:11Z"
+}
+```
+
+The body MUST be signed with HMAC-SHA256 over the raw bytes, hex-encoded, prefixed with
+`sha256=`, and carried in the `X-Sinfonia-Signature-256` header. The shared secret comes from
+`telemetry.sinfonia_events_secret` in both the daemon's `WORKFLOW.md` and the bridge's
+`BRIDGE.md`. Mismatch MUST cause the bridge to return HTTP 401 with `{"error": …}`. The daemon
+MUST log a `WARN` after its retry budget is exhausted (the reference signer retries up to 5
+times with 250 ms → 8 s exponential backoff).
+
+Registration is via `POST <daemon>/api/v1/events/subscribers` with body
+`{"callback_url": "<https URL>"}`. Re-registering the same URL replaces the prior entry in place
+(idempotent). Operators MAY inspect the daemon's recent emitted events via
+`GET /api/v1/events/recent` (last 200 events; not durable across restart).
+
+Bridges that consume the channel SHOULD dispatch on the `type` field. Unknown event types MUST
+be acknowledged with HTTP 200 `{"status": "ignored", "event_type": <type>}` so a future daemon
+release adding new event shapes does not crash older bridges.
+
+#### 11.6.12 Budget Enforcement Surface (v0.3 Phase 3)
+
+A conforming bridge MAY also enforce per-ticket budget caps. When configured, the bridge:
+
+- Maintains an in-process per-ticket accumulator keyed on `issue_id`, updated by each
+  `runner.session.completed` event received via §11.6.11.
+- Compares each session's contribution against `feedback_loop.max_tokens_per_ticket` and
+  `feedback_loop.max_cost_per_ticket_usd`. When either cap is crossed, the bridge MUST flush
+  the accumulator to the tracker immediately and transition the ticket to
+  `feedback_loop.budget_exceeded_state`.
+- Coalesces under-cap writes via a per-ticket debounce (the reference implementation uses
+  30 s of idleness). The accumulator is in-process state and MAY be lost on bridge restart;
+  on restart the bridge re-reads the last persisted totals from the tracker as a fresh
+  starting point. Budget caps are an SLO ("don't run away with cost"), not a billing system.
+- Computes costs from a versioned cost table (`config/cost_table.yaml` in the reference
+  binary, baked in via `include_str!`; runtime override via `bridge.cost_table_path`). The
+  table carries a `verified_at: <date>` field; the bridge SHOULD warn at startup if the
+  table is more than 90 days stale, and SHOULD refuse to apply COST caps (token caps stay
+  enforced) when the table is more than 180 days stale. This asymmetry is intentional:
+  token caps degrade safely under stale pricing data, dollar caps don't.
+
+Per-ticket overrides MAY be read from custom fields:
+
+- `sinfonia_max_attempts` (integer) overrides `feedback_loop.max_attempts`.
+- `sinfonia_max_cost_usd` (decimal) overrides `feedback_loop.max_cost_per_ticket_usd`.
+
+Cost values MUST be written as `CustomFieldValue::String("8.23")` — never as f64 — to preserve
+precision through the Linear marker-comment / Jira customfield boundary.
+
 ## 12. Prompt Construction and Context Assembly
 
 ### 12.1 Inputs
@@ -2313,6 +2388,13 @@ Use the same validation profiles as Section 17:
   per-issue workspace, alongside the Codex app-server backend. Auth is owned by the OpenCode
   CLI; the orchestrator pipes the prompt over stdin, consumes one JSON event per line on
   stdout (`--format json`), and resumes prior sessions on retry turns via `--session <id>`.
+- OpenTelemetry emission with `tenant_id` — both daemon and bridge MAY layer an OTLP exporter
+  over their existing `tracing` subscribers. When configured, every span carries the resolved
+  `tenant_id` attribute (precedence: `telemetry.tenant_id` → `SINFONIA_TENANT_ID` env →
+  `"default"`); resource-level `service.namespace = tenant_id` lets a Collector
+  routing-processor split per-tenant data without touching emission code. See §11.6.11 for the
+  bridge's typed Sinfonia↔bridge event channel (a separate concern from OTel emission) and
+  §11.6.12 for the budget-enforcement surface that consumes it.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.

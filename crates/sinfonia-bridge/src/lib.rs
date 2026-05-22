@@ -35,11 +35,13 @@
 //! they own genuinely different concerns.
 
 pub mod config;
+pub mod events;
 pub mod feedback;
 pub mod github;
 pub mod labels;
 pub mod selftest;
 pub mod storage;
+pub mod telemetry;
 pub mod webhook;
 
 pub use config::BridgeConfig;

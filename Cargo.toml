@@ -47,6 +47,38 @@ url = "2"
 once_cell = "1"
 which = "8"
 
+# Observability (Phase 3). Both Sinfonia and the bridge layer an OTel exporter
+# over the existing `tracing` subscribers — see plan doc §2 + §10. Versions
+# verified against crates.io at impl time: `tracing-opentelemetry 0.33` pins
+# `opentelemetry ^0.32`, so the four crates ship as one set (0.32 across
+# opentelemetry/_sdk/-otlp + 0.33 for the tracing bridge). Plan-doc version
+# numbers (0.24/0.17/0.25) were ~8 minors stale by 2026-05; the feature flag
+# names (`grpc-tonic`, `http-proto`, `rt-tokio`) held up.
+opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "http-proto"] }
+# `semconv_experimental` gates the stable-in-spec but
+# experimental-in-this-crate constants like `SERVICE_NAMESPACE` and
+# `SERVICE_INSTANCE_ID` (used for the routing-processor split per plan §3.3).
+# The crate's "stable" subset is the bare minimum (essentially just
+# `SERVICE_NAME`); the feature flag is a versioning hedge, not a spec
+# stability claim.
+opentelemetry-semantic-conventions = { version = "0.32", features = ["semconv_experimental"] }
+tracing-opentelemetry = "0.33"
+
+# Precision-safe decimals for money (USD cost values). Per STATUS §5.1 cost
+# values are written as `CustomFieldValue::String` for precision; the bridge's
+# in-process accumulator uses `rust_decimal` so the stringification step is the
+# only floating-point boundary.
+rust_decimal = { version = "1", features = ["serde"] }
+
+# HMAC-SHA256 — shared between the GitHub webhook verifier (P1-E) and the
+# Phase 3 typed Sinfonia↔bridge event channel (§7.2). Already a transitive
+# dep of `sinfonia-bridge`; promoted to workspace scope so the new Sinfonia
+# emitter can sign with the same algorithm without a separate dep version.
+hmac = "0.12"
+sha2 = "0.10"
+
 # Dev-only.
 tempfile = "3"
 

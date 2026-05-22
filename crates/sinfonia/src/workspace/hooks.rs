@@ -1,12 +1,13 @@
 //! Workspace lifecycle hooks (spec §9.4).
 
 use crate::errors::{Error, Result};
+use crate::telemetry::spans;
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{info, info_span, warn, Instrument};
 
 #[derive(Debug, Clone, Copy)]
 pub enum HookKind {
@@ -29,6 +30,11 @@ impl HookKind {
 
 /// Run a hook script under `bash -lc <script>` with `cwd = workspace_path` (§9.4).
 /// Returns `Ok(())` on a 0 exit code. Times out using `timeout_ms`.
+///
+/// Wrapped in the `workspace.hook` span (plan §4). Tenant inheritance comes
+/// from the ambient `runner.session` span via the OTel parent-child
+/// relationship; the resource-level `service.namespace = tenant_id`
+/// attribute also flows through.
 pub async fn run_hook(
     kind: HookKind,
     script: &str,
@@ -38,6 +44,25 @@ pub async fn run_hook(
     if script.trim().is_empty() {
         return Ok(());
     }
+    let span = info_span!(
+        target: "workspace.hook",
+        spans::WORKSPACE_HOOK,
+        { spans::ATTR_HOOK_NAME } = kind.name(),
+        { spans::ATTR_DURATION_MS } = tracing::field::Empty,
+        { spans::ATTR_EXIT_CODE } = tracing::field::Empty,
+    );
+    run_hook_inner(kind, script, workspace_path, timeout_ms)
+        .instrument(span)
+        .await
+}
+
+async fn run_hook_inner(
+    kind: HookKind,
+    script: &str,
+    workspace_path: &Path,
+    timeout_ms: u64,
+) -> Result<()> {
+    let started = std::time::Instant::now();
     info!(target: "workspace.hook", hook = kind.name(), cwd = %workspace_path.display(), "running");
 
     let mut cmd = Command::new("bash");
@@ -73,8 +98,10 @@ pub async fn run_hook(
         Ok::<(std::process::ExitStatus, String, String), Error>((exit, so, se))
     };
 
-    match timeout(Duration::from_millis(timeout_ms), wait).await {
+    let result = match timeout(Duration::from_millis(timeout_ms), wait).await {
         Ok(Ok((status, so, se))) => {
+            let code = status.code().unwrap_or(-1) as i64;
+            tracing::Span::current().record(spans::ATTR_EXIT_CODE, code);
             if status.success() {
                 Ok(())
             } else {
@@ -93,11 +120,17 @@ pub async fn run_hook(
         Ok(Err(e)) => Err(e),
         Err(_) => {
             let _ = child.start_kill();
+            tracing::Span::current().record(spans::ATTR_EXIT_CODE, -1_i64);
             Err(Error::HookTimeout {
                 name: kind.name().into(),
             })
         }
-    }
+    };
+    tracing::Span::current().record(
+        spans::ATTR_DURATION_MS,
+        started.elapsed().as_millis() as i64,
+    );
+    result
 }
 
 fn truncate(s: &str, n: usize) -> String {

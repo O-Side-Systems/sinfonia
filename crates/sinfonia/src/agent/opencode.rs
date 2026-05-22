@@ -371,6 +371,7 @@ impl CodingAgent for OpenCodeAgent {
         });
         Ok(TurnOutcome::Completed {
             final_message: parsed.final_message,
+            usage: parsed.usage.unwrap_or_default(),
         })
     }
 
