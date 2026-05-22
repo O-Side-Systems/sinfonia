@@ -2309,6 +2309,10 @@ Use the same validation profiles as Section 17:
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
 - `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
   app-server session using configured Symphony auth.
+- OpenCode backend — drive the `opencode` CLI (https://opencode.ai) as a subprocess in the
+  per-issue workspace, alongside the Codex app-server backend. Auth is owned by the OpenCode
+  CLI; the orchestrator pipes the prompt over stdin, consumes one JSON event per line on
+  stdout (`--format json`), and resumes prior sessions on retry turns via `--session <id>`.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.

@@ -13,7 +13,7 @@ It's a long-running daemon that polls an issue tracker, isolates each issue in a
 This implementation conforms to the Symphony spec (Draft v1) with three added pluggability points:
 
 - **Issue trackers**: Linear and Jira (Cloud + self-hosted PAT).
-- **Coding agents**: OpenAI, Anthropic, Google Gemini, Ollama (locally hosted) over raw LLM APIs with a built-in tool loop, **plus** the `claude` CLI (Claude Code) and `codex` CLI (Codex CLI) driven as subprocesses so you can leverage those products' full capabilities instead of a hand-rolled loop.
+- **Coding agents**: OpenAI, Anthropic, Google Gemini, Ollama (locally hosted) over raw LLM APIs with a built-in tool loop, **plus** the `claude` CLI (Claude Code), `codex` CLI (Codex CLI), and `opencode` CLI (OpenCode — adds LSP, MCP, and 75+ provider backends, including local Ollama with LSP) driven as subprocesses so you can leverage those products' full capabilities instead of a hand-rolled loop.
 - **Per-state runner overrides**: a `states:` block in `WORKFLOW.md` routes each tracker state to a different agent + prompt — e.g. `Todo` → Claude Code, `In Progress` → Claude Code with Opus, `In Review` → raw Haiku for a quick pass.
 
 ## What's new in v0.3 (preview)
@@ -131,6 +131,7 @@ Two flavors, mix them per state:
 | You want zero install, full control over the tool loop, cheapest cost | `openai`, `anthropic`, `google`, or `ollama` | Just an API key (or a running Ollama) |
 | You want Claude Code's planning, file edits, MCP tools, etc. | `claude_code` | `claude` CLI installed and logged in |
 | You want Codex CLI's behavior | `codex` | `codex` CLI installed and authenticated |
+| You want OpenCode's LSP integration, MCP support, and 75+ provider backends (incl. local Ollama-with-LSP) | `opencode` | `opencode` CLI installed and authenticated (`opencode auth login`) |
 
 Auth lives where each backend expects it:
 
@@ -394,6 +395,7 @@ Provider values:
 | `openai` / `anthropic` / `google` / `ollama` | Raw LLM HTTP API + built-in tool loop (`shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `finish`). | Provider env var (`OPENAI_API_KEY`, etc.) or explicit `api_key:` |
 | `claude_code` | Subprocess: `claude -p --output-format json --verbose --dangerously-skip-permissions` in the workspace, with `--resume <session_id>` on continuation turns. | Handled by the `claude` CLI itself |
 | `codex` | Subprocess: `codex exec --json` in the workspace, with `--thread <id>` on continuation turns where supported. | Handled by the `codex` CLI itself |
+| `opencode` | Subprocess: `opencode run --format json` in the workspace, prompt piped over stdin, with `--session <id>` on continuation turns. OpenCode adds LSP integration and MCP, and routes internally to 75+ providers (use `model: provider/model` syntax, e.g. `anthropic/claude-sonnet-4-6` or `ollama/qwen2.5-coder:32b`). | Handled by the `opencode` CLI itself (run `opencode auth login` once on the host) |
 | `codex_app_server` | Stub for the original Codex app-server protocol (not implemented). | n/a |
 
 The default `command:` for `claude_code` and `codex` is set automatically; override `command:` to add flags or pick a different binary. The prompt is delivered via stdin so length/escaping doesn't matter.
@@ -433,5 +435,6 @@ Spec §18.2 "Recommended Extensions":
 
 - ✅ HTTP dashboard + JSON API
 - ✅ Jira tracker adapter
+- ✅ OpenCode CLI backend (`provider: opencode`) — driven as a subprocess like `claude_code` / `codex`; brings LSP integration, MCP support, and 75+ provider routes (including local Ollama-with-LSP).
 - ⏳ `linear_graphql` client-side tool — wiring exists on the tracker trait but the LLM tool catalog does not currently expose it.
 - ⏳ Persistent retry queue across restarts.
