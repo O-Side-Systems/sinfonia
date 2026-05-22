@@ -1,6 +1,6 @@
 # v0.3.0 milestone — status & handoff
 
-**Last updated:** 2026-05-22 (P6 merged via #13 — **Phase 6 complete**; Phase 7 is the next pickup)
+**Last updated:** 2026-05-22 (P7 landed on branch — `v0.3-phase-7-docs`; Phase 7 ready for review; v0.3.0 release is the next gate)
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
 **Branch state:** `main` contains the **complete Phase 1, Phase 2, and Phase 3 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`). Phase 3 (#10 — P3: telemetry + budget enforcement) lands an opt-in OTel emission layer over both binaries (12 spans total + tenant tagging from day one), the typed Sinfonia↔bridge event channel that replaces the dropped OTLP receiver (`AgentEvent::SessionCompleted` + HMAC-signed POST/verify reusing the GitHub webhook scheme), the cost / budget pipeline (`BudgetManager` + embedded cost table + 30 s idle-flush debounce + M-2 freshness gates), terminal-state detection via `pull_request.closed.merged=true`, the `examples/telemetry/` reference Collector + Postgres deployment, and the SPEC §11.6.11 / §11.6.12 / §18.2 + CHANGELOG + README + VERIFY doc surface.
 
@@ -20,9 +20,11 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 **Phase 5 of v0.3 is also complete (merged via #12, `6462c3a`).** Three deliverable clusters: (a) `sinfonia --check <WORKFLOW.md>` with documented per-failure-class exit codes (0/2/3/4/5) plus `sinfonia init` as the AI-tool-free REPL equivalent of `setup-workflow`; (b) six setup skills at `skills/` (setup-workflow / setup-bridge / setup-state-machine / setup-telemetry / setup-agent-backend / migrate-from-symphony) with `SKILL.md` runbooks, Liquid templates, and shell validators; (c) `docs/SKILLS.md` cross-vendor pointer table, SPEC §18.2 extension entry, CHANGELOG additions, README v0.3 paragraph, `docs/v0.3-plan/05-skills-VERIFY.md`. The state-machine prompt templates satisfy the §8 box-2 grep invariant by construction — every `{{ issue.fields.* }}` reference is followed by `| default:`. The `sinfonia-bridge --self-test` surface called out in plan §3.3 was already shipped by P1-G; Phase 5 §3.3 needed no work on the bridge side.
 
+**Phase 7 of v0.3 has landed on branch (`v0.3-phase-7-docs`) in three reviewable commits.** Three deliverable clusters: (a) SPEC §11.5/§11.6/§11.7/§18.2 finalize + foundational stub polish — §11.5 tightened ("orchestrator MUST NOT write"; pointer to §11.6), §11.6 promoted from Draft to Recommended Extension, new §11.7 documents Linear marker-comment vs Jira `customfield_NNNNN` discovery, §18.2 grew six bullets (Jira tracker adapter, CI feedback bridge, failure categorization, budget enforcement, PR label management; alongside the OpenCode + OTel + setup-skills entries from earlier phases); BRIDGE.example.md budget-caps section now shows realistic non-null values and gains the `cost_table_path` override block; CONTRIBUTING.md updated for the three-crate workspace layout; SKILLS / JIRA-SCREEN-SCHEME stubs get audience headers + cross-link blocks. (b) Three new long-form guides — `docs/DEPLOYMENT.md` (~470 LOC: four self-contained topologies + credential model + observability + scaling + backup + upgrading), `docs/CLIENT_SETUP.md` (~430 LOC: trust-boundary diagram + security posture + GitHub App vs PAT + three-layer budget controls + audit-trail queries + handoff + four-table vendor-evaluation worksheet), `docs/MIGRATION-v0.2-to-v0.3.md` (~150 LOC: "what you DON'T need to do" leads, required + optional + breaking changes); `WORKFLOW.example.md` gains a telemetry-block walkthrough, three OpenCode usage variants (default-lane / state-machine / air-gapped Ollama-with-LSP), and a full failure-categorization state-machine example wired to BRIDGE.md's `feedback_loop.failure_categories`. (c) README rewrite (five-item "What's new" summary keyed on user questions + "Where to go next" cross-link block above Getting Started; conformance scorecard §18.2 expanded), CHANGELOG `[Unreleased]` promoted to `[0.3.0]` with a release summary + P7 Added bullet, docs CI wired (markdownlint-cli2 + lychee internal-on-PR + lychee full-sweep weekly + shell-based fenced-block syntax validator). The plan §11.4 spec-conformance test cross-checking §18.2 against the codebase + the manual readthrough by someone uninvolved are deferred to a follow-up; details in `docs/v0.3-plan/07-docs-VERIFY.md`. Workspace test count: **227 passing, 0 failures** — unchanged (Phase 7 is docs + CI only, no Rust code added).
+
 **Phase 6 of v0.3 is also complete (merged via #13, `8b9ac66`).** Six production images publish to `ghcr.io/o-side-systems/` from a single multi-stage `Dockerfile` driven by `docker-bake.hcl` — `sinfonia` (daemon only), `sinfonia-bridge` (bridge only, parented directly off `debian:bookworm-slim` rather than the shared `sinfonia-base` so the standalone-bridge image stays small), `sinfonia-with-claude-code`, `sinfonia-with-codex`, `sinfonia-with-opencode`, and `sinfonia-all-agents`. The build stage shares one `cargo build --release` across all six via BuildKit registry + target cache mounts. Each target gets a three-tag fan-out (`:VERSION` / `:VERSION_MINOR` / `:latest`) via the `tags(name)` HCL helper; `bake --print` confirms the expected shape. The new root `docker-compose.yml` demonstrates the production topology (daemon + bridge + OTel Collector + Postgres) with read-only user-credential bind mounts; the pre-existing dev-shell `Dockerfile` and `docker-compose.yml` move verbatim to `Dockerfile.dev` / `docker-compose.dev.yml` (the dev compose updates its inner `build.dockerfile` reference; otherwise unchanged). The publish workflow at `.github/workflows/docker-publish.yml` triggers on `v*` tags, runs `docker buildx bake --push`, then runs `tests/docker-smoke.sh` (per-image `--help`) and `tests/docker-compose-smoke.sh` (full stack up under the `docker-compose.ci.yml` overlay, polling `:8080/api/v1/state` and `:8081/health`), then per-image Trivy with `severity: CRITICAL,HIGH` and `exit-code: 1`. Phase 5's `setup-bridge` / `setup-telemetry` skills already generate the exact compose shape Phase 6 ships — no skill changes needed.
 
-The next pickup is **Phase 7 — finalized docs** (`docs/v0.3-plan/07-docs.md`).
+The next pickup is the **v0.3.0 release** itself — merge `v0.3-phase-7-docs`, run the manual readthrough (per `07-docs-VERIFY.md` V-5), fill the `2026-MM-DD` placeholder in `CHANGELOG.md` at tag time, then `git tag v0.3.0` and let `.github/workflows/docker-publish.yml` push the six images to `ghcr.io/o-side-systems/`.
 
 The single most important non-obvious decision the Phase 1+2 work bequeathed to Phase 3 (resolved this phase): **the agent-side token-accounting plumbing was already in place across every CLI backend**, and `TurnOutcome::Completed` now exposes the per-turn `usage: TokenUsage` directly (the runner aggregates session totals without re-parsing the event channel). Phase 3 instrumented six daemon span sites with `tracing::field::Empty` placeholders + late `span.record()` for runtime values; no fresh code paths needed instrumentation.
 
@@ -77,7 +79,11 @@ The single most important non-obvious decision surfaced during Phase 3: **OTel m
 | `02b7774` | STATUS: mark Phase 5 merged, queue Phase 6 as next deliverable | Docs — this file |
 | `9001d5c` (#13) | P6: Phase 6 — Docker images + production compose + publish workflow + smoke harness | Code + docs — root `Dockerfile` (six-target multi-stage, BuildKit cache mounts shared across the build stage), `docker-bake.hcl` (registry/platform/tags + `tags(name)` HCL helper), new production `docker-compose.yml` (daemon + bridge + OTel Collector + Postgres) and `docker-compose.ci.yml` overlay (Compose v2.24+ `!reset` clears user-credential bind mounts), pre-existing dev files renamed to `Dockerfile.dev` / `docker-compose.dev.yml` (the latter's inner `build.dockerfile` updated), `.github/workflows/docker-publish.yml` (bake-push + per-image Trivy with `severity: CRITICAL,HIGH` / `exit-code: 1`), `tests/docker-smoke.sh` + `tests/docker-compose-smoke.sh` + `tests/fixtures/{WORKFLOW,BRIDGE}.smoke.md` (smoke fixtures validated by the existing `--check` gate before commit), README "Docker" section + CHANGELOG `[Unreleased]` Phase 6 block + `docs/v0.3-plan/06-docker-VERIFY.md` (new). |
 | `8b9ac66` | Merge pull request #13 from O-Side-Systems/v0.3-phase-6-docker | Merge commit |
-| (this commit) | STATUS: mark Phase 6 merged, queue Phase 7 as next deliverable | Docs — this file |
+| `32a26a6` | STATUS: mark Phase 6 merged, queue Phase 7 as next deliverable | Docs — this file |
+| `4efa67f` (P7-A) | SPEC §11.5/§11.6/§11.7/§18.2 + foundational stub polish | Docs — `docs/SPEC.md` (§11.5 tightened, §11.6 Draft tag dropped, new §11.7, six new §18.2 bullets, two bare-URL fixes); `BRIDGE.example.md` (budget caps + cost_table_path + telemetry walkthrough + cross-links); `CONTRIBUTING.md` (workspace layout, three-crate table, `--workspace` / `-p crate` commands); `docs/SKILLS.md` + `docs/JIRA-SCREEN-SCHEME.md` (audience headers + cross-link blocks) |
+| `4a4e344` (P7-B) | DEPLOYMENT + CLIENT_SETUP + MIGRATION + WORKFLOW.example updates | Docs — `docs/DEPLOYMENT.md` (NEW, ~470 LOC: four topologies + credential model + observability + scaling + backup + upgrading); `docs/CLIENT_SETUP.md` (NEW, ~430 LOC: trust-boundary diagram + security posture + budget controls + audit trail + handoff + vendor-evaluation worksheet); `docs/MIGRATION-v0.2-to-v0.3.md` (NEW, ~150 LOC); `WORKFLOW.example.md` (telemetry block walkthrough + 3 OpenCode usage variants + failure-categorization state-machine example) |
+| `4d7e69d` (P7-C) | README rewrite + CHANGELOG v0.3.0 + docs CI | Docs + CI — `README.md` (five-item "What's new in v0.3" rewrite + cross-link block + §18.2 scorecard); `CHANGELOG.md` (`[Unreleased]` → `[0.3.0]` promotion); `.github/workflows/docs.yml` (NEW: markdownlint-cli2 + lychee internal-on-PR + lychee full-sweep weekly + fenced-block syntax check); `.markdownlint-cli2.yaml` + `lychee.toml` (NEW); `scripts/check-doc-code-blocks.sh` (NEW, validates fenced YAML/JSON/TOML/bash); `skills/setup-bridge/SKILL.md` + `docs/SPEC.md` two bare URLs wrapped to satisfy markdownlint |
+| (this commit) | STATUS: mark Phase 7 landed on branch; v0.3.0 release is the next gate | Docs — this file |
 
 ### Phase 1 sub-task status
 
@@ -178,6 +184,23 @@ Phase 6 shipped as one PR (#13) with one combined commit covering all nine sub-t
 | `docs/DEPLOYMENT.md` referencing the image matrix | §9 | ⏳ deferred to Phase 7 | Explicitly Phase 7's responsibility per `06-docker.md` §9; not in Phase 6 scope. |
 | CHANGELOG entry | §9 | ✅ merged | `[Unreleased]` gains three Added bullets (image matrix, compose smoke harness, `docker-bake.hcl`) plus one Changed bullet (the `Dockerfile.dev` / `docker-compose.dev.yml` rename). |
 
+### Phase 7 sub-task status
+
+Phase 7 ships as one PR (in flight as of this commit, on branch `v0.3-phase-7-docs`) with three intermediate commits walking the deliverables in a reviewable order (SPEC + stubs → new long-form guides → README + CHANGELOG + CI). The mapping back to the `07-docs.md` §13 deliverable checklist (13 boxes) is in `docs/v0.3-plan/07-docs-VERIFY.md`. Headline: twelve boxes ✅ landed, one (the manual readthrough by someone uninvolved) deferred per the same pattern as Phase 4/5/6's VERIFY rows — to run against `v0.3.0-rc.x` before the GA tag.
+
+Per-deliverable mapping is recorded in `07-docs-VERIFY.md`'s top table; this section only records the high-level commit ordering and the deferred items:
+
+| Cluster | Status | Notes |
+|---|---|---|
+| P7-A — SPEC + foundational stubs | ✅ landed (`4efa67f`) | `docs/SPEC.md` §11.5/§11.6/§11.7/§18.2 + BRIDGE.example.md + CONTRIBUTING.md + SKILLS.md + JIRA-SCREEN-SCHEME.md. `sinfonia-bridge BRIDGE.example.md --check` continues to pass. |
+| P7-B — new long-form guides | ✅ landed (`4a4e344`) | `docs/DEPLOYMENT.md` (NEW) + `docs/CLIENT_SETUP.md` (NEW) + `docs/MIGRATION-v0.2-to-v0.3.md` (NEW) + `WORKFLOW.example.md` updates. ~1500 LOC added. `sinfonia --check WORKFLOW.example.md` continues to pass with `LINEAR_API_KEY` set (placeholder behaviour unchanged). |
+| P7-C — README rewrite + CHANGELOG + docs CI | ✅ landed (`4d7e69d`) | `README.md` rewrite, `CHANGELOG.md` `[Unreleased]`→`[0.3.0]` promotion, `.github/workflows/docs.yml` (NEW) + `.markdownlint-cli2.yaml` (NEW) + `lychee.toml` (NEW) + `scripts/check-doc-code-blocks.sh` (NEW). Local verification: markdownlint-cli2 18 files / 0 errors, lychee `--offline --exclude-path docs/v0.3-plan` 141 links / 0 errors, code-block validator ok. |
+| §11.4 spec-conformance test (`tests/spec_conformance.rs::§18.2_extensions_implemented`) | ⏳ deferred to v0.3.1 | Most §18.2 bullets ARE implemented in v0.3.0, but writing the cross-reference test mechanically would require parsing SPEC.md prose into a structured assertion catalog — out of scope for a docs phase. Rationale in `07-docs-VERIFY.md` §1.5. |
+| §11.5 manual readthrough by someone uninvolved in v0.3 | ⏳ deferred | Per user direction at start of Phase 7. Pre-v0.3.0-rc.x. Same pattern as Phase 4/5/6's pending verification matrices. |
+| `examples/runbook.md` / `examples/incident-response.md` | ⏳ deferred indefinitely | Plan §12 open question 5: "promote when we have real-world content." Phase 7 doesn't ship speculative runbook content; CLIENT_SETUP.md §"Handoff to the operating team" runbook-template headers are the v0.3.0 answer. |
+| Docs site (v0.4+) | ⏳ deferred to v0.4+ | Plan §12 open question 1: "GitHub-rendered Markdown is good enough for v0.3." Decision recorded in `07-docs-VERIFY.md` §4. |
+| Bridge `--once` single-shot mode for Topology 4 | ⏳ deferred to v0.3.1 | DEPLOYMENT.md Topology 4 documents the v0.3.0 alternative (POST to the existing `/webhook` handler from within the Action, then `kill` the bridge). Mentioned in CHANGELOG `Deferred to v0.3.1`. |
+
 ### Test baseline on `main`
 
 - `cargo test --workspace --no-fail-fast` on `main` → **183 tests pass, 0 failures** (Phase 3 final baseline).
@@ -215,9 +238,40 @@ Phase 6 shipped as one PR (#13) with one combined commit covering all nine sub-t
 
 ---
 
-## 2. What's next: Phase 7 — finalized docs (the final phase before v0.3.0)
+## 2. What's next: v0.3.0 release prep
 
-Phases 1–6 are merged to `main`. The next (and last) pickup is **Phase 7 — documentation update** (`docs/v0.3-plan/07-docs.md`). Phase 7's stated dependencies are all of Phases 1–6 — the doc set describes the bridge (P1), OpenCode backend (P2), telemetry + budget enforcement (P3), Jira support (P4), setup skills + CLI extensions (P5), and the Docker image matrix (P6). All resolved. **Once Phase 7 is done, v0.3.0 is releasable.**
+Phases 1–6 are merged to `main`; Phase 7 has landed on branch `v0.3-phase-7-docs` and is ready for review. **Once Phase 7 merges, the next gate is the v0.3.0 release itself.** The remaining steps:
+
+1. **Review + merge Phase 7.** Three reviewable commits (P7-A SPEC + stubs; P7-B new guides; P7-C README + CHANGELOG + CI). Standard PR workflow against `main`. Once green, squash or merge — the three commits are independent enough that either choice reads cleanly.
+2. **Run the §11.5 manual readthrough.** Per `07-docs-VERIFY.md` V-5, hand the doc set to someone uninvolved in v0.3 implementation and have them (a) read the README and want to try it, (b) run the tutorial in under 30 minutes, (c) follow `DEPLOYMENT.md` to a working deployment in under a day, (d) hand `CLIENT_SETUP.md` to a security reviewer without embarrassment. Findings go into a follow-up doc-patch commit; no STATUS bump on findings (they're considered part of the same Phase 7 deliverable).
+3. **Exercise the three carried-forward manual-verification debts** before tag:
+   - `docs/v0.3-plan/01-bridge-mvp-VERIFY.md` (NOT yet written; plan §9.3 calls for end-to-end verification against a real Linear project + sandbox GitHub repo).
+   - `docs/v0.3-plan/02-opencode-VERIFY.md` §5.3 (real OpenCode + Linear).
+   - `docs/v0.3-plan/03-telemetry-VERIFY.md` §3 (Collector + Postgres + drive one cap-hit cycle).
+   - The Phase 4 / 5 / 6 VERIFY matrices have rows that fall into the same "pending real-world runs before tag" bucket. Walk DEPLOYMENT.md and CLIENT_SETUP.md while doing these — the prose has to be accurate, and the only way to know is to follow it.
+4. **Fill the date placeholder.** `CHANGELOG.md` carries `## [0.3.0] — 2026-MM-DD`. Replace at tag time.
+5. **Fill the `Fixed:` section** in the `[0.3.0]` block with any fix-class commits between Phase 7 merge and the v0.3.0 tag (currently empty by design — Phase 7 is the last planned phase).
+6. **Tag and push.** `git tag -a v0.3.0 -m "v0.3.0"`, `git push --tags`. `.github/workflows/docker-publish.yml` triggers on `v*` tags and pushes the six images to `ghcr.io/o-side-systems/{sinfonia,sinfonia-bridge,sinfonia-with-claude-code,sinfonia-with-codex,sinfonia-with-opencode,sinfonia-all-agents}` with the three-tag fan-out (`:0.3.0`, `:0.3`, `:latest`).
+
+### v0.3.0 → v0.3.1 follow-up watch list
+
+Items v0.3.0 explicitly defers:
+
+- **OTel metrics layer** (Phase 3 §6, 9 instruments). Rationale: `examples/telemetry/queries/*.sql` reads span attributes from the `events` table, so the plan §8.2 exit criteria are met span-derived. Per-metric span-derived equivalent in `03-telemetry-VERIFY.md` §2.1.
+- **Wire-level integration tests** for the typed event channel + budget cap-hit (`tests/telemetry_e2e.rs`, `tests/budget_e2e.rs`). Algorithmic surface is pinned by the unit suite; manual verification covers wire-level concerns. Cross-reference table per concern in `03-telemetry-VERIFY.md` §2.5.
+- **`tests/spec_conformance.rs::§18.2_extensions_implemented`** — mechanical cross-check that every §18.2 bullet maps to working code. Most do; the test would require parsing SPEC.md prose into a structured catalog. Rationale in `07-docs-VERIFY.md` §1.5.
+- **Bridge `--once` single-shot mode** for Topology 4 (GitHub Actions bridge). DEPLOYMENT.md Topology 4 documents the v0.3.0 alternative.
+
+### Other follow-up work (not blocking v0.3.0)
+
+- **STATUS doc retire path.** Current file length is ~1000 lines. The natural cut point is between v0.3 and v0.4 milestones — re-evaluate at v0.3.0 release tag.
+- **Phase 7 follow-up doc patches.** Any findings from the §11.5 manual readthrough land as small commits to `main` after merge; no fresh phase number.
+
+---
+
+## 2.5 (Historical) What was queued before Phase 7
+
+Phases 1–6 are merged to `main`. The next pickup was **Phase 7 — documentation update** (`docs/v0.3-plan/07-docs.md`). Phase 7's stated dependencies were all of Phases 1–6 — the doc set describes the bridge (P1), OpenCode backend (P2), telemetry + budget enforcement (P3), Jira support (P4), setup skills + CLI extensions (P5), and the Docker image matrix (P6). All resolved. **Once Phase 7 is done, v0.3.0 is releasable.**
 
 ### Scope (per `07-docs.md`)
 
