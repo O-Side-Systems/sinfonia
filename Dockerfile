@@ -19,7 +19,7 @@
 # Build stage — shared across all production images. Compiles both binaries
 # once with cargo's registry + target dirs mounted as BuildKit caches.
 # ============================================================================
-FROM rust:1.78-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 WORKDIR /build
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \

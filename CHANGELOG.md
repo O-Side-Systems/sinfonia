@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0-alpha.3] — 2026-05-22
+
+Re-publish of `[0.3.0-alpha.2]` with the toolchain fix below. The
+`v0.3.0-alpha.2` tag and GitHub Release remain visible as a "did not
+produce artifacts" marker — the Docker publish workflow failed on that
+tag because the pinned `rust:1.78-bookworm` builder image is two stable
+releases behind what current transitive dependencies need.
+
+### Changed
+
+- **Bump workspace MSRV from `1.78` to `1.88`.** Two stacking
+  transitive-dep constraints surfaced when the Docker publish pipeline
+  rebuilt against current `Cargo.lock` on the v0.3.0-alpha.2 tag:
+  `hashbrown 0.17.1` requires the `edition2024` Cargo feature
+  (stabilized in Rust 1.85), and `tonic 0.14` + `time-macros 0.2.27`
+  require Rust 1.88. `Dockerfile` updated from `rust:1.78-bookworm` to
+  `rust:1.88-bookworm`; `Cargo.toml`'s `workspace.package.rust-version`
+  bumped to match; README MSRV badge and prerequisites line updated.
+  `Dockerfile.dev` is unaffected — it installs via `rustup` and tracks
+  stable. Existing v0.2 / v0.3.0-alpha.1 deployments running compiled
+  binaries are unaffected.
+
 ## [0.3.0-alpha.2] — 2026-05-22
 
 Second v0.3 preview. Makes Sinfonia legible as a team-grade orchestrator alongside its existing single-user shape. Six additions over `[0.3.0-alpha.1]`, all opt-in: OpenTelemetry emission tenant-tagged from day one (Phase 3), the Jira bridge write surface (Phase 4), six setup skills + `sinfonia --check` / `sinfonia init` CLIs for AI-coding-tool-driven scaffolding (Phase 5), six published Docker images (Phase 6), and the finalized doc set with `docs/DEPLOYMENT.md` + `docs/CLIENT_SETUP.md` + `docs/MIGRATION-v0.2-to-v0.3.md` (Phase 7). The daemon's behaviour against an unchanged v0.2 `WORKFLOW.md` is preserved — see [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md). v0.3.0 GA waits on a manual readthrough of the doc set and the carried-forward manual-verification debts (Linear bridge end-to-end, OpenCode + Linear, Collector + Postgres cap-hit cycle, real Jira sandbox).
@@ -141,7 +163,8 @@ Initial public release.
 - The Codex app-server stdio protocol backend is stubbed; this release targets the `codex exec` CLI surface instead.
 - One project per running daemon. Multi-project deployments use one daemon per project.
 
-[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.2...HEAD
+[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.3...HEAD
+[0.3.0-alpha.3]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.2...v0.3.0-alpha.3
 [0.3.0-alpha.2]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...v0.3.0-alpha.2
 [0.3.0-alpha.1]: https://github.com/O-Side-Systems/sinfonia/compare/v0.1.0...v0.3.0-alpha.1
 [0.1.0]: https://github.com/O-Side-Systems/sinfonia/releases/tag/v0.1.0

@@ -1,7 +1,7 @@
 # Sinfonia
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.78%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
 [![Spec](https://img.shields.io/badge/spec-Symphony%20Draft%20v1-informational)](docs/SPEC.md)
 
 > *Sinfonia (n.) — Spanish/Italian for "symphony." Pronounced sin-FOH-nee-ah.*
@@ -75,7 +75,7 @@ Sinfonia is a **polling daemon**, not a webhook listener. Once running, it asks 
 
 ### Prerequisites
 
-- Rust toolchain 1.78+ (uses 2021 edition). Build with `cargo build --release`; binary lands at `target/release/sinfonia`.
+- Rust toolchain 1.88+ (uses 2021 edition; transitive deps — `hashbrown 0.17` needs `edition2024` from 1.85, and `tonic 0.14` + `time-macros 0.2.27` require 1.88). Build with `cargo build --release`; binary lands at `target/release/sinfonia`.
 - A `bash` available on `PATH` — Sinfonia uses `bash -lc` for hooks, the `shell` tool, and CLI agent subprocesses.
 - One of:
   - **A direct LLM API key** (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY`) or a local **Ollama** at `127.0.0.1:11434`, **or**
