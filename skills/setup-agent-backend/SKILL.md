@@ -93,6 +93,6 @@ applicable) `llm:` block.
 
 ## See also
 
-- `docs/v0.3-plan/02-opencode-VERIFY.md` — the OpenCode flag-set
-  doc-spike findings (relevant if you're configuring `opencode`).
+- `crates/sinfonia/src/agent/opencode.rs` rustdoc — the verified
+  OpenCode flag set (relevant if you're configuring `opencode`).
 - `docs/SPEC.md` §18.2 — the canonical backend table.

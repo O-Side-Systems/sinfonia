@@ -46,6 +46,10 @@ hooks:
   # First-time workspace bootstrap. `gh` uses $GH_TOKEN from the env.
   after_create: |
     gh repo clone YOUR-ORG/YOUR-REPO .   # ← change me
+    # Per-workspace scratchpad lives in .sinfonia/ — never commit it.
+    # `.gitignore` write is idempotent across re-creations.
+    touch .gitignore
+    grep -qxF '.sinfonia/' .gitignore || echo '.sinfonia/' >> .gitignore
 
   # Runs before every attempt — must be idempotent (retries re-run it).
   before_run: |
@@ -209,8 +213,14 @@ states:
       {% endif %}
       ## Fresh work (only when STEP 1 said "no PR exists")
 
-      1. Sketch a short plan in `.sinfonia/plan.md` (~10 bullets, not an essay).
-         Create the directory if it doesn't exist.
+      1. Sketch a short plan in `.sinfonia/plans/{{ issue.identifier | downcase }}.md`
+         (~10 bullets, not an essay). Create the directory if it doesn't exist.
+         The `.sinfonia/` tree is your per-workspace scratchpad — `after_create`
+         already added it to `.gitignore`, so do NOT `git add .sinfonia/`. If
+         the `.gitignore` entry got dropped, add it back as your first commit
+         so it lands on the branch you push. Using a per-issue filename here
+         is belt-and-suspenders: even if scratchpads accidentally land in git,
+         per-issue paths don't merge-conflict against parallel agent branches.
       2. Make a minimal first cut — compiles/runs, may be incomplete.
       3. Commit work-in-progress on `sinfonia/{{ issue.identifier | downcase }}` with a
          descriptive message referencing `{{ issue.identifier }}`.
@@ -337,11 +347,13 @@ states:
       that case the human moved the ticket in to nudge progress.
 
       The previous turn (if any) left state in this workspace and possibly a
-      plan in `.sinfonia/plan.md`.
+      plan in `.sinfonia/plans/{{ issue.identifier | downcase }}.md`. That tree is
+      gitignored scratch — don't commit it.
 
       ## Implementation continuation (when STEP 1 had nothing to address)
 
-      1. Pick up from `.sinfonia/plan.md` and complete the implementation.
+      1. Pick up from `.sinfonia/plans/{{ issue.identifier | downcase }}.md` and
+         complete the implementation.
       2. Run the project's tests + linters. Iterate until green.
       3. Commit cleanly. Reference `{{ issue.identifier }}` in the message.
       4. Push: `git push -u origin "sinfonia/{{ issue.identifier | downcase }}"`.

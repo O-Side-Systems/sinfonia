@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# verify-workspace-move.sh — confirms the v0.3 workspace-conversion commit
+# verify-workspace-move.sh — confirms a workspace-conversion commit
 # preserved every test outcome from the prior commit.
 #
-# Per `docs/v0.3-plan/01-bridge-mvp.md` §2, the workspace move is supposed to
-# be a *path-only* change — files relocate, logic is byte-for-byte preserved.
-# That's a process claim. This script makes it a verifiable artifact: it
-# checks out the prior commit, captures the workspace test summary, checks
-# out the move commit, captures the same summary, and exits non-zero if the
-# two summaries differ.
+# A workspace move (e.g. converting a single-crate layout into a Cargo
+# workspace, or splitting a crate) is supposed to be a *path-only* change
+# — files relocate, logic is byte-for-byte preserved. That's a process
+# claim. This script makes it a verifiable artifact: it checks out the
+# prior commit, captures the workspace test summary, checks out the move
+# commit, captures the same summary, and exits non-zero if the two
+# summaries differ.
 #
 # Usage:
 #   scripts/verify-workspace-move.sh

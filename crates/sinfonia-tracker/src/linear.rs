@@ -269,7 +269,7 @@ impl LinearTracker {
     /// Look up the workflow-state ID for a given state name on the team that
     /// owns this issue. Linear `issueUpdate` needs the state ID; users
     /// configure state *names*. Two GraphQL hops in the worst case (no
-    /// cache in Phase 1 — see `docs/v0.3-plan/01-bridge-mvp.md` §11 q4).
+    /// cache as of v0.3).
     async fn resolve_state_id(&self, issue_id: &str, state_name: &str) -> Result<String> {
         let query = r#"
           query($id: String!) {
@@ -583,10 +583,9 @@ fn normalize_full(n: &Json) -> Result<Issue> {
     let updated_at = parse_ts(n.get("updatedAt"));
 
     // Pull bridge-written custom fields out of the marker comment, if any
-    // (spec §11.6, H-1 in `docs/v0.3-plan/01-bridge-mvp.md` §4.2). The
-    // marker is the first comment whose body decodes as a
-    // `sinfonia_bridge_state_v1` envelope. We scan up to 100 comments;
-    // see `ISSUE_FRAGMENT` for the rationale.
+    // (spec §11.6 / §11.7.1). The marker is the first comment whose body
+    // decodes as a `sinfonia_bridge_state_v1` envelope. We scan up to 100
+    // comments; see `ISSUE_FRAGMENT` for the rationale.
     let fields = n
         .get("comments")
         .and_then(|c| c.get("nodes"))

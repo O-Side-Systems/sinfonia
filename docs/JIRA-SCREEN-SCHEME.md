@@ -94,3 +94,12 @@ Operators MAY pre-create these fields with their preferred display names; the
 bridge only matches by display name (case-insensitive). If you do this, set
 the field type to one of the equivalents documented in plan §3.1
 (`...customfieldtypes:float` for Number, `...:textarea` for LongText).
+
+## Where to go next
+
+- [`docs/SPEC.md`](SPEC.md) §11.6 / §11.7 — the bridge-service contract and
+  the custom-field discovery convention this doc supports.
+- [`BRIDGE.example.md`](../BRIDGE.example.md) — fully-commented Jira
+  Cloud + self-hosted variants in the same file.
+- [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — for the bridge topology choices
+  that decide who owns these admin perms.

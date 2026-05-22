@@ -1,0 +1,44 @@
+# lychee configuration for Sinfonia docs link-rot checks.
+#
+# - exclude: ignore localhost / 127.0.0.1 examples (intentionally invalid
+#   in docs), example.com placeholders, GitHub anchors that lychee can't
+#   resolve client-side, and the placeholder GitHub URLs we use in
+#   CHANGELOG ("#NNN").
+
+exclude = [
+  "^https?://localhost",
+  "^https?://127\\.0\\.0\\.1",
+  "^https?://0\\.0\\.0\\.0",
+  "^https?://.*\\.example\\.com",
+  "^https?://.*\\.example\\.org",
+  "^https?://acme\\.atlassian\\.net",
+  "^https?://bridge\\.example\\.com",
+  "^https?://example",
+  "^https?://otel-collector",
+  "^mailto:",
+  # Placeholder PR references in the CHANGELOG (`#NNN` rendered as
+  # https://github.com/.../pull/NNN).
+  "/pull/NNN$",
+  # Editor-only fragments lychee can't verify.
+  "^#",
+]
+
+# Skip lychee's strict scheme detection on relative paths so we don't
+# trip on `../examples/telemetry/` style.
+exclude_path = [
+  "target/",
+  "node_modules/",
+  ".git/",
+]
+
+# Allow lychee to follow common redirects (GitHub adds a trailing slash
+# on org / repo URLs, for example).
+max_redirects = 5
+
+# Internal-only by default; the GHA `--offline` flag scopes us to the
+# files in this repo regardless.
+accept = [200, 201, 202, 203, 204, 206, 301, 302, 304, 307, 308, 429]
+
+# Be polite with external hosts on the weekly full sweep.
+max_concurrency = 4
+timeout = 20

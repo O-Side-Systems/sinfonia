@@ -14,21 +14,48 @@ Thanks for your interest in helping out. This document covers the basics; the [R
 2. **Check the spec.** Sinfonia conforms to [`docs/SPEC.md`](docs/SPEC.md) (the upstream Symphony Service Specification). Changes that drift from the spec need to be either spec-conformant extensions (call them out as such) or explicit deviations with a justification in the PR description.
 3. **Keep the diff scoped.** One concern per PR. If your branch touches the orchestrator state machine *and* the Jira adapter *and* the README, split it.
 
+## Workspace layout
+
+As of v0.3, Sinfonia is a Cargo **workspace** with three member crates:
+
+| Crate | Role |
+|---|---|
+| `crates/sinfonia/` | The polling daemon binary (the v0.1/v0.2 single-crate code lives here). |
+| `crates/sinfonia-tracker/` | Shared `IssueTracker` trait + Linear / Jira adapters + `custom_fields` module. Consumed by both daemon and bridge. |
+| `crates/sinfonia-bridge/` | The companion bridge binary that closes the CI → fix loop. |
+
+Where to put new code:
+
+- New daemon behavior (orchestrator, runner, agent backends, HTTP API, template rendering) →
+  `crates/sinfonia/`.
+- New shared tracker work (Linear / Jira / a new adapter, custom-field helpers, ADF rendering)
+  → `crates/sinfonia-tracker/`.
+- New bridge behavior (webhook handlers, feedback loop, label management, budget enforcement,
+  GitHub auth) → `crates/sinfonia-bridge/`.
+
 ## Development loop
 
 ```bash
-# build
+# build everything (default: workspace-wide)
 cargo build
 
-# fast test loop
-cargo test
+# build just one crate
+cargo build -p sinfonia
+cargo build -p sinfonia-bridge
 
-# release build (the binary the README documents)
-cargo build --release
+# fast test loop (workspace-wide)
+cargo test --workspace --no-fail-fast
+
+# fast test loop scoped to one crate
+cargo test -p sinfonia-bridge
+
+# release build (the binaries the README documents)
+cargo build --release --workspace
+# binaries land at target/release/{sinfonia,sinfonia-bridge}
 
 # clippy + format before submitting
 cargo fmt --all
-cargo clippy --all-targets -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 CI runs the same commands. PRs that don't pass `cargo fmt` or `cargo clippy` will be sent back.
@@ -54,7 +81,7 @@ Move a test ticket into `Todo` and watch the dashboard at <http://127.0.0.1:8080
 
 ## Adding a new tracker
 
-Drop a new file under `src/tracker/` and `impl IssueTracker for YourTracker`. Wire it into `tracker::build_from_config` and add a `TrackerKind` variant. The trait surface is small on purpose:
+Drop a new file under `crates/sinfonia-tracker/src/` and `impl IssueTracker for YourTracker`. Wire it into the factory in `crates/sinfonia/src/tracker.rs` and add a `TrackerKind` variant. The trait's reader surface is small on purpose:
 
 ```rust
 async fn fetch_candidate_issues(&self) -> Result<Vec<Issue>>;
@@ -62,16 +89,26 @@ async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>>;
 async fn fetch_issue_states_by_ids(&self, ids: &[String]) -> Result<Vec<IssueState>>;
 ```
 
-Match the normalization in `src/tracker/linear.rs` — lowercase labels, blockers from "is blocked by" relations, ISO-8601 timestamps.
+If the new tracker is meant to support `sinfonia-bridge` writes, also implement the five
+bridge-write methods (`transition_issue`, `read_custom_field`, `write_custom_field`,
+`ensure_custom_field`, `post_comment`). See `crates/sinfonia-tracker/src/jira.rs` for the
+shape and `docs/SPEC.md` §11.6/§11.7 for the contract.
+
+Match the normalization in `crates/sinfonia-tracker/src/linear.rs` — lowercase labels, blockers from "is blocked by" relations, ISO-8601 timestamps.
 
 ## Adding a new agent backend
 
 Two patterns:
 
-1. **Raw LLM** — implement `LlmCaller` in `src/agent/turn.rs` and a thin `CodingAgent` wrapper that calls `run_provider_turn`. See `openai.rs` / `anthropic.rs` for the shape.
-2. **CLI subprocess** — extend `src/agent/cli.rs` with a new `CliFlavor` variant and a parser. See the Claude Code / Codex CLI implementations.
+1. **Raw LLM** — implement `LlmCaller` in `crates/sinfonia/src/agent/turn.rs` and a thin
+   `CodingAgent` wrapper that calls `run_provider_turn`. See `openai.rs` / `anthropic.rs` for
+   the shape.
+2. **CLI subprocess** — add a new module next to `crates/sinfonia/src/agent/{cli,opencode}.rs`
+   following one of those two patterns (a `CliFlavor` variant for Claude Code / Codex shape, or
+   a dedicated module for backends with a different event protocol like OpenCode's).
 
-Either way, add an `AgentProvider` variant in `src/config/typed.rs` and wire it into `agent::build_for`.
+Either way, add an `AgentProvider` variant in `crates/sinfonia/src/config/typed.rs` and wire it
+into `agent::build_for`.
 
 ## Commit messages
 
@@ -90,9 +127,12 @@ Reference the issue you're fixing in the body (`Fixes #123`) when there is one.
 Maintainers cut releases. The flow:
 
 1. Update `CHANGELOG.md` under a new version heading.
-2. Bump the version in `Cargo.toml`.
+2. Bump the version in the workspace `Cargo.toml` (both binaries inherit the workspace version).
 3. Tag `vX.Y.Z` and push the tag.
-4. CI publishes to crates.io and attaches a build to the GitHub release.
+4. CI publishes to crates.io and runs `docker buildx bake --push` to publish the six Docker
+   images at `ghcr.io/o-side-systems/{sinfonia,sinfonia-bridge,sinfonia-with-claude-code,
+   sinfonia-with-codex,sinfonia-with-opencode,sinfonia-all-agents}` per
+   `.github/workflows/docker-publish.yml`.
 
 ## Questions
 

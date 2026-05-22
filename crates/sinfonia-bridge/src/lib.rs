@@ -16,7 +16,9 @@
 //! The bridge is the only component in the v0.3 architecture that holds
 //! both tracker-write credentials and GitHub webhook secrets. Sinfonia
 //! itself stays narrowly focused on "ticket is in an active state → run
-//! agent." See `docs/v0.3-plan/01-bridge-mvp.md` for the full design.
+//! agent." See `docs/SPEC.md` §11.6 for the recommended-extension
+//! contract this binary implements and `docs/DEPLOYMENT.md` for the
+//! supported topologies.
 //!
 //! ## Module tree
 //!

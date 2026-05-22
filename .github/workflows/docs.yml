@@ -1,0 +1,92 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - ".markdownlint-cli2.yaml"
+      - "lychee.toml"
+      - ".github/workflows/docs.yml"
+      - "scripts/check-doc-code-blocks.sh"
+  pull_request:
+    paths:
+      - "**/*.md"
+      - ".markdownlint-cli2.yaml"
+      - "lychee.toml"
+      - ".github/workflows/docs.yml"
+      - "scripts/check-doc-code-blocks.sh"
+  schedule:
+    # Weekly full link-rot pass (internal + external) on Sunday at 09:00 UTC.
+    - cron: "0 9 * * 0"
+  workflow_dispatch:
+
+jobs:
+  markdownlint:
+    name: markdownlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          # Per-file globs picked to cover the public-facing surface without
+          # dragging in vendored docs or auto-generated material.
+          globs: |
+            README.md
+            CHANGELOG.md
+            CONTRIBUTING.md
+            BRIDGE.example.md
+            WORKFLOW.example.md
+            docs/**/*.md
+            skills/**/SKILL.md
+            examples/**/*.md
+
+  link-rot-internal:
+    name: link-rot (internal)
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: lychee internal links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Internal links only — external URLs are checked in the weekly job
+          # below to avoid PR-time false negatives from flaky upstream hosts.
+          args: >-
+            --offline
+            --no-progress
+            --include-fragments
+            './**/*.md'
+          fail: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  link-rot-full:
+    name: link-rot (full, weekly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: lychee full link sweep
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # External + internal sweep — runs weekly so we catch upstream rot
+          # without blocking PRs on every transient outage.
+          args: >-
+            --no-progress
+            --include-fragments
+            --max-concurrency 4
+            './**/*.md'
+          fail: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  code-block-syntax:
+    name: code-block syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3 python3-yaml shellcheck jq
+      - name: Validate fenced YAML / JSON / TOML / bash blocks in docs
+        run: scripts/check-doc-code-blocks.sh

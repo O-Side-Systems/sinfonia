@@ -101,11 +101,15 @@ feedback_loop:
   # protection) must pass. Populate to override.
   required_checks: []
 
-  # ---- Budget caps (Phase 3; accepted but unused in v0.3.0-alpha.1) ----
-  # These keys are parsed in Phase 1 so config files survive the upgrade
-  # without edits. They are no-ops until Phase 3 lands.
-  max_tokens_per_ticket: null
-  max_cost_per_ticket_usd: null
+  # ---- Budget caps ----
+  # Per-ticket token and dollar ceilings enforced at the tracker-write
+  # boundary. Cap-crossings flush the accumulator, transition the ticket
+  # to `budget_exceeded_state`, and stop the bridge from re-driving more
+  # work on that ticket. Per-ticket overrides come from the
+  # `sinfonia_max_attempts` / `sinfonia_max_cost_usd` custom fields.
+  # Leave `null` to disable the corresponding cap.
+  max_tokens_per_ticket: 1_500_000
+  max_cost_per_ticket_usd: "25.00"
   budget_exceeded_state: "Blocked - Budget Cap"
 
   # Liquid template rendered into a PR comment on each red CI run.
@@ -145,15 +149,15 @@ feedback_loop:
       priority: 0
 
 # ---- Custom fields ----
-# Tracker-side field names the bridge reads and writes. The Phase 1
-# Linear adapter stores the entire envelope in a single bot-owned
-# comment (the `sinfonia_bridge_state_v1` marker — see docs/SPEC.md
-# §11.6). Jira will use real custom fields in Phase 4.
+# Tracker-side field names the bridge reads and writes. The Linear
+# adapter stores the entire envelope in a single bot-owned comment
+# (the `sinfonia_bridge_state_v1` marker — see docs/SPEC.md §11.6).
+# The Jira adapter resolves each name to a real `customfield_NNNNN`
+# id at startup and caches it for the process lifetime (§11.7.2).
 #
 # All seven keys are REQUIRED and MUST be non-empty (parser rule 8).
-# The Phase 3 keys (`tokens_consumed`, `cost_consumed_usd`,
-# `max_cost_override_usd`) are accepted now so config files survive
-# the upgrade without edits.
+# Rename only if the displayed name conflicts with an existing field —
+# the Phase 5 skill templates reference these defaults.
 custom_fields:
   attempt_count:          sinfonia_attempt_count
   last_failure_log:       sinfonia_last_ci_failure
@@ -179,8 +183,23 @@ storage:
   state_db_path: ~/.sinfonia/bridge.db
 
 # ---- Telemetry ----
-# Phase 1 stores only `service_name`. The other keys are accepted (and
-# resolved from env vars) so config files survive the Phase 3 upgrade.
+# Opt-in OpenTelemetry emission + the typed Sinfonia↔bridge event
+# channel. When `otlp_endpoint` is unset (and OTEL_EXPORTER_OTLP_ENDPOINT
+# is unset in the environment) the OTel layer is disabled and the bridge
+# runs stdout-only — same behaviour as v0.3.0-alpha.1.
+#
+# tenant_id (precedence: this field → SINFONIA_TENANT_ID env → "default")
+# tags every span as a per-span attribute AND is surfaced as the
+# resource-level `service.namespace`, so a Collector routing-processor
+# can split per-tenant data without touching emission code.
+#
+# `sinfonia_event_*` keys wire up the typed event channel (SPEC §11.6.11).
+# When the bridge is set to receive runner-session events from Sinfonia,
+# `sinfonia_event_callback_url` is the externally-reachable URL where
+# Sinfonia POSTs events (HMAC-SHA256 signed); `sinfonia_event_subscribe_url`
+# is the Sinfonia endpoint the bridge calls at startup to register itself.
+# `sinfonia_events_secret` is REQUIRED when either subscribe / callback URL
+# is set — the value MUST match Sinfonia's `telemetry.sinfonia_events_secret`.
 telemetry:
   service_name: sinfonia-bridge
   # tenant_id: acme
@@ -188,7 +207,17 @@ telemetry:
   # # Required when sinfonia_event_subscribe_url is set:
   # sinfonia_events_secret: a-shared-hmac-secret
   # sinfonia_event_subscribe_url: http://sinfonia:8080/api/v1/events/subscribers
-  # sinfonia_event_callback_url: http://bridge.local:8081/internal/events
+  # sinfonia_event_callback_url: http://bridge.local:8081/api/v1/sinfonia-events
+
+# ---- Cost table override (optional) ----
+# The bridge embeds `config/cost_table.yaml` at compile time via
+# `include_str!`. Override at runtime by pointing this key at an
+# external YAML file with the same shape — useful when provider pricing
+# moves faster than the Sinfonia release cadence. The freshness gates
+# documented in SPEC §11.6.12 apply to overrides too: WARN at 90 days
+# stale, refuse to apply cost caps (token caps stay enforced) at 180
+# days stale.
+# cost_table_path: /etc/sinfonia/cost_table.yaml
 ---
 
 # Bridge for my-awesome-project
@@ -255,4 +284,17 @@ tracker:
 github:
   webhook_secret: $GH_WEBHOOK_SECRET
   pat: $GH_PAT
+telemetry:
+  sinfonia_events_secret: $SINFONIA_EVENTS_SECRET
 ```
+
+## Where to go next
+
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — production topologies (single-host, separate
+  hosts, GitHub-Actions bridge) and the credential model.
+- [`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md) — enterprise adoption checklist, trust
+  boundaries, security posture, vendor evaluation worksheet.
+- [`docs/SPEC.md`](docs/SPEC.md) §11.6 / §11.7 — the underlying recommended-extension contract
+  this file's keys implement.
+- [`skills/setup-bridge/SKILL.md`](skills/setup-bridge/SKILL.md) — the AI-tool-driven REPL
+  that scaffolds a `BRIDGE.md` from a fresh project.

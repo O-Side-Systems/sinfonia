@@ -134,5 +134,3 @@ If no spans appear, common causes:
   Collector + Postgres setup, schema, and three dashboard queries.
 - `docs/SPEC.md` §11.6.11 (typed event channel) and §11.6.12 (budget
   enforcement surface) for the wire shapes that spans carry.
-- `docs/v0.3-plan/03-telemetry-VERIFY.md` for crate-version pinning + the
-  metrics-layer deferral notes.

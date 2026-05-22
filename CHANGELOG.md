@@ -6,7 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-MM-DD
+
+This release makes Sinfonia legible as a team-grade orchestrator alongside its existing single-user shape. Six additions, all opt-in: the `sinfonia-bridge` companion daemon that closes the CI → fix loop (with bounded attempts, failure categorization, and budget caps), OpenCode as a first-class agent backend, OpenTelemetry emission tenant-tagged from day one, six setup skills for AI-coding-tool-driven scaffolding, six published Docker images, and the finalized doc set. The daemon's behaviour against an unchanged v0.2 `WORKFLOW.md` is preserved — see [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md).
+
 ### Added
+
+- **Finalized documentation (Phase 7).** SPEC §11.5 tightened ("orchestrator MUST NOT write"; pointer to §11.6) and §11.6 promoted from Draft to Recommended Extension; new §11.7 documents custom-field discovery per tracker (Linear marker-comment vs Jira `customfield_NNNNN` resolution); §18.2 grew bullets for the Jira tracker adapter, the CI feedback bridge, failure categorization, budget enforcement, and PR label management (alongside the OpenCode + OpenTelemetry + setup-skills entries from earlier phases). New guides: `docs/DEPLOYMENT.md` (four topologies + credential model + scaling + backup + upgrading), `docs/CLIENT_SETUP.md` (enterprise adoption checklist with trust-boundary diagram, security posture, budget controls, audit-trail queries, handoff runbook headers, and a vendor-evaluation worksheet), `docs/MIGRATION-v0.2-to-v0.3.md` (required + optional + breaking-changes sections). `WORKFLOW.example.md` gains a `telemetry:` block walkthrough, three OpenCode usage variants (default-lane / state-machine / air-gapped Ollama-with-LSP), and a full failure-categorization state-machine example wired to `BRIDGE.md`'s `feedback_loop.failure_categories`. `BRIDGE.example.md` budget-caps section ships realistic non-null example values; new cost_table_path override block; cross-link block at the bottom. `CONTRIBUTING.md` updated for the Cargo workspace layout (three-crate table; `--workspace` / `-p crate` commands; "where to add new code" guidance). Docs CI: link-rot via lychee (internal-only on PR, full-link weekly), Markdown lint via markdownlint-cli2, fenced YAML/TOML/JSON code-block syntax checks.
 
 - **Docker images + production compose (Phase 6).** Six production images publish to `ghcr.io/o-side-systems/` from a single multi-stage `Dockerfile` driven by `docker-bake.hcl`: `sinfonia` (daemon only, Debian slim + bash/git/curl/gh), `sinfonia-bridge` (bridge only, no agent or git tooling), three single-agent variants (`sinfonia-with-claude-code` adds Node 22 + `@anthropic-ai/claude-code`; `sinfonia-with-codex` and `sinfonia-with-opencode` install the respective CLIs via upstream install scripts), and `sinfonia-all-agents` for state-machine deployments that route across agents. Each image is tagged `:VERSION`, `:VERSION_MINOR`, and `:latest`; built for `linux/amd64` and `linux/arm64` where the underlying CLI provides arm64. The build stage shares one `cargo build --release` across all six targets via BuildKit registry + target cache mounts. The new root `docker-compose.yml` demonstrates a production topology (daemon + bridge + OTel Collector + Postgres) with read-only mounts for the per-agent credential directories (`~/.claude`, `~/.codex`, `~/.opencode`) and the Phase 3 telemetry schema applied to Postgres via `docker-entrypoint-initdb.d`. The pre-existing dev-shell Dockerfile + compose move to `Dockerfile.dev` / `docker-compose.dev.yml` with their behaviour unchanged. Publishing runs through `.github/workflows/docker-publish.yml` on every `v*` tag — `docker buildx bake --push`, image-digest inspection, image / compose smoke tests, then a per-image Trivy scan with `severity: CRITICAL,HIGH` and `exit-code: 1` (CRITICAL/HIGH CVEs fail the publish; LOW/MEDIUM upload SARIF to the Security tab without blocking).
 
@@ -59,7 +65,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Deferred to v0.3.1
 
-The Phase 3 plan §6 OTel metrics layer (9 instruments: `sinfonia.agent.tokens_total`, `bridge.ci_outcome`, etc.) is deferred. The §8.2 dashboard SQL reads from span attributes via the `events` table, not from OTel metric points, so the plan's exit criteria are met span-derived. See `docs/v0.3-plan/03-telemetry-VERIFY.md` §2 for rationale and the span-derived equivalent for each deferred metric.
+The 9-instrument OTel metrics layer (`sinfonia.agent.tokens_total`, `bridge.ci_outcome`, etc.) is deferred. The reference dashboard SQL in `examples/telemetry/queries/*.sql` reads from span attributes via the `events` table, not from OTel metric points, so the dashboards work span-derived. Filing this here so a future maintainer knows the metrics layer was a deliberate scope cut, not an oversight. The bridge `--once` single-shot mode described as one of the Topology 4 options in `docs/DEPLOYMENT.md` is also a v0.3.1 candidate — as of v0.3.0 the bridge always runs as a server. The four-topology guide in `docs/DEPLOYMENT.md` documents a working v0.3.0 alternative (POST to the existing `/webhook` handler from within the Action, then kill the bridge).
+
+### Migration
+
+- See [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md).
 
 ## [0.3.0-alpha.1] — 2026-05-21
 
@@ -131,6 +141,7 @@ Initial public release.
 - The Codex app-server stdio protocol backend is stubbed; this release targets the `codex exec` CLI surface instead.
 - One project per running daemon. Multi-project deployments use one daemon per project.
 
-[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...HEAD
+[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...v0.3.0
 [0.3.0-alpha.1]: https://github.com/O-Side-Systems/sinfonia/compare/v0.1.0...v0.3.0-alpha.1
 [0.1.0]: https://github.com/O-Side-Systems/sinfonia/releases/tag/v0.1.0

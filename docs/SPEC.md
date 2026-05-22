@@ -940,7 +940,7 @@ RECOMMENDED additional process settings:
 
 ### 10.2 Session Startup Responsibilities
 
-Reference: https://developers.openai.com/codex/app-server/
+Reference: <https://developers.openai.com/codex/app-server/>
 
 Startup MUST follow the targeted Codex app-server contract. Symphony additionally requires the
 client to:
@@ -1199,21 +1199,34 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes (Important Boundary)
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
+The orchestrator MUST NOT write to the issue tracker. State transitions, comment posting,
+custom-field writes, and PR-to-ticket mapping are NON-orchestrator responsibilities and live in
+one of two places:
 
-- Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
-  agent using tools defined by the workflow prompt.
-- The service remains a scheduler/runner and tracker reader.
+1. **The coding agent**, using tools defined by the workflow prompt (`shell` invoking `gh`,
+   `curl`, `linear-cli`, `jira`, etc.). The workflow author decides when and how the agent
+   communicates back to the tracker.
+2. **A companion service** — see §11.6 for the recommended bridge-service extension contract.
+
+The orchestrator stays a scheduler / runner / tracker *reader* by design. Two consequences:
+
 - Workflow-specific success often means "reached the next handoff state" (for example
   `Human Review`) rather than tracker terminal state `Done`.
-- If the `linear_graphql` client-side tool extension is implemented, it is still part of the agent
-  toolchain rather than orchestrator business logic.
+- If the `linear_graphql` client-side tool extension is implemented, it is still part of the
+  agent toolchain rather than orchestrator business logic.
 
-### 11.6 Bridge Service Extension Contract (Draft)
+A conforming implementation MAY ship a sibling bridge binary that writes to the tracker on the
+orchestrator's behalf, provided the bridge is a separate process with its own credentials and
+its own trust boundary. The reference Sinfonia implementation ships `sinfonia-bridge` for this
+role; §11.6 describes the contract the bridge honors so a non-Sinfonia bridge can interoperate.
 
-> **Status:** *Draft.* This section describes the OPTIONAL bridge-service extension introduced in
-> Sinfonia v0.3 and slated for finalization in a future spec revision. Implementations MAY follow
-> the contract below; conformance is not required by §11.1–§11.5.
+### 11.6 Bridge Service Extension Contract
+
+> **Status:** *Recommended extension.* This section describes the OPTIONAL bridge-service
+> extension introduced in Sinfonia v0.3. Implementations MAY follow the contract below;
+> conformance is not required by §11.1–§11.5. A bridge that does NOT follow the contract is
+> still a valid implementation choice, but loses interoperability with tooling that expects
+> the canonical shape (skills, dashboard queries, self-test wire formats).
 
 #### 11.6.1 Definition and Trust Boundary
 
@@ -1505,6 +1518,66 @@ Per-ticket overrides MAY be read from custom fields:
 
 Cost values MUST be written as `CustomFieldValue::String("8.23")` — never as f64 — to preserve
 precision through the Linear marker-comment / Jira customfield boundary.
+
+### 11.7 Custom-Field Discovery
+
+A bridge that follows §11.6 needs a per-tracker convention for "where do the `sinfonia_*` fields
+live, and how does the bridge address them?" The two trackers supported in v0.3 differ.
+
+#### 11.7.1 Linear
+
+Linear does not expose a stable custom-field surface to third-party API clients. The reference
+bridge therefore stores the entire `sinfonia_bridge_state_v1` envelope as a single bot-owned
+comment on the ticket (§11.6.2). The tracker adapter reads comments via
+`comments(first: 100)` and scans for the marker; rewrites replace the *whole* comment atomically.
+
+This means:
+
+- There is nothing to "discover." The bridge writes the marker on first interaction; the orchestrator
+  reads it back via the Linear `Issue.fields` map populated at fetch time.
+- The 100-comment fetch window is the operative boundary. See §11.6.7 for RECOMMENDED mitigations.
+- A bridge MAY adopt Linear native custom fields once Linear ships a stable API surface for them.
+  Until then, the marker-comment convention is the canonical Linear shape.
+
+#### 11.7.2 Jira
+
+Jira exposes custom fields as `customfield_NNNNN`-style integer IDs. The bridge MUST resolve each
+bridge-stable key (`sinfonia_attempt_count`) to a `customfield_NNNNN` ID before reading or writing.
+
+The reference adapter's resolution path:
+
+1. Maintain a static map from each stable bridge key to a stable **display name**
+   (`sinfonia_attempt_count` → `"Sinfonia Attempt Count"`). The display name is the operator-facing
+   contract — operators MAY pre-create the field with a different display name, but the bridge's
+   `ensure_custom_field` call uses this exact name.
+2. On first call per key, list fields via `GET /rest/api/3/field` (flat array, default scope) and
+   match the display name (case-insensitive). The endpoint
+   `GET /rest/api/3/field/search` is paged and requires the `manage:jira-configuration` scope —
+   the flat endpoint is preferred for that reason.
+3. Cache the resulting `customfield_NNNNN` ID for the process lifetime via a
+   `tokio::sync::RwLock<HashMap<String, String>>` (or equivalent).
+4. If no matching field exists, `POST /rest/api/3/field` creates it with the documented field type
+   (Number / LongText / URL per `crates/sinfonia-tracker/src/jira.rs::jira_field_type`).
+5. After creation, attempt a best-effort screen-scheme bind via
+   `POST /rest/api/3/screens/{id}/tabs/{tab}/fields`. The bind requires admin perms; failure logs
+   a `WARN` pointing to operator-facing setup docs and does NOT fail the bridge boot. The field
+   is writable via REST regardless of UI visibility.
+
+Comments emitted via `post_comment` MUST be serialized as Atlassian Document Format (ADF). The
+reference adapter ships a narrow-scope Markdown→ADF converter covering paragraphs, fenced code
+blocks, lists, and inline strong/em/code/link marks; unsupported Markdown falls through to plain
+paragraphs.
+
+Self-hosted Jira Server / Data Center is supported via PAT-only Bearer auth (omit `email`, put
+the token in `api_key`).
+
+#### 11.7.3 Other trackers
+
+Implementations targeting a tracker outside `{linear, jira}` choose a single-writer storage
+mechanism that round-trips the entire envelope atomically and a discovery mechanism appropriate
+to the tracker's native field model. Splitting the envelope across multiple storage primitives is
+NOT RECOMMENDED — partial-write states are operationally painful and undermine the
+"`sinfonia_*` namespace is bridge-owned" invariant.
 
 ## 12. Prompt Construction and Context Assembly
 
@@ -2389,18 +2462,52 @@ Use the same validation profiles as Section 17:
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
 - `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
   app-server session using configured Symphony auth.
-- OpenCode backend — drive the `opencode` CLI (https://opencode.ai) as a subprocess in the
+- **Jira tracker adapter** — alongside the spec-required Linear adapter, an implementation MAY
+  ship a Jira adapter that satisfies §11.1's REQUIRED operations plus the bridge-write surface in
+  §11.6. The reference adapter targets the Jira Cloud REST API v3 and the self-hosted Jira Server
+  / Data Center REST API; auth is Basic (email + API token) on Cloud and Bearer (PAT) for
+  self-hosted. See §11.7.2 for custom-field discovery.
+- **OpenCode backend** — drive the `opencode` CLI (<https://opencode.ai>) as a subprocess in the
   per-issue workspace, alongside the Codex app-server backend. Auth is owned by the OpenCode
   CLI; the orchestrator pipes the prompt over stdin, consumes one JSON event per line on
   stdout (`--format json`), and resumes prior sessions on retry turns via `--session <id>`.
-- OpenTelemetry emission with `tenant_id` — both daemon and bridge MAY layer an OTLP exporter
+- **CI feedback bridge** — a companion service per §11.6 that reads GitHub webhooks, evaluates
+  CI results, and writes the `sinfonia_attempt_count` / `sinfonia_last_ci_failure` /
+  `sinfonia_failure_category` / `sinfonia_tokens_consumed` / `sinfonia_cost_consumed_usd` /
+  `sinfonia_max_attempts` / `sinfonia_max_cost_usd` / `sinfonia_budget_exhausted_at` custom
+  fields back to the tracker. The bridge transitions tickets to a configurable
+  `feedback_loop.needs_fixes_state` on red CI, increments the per-ticket attempt counter, and
+  routes to `feedback_loop.blocked_state` (cap-hit) or `feedback_loop.budget_exceeded_state`
+  (cost / token cap) when applicable. See §11.6.5–§11.6.10 for webhook, response, auth, and
+  self-test contracts.
+- **Failure categorization with priority-based state routing** — a bridge per §11.6 MAY route
+  red CI to different "needs fixes" states based on which check failed. Operators configure a
+  prioritized list under `feedback_loop.failure_categories`, each with a `check_pattern` regex,
+  a `target_state`, and a unique `priority`. The bridge inspects failed check names, matches
+  each pattern, and routes to the highest-priority match's `target_state`. A synthetic
+  `default` category (priority 0, no pattern) catches everything else. This lets a state machine
+  route lint failures to a cheap raw-LLM lane and e2e failures to a heavier Claude Code lane.
+- **Budget enforcement (token + cost caps)** — see §11.6.12. A conforming bridge MAY enforce
+  `feedback_loop.max_tokens_per_ticket` and `feedback_loop.max_cost_per_ticket_usd` from
+  `BRIDGE.md`, with a separate `feedback_loop.budget_exceeded_state` distinct from
+  `needs_fixes_state` so cap-exhausted tickets route differently from CI-failure retries.
+  Per-ticket overrides via `sinfonia_max_attempts` / `sinfonia_max_cost_usd` custom fields. The
+  cost table SHOULD carry a `verified_at` field with the freshness gates documented in §11.6.12.
+- **PR label management convention** — a bridge per §11.6 MAY maintain a small set of canonical
+  PR labels under a configurable namespace prefix (default `sinfonia`):
+  `<prefix>:in-progress`, `<prefix>:awaiting-review`, `<prefix>:needs-fixes`, `<prefix>:cap-hit`,
+  `<prefix>:budget-exceeded`, `<prefix>:failure:<category>`. Operators MAY override any of these
+  via `github.label_aliases` (verbatim, no prefix prepending) when an existing label scheme
+  conflicts. The bridge is the SINGLE writer of labels under this namespace; humans may
+  add / remove non-namespaced labels without interference.
+- **OpenTelemetry emission with `tenant_id`** — both daemon and bridge MAY layer an OTLP exporter
   over their existing `tracing` subscribers. When configured, every span carries the resolved
   `tenant_id` attribute (precedence: `telemetry.tenant_id` → `SINFONIA_TENANT_ID` env →
   `"default"`); resource-level `service.namespace = tenant_id` lets a Collector
   routing-processor split per-tenant data without touching emission code. See §11.6.11 for the
   bridge's typed Sinfonia↔bridge event channel (a separate concern from OTel emission) and
   §11.6.12 for the budget-enforcement surface that consumes it.
-- Setup skills + CLI extensions — a daemon implementation MAY ship setup skills at a
+- **Setup skills + CLI extensions** — a daemon implementation MAY ship setup skills at a
   conventional `skills/` directory at the repo root, each as a self-contained folder containing
   a `SKILL.md` (YAML front-matter format with `name`, `description`, `version` keys + a
   procedural runbook body), a `templates/*.liquid` directory for the artifacts the skill
@@ -2419,7 +2526,6 @@ Use the same validation profiles as Section 17:
   implementation details.
 - TODO: Add first-class tracker write APIs (comments/state transitions) in the orchestrator instead
   of only via agent tools.
-- TODO: Add pluggable issue tracker adapters beyond Linear.
 
 ### 18.3 Operational Validation Before Production (RECOMMENDED)
 

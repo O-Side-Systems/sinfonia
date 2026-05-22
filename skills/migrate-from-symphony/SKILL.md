@@ -82,12 +82,12 @@ Run `validators/check-workflow.sh` (shared with `setup-workflow`).
 
 ## Audience
 
-Per the plan-doc's open-questions section (`docs/v0.3-plan/05-skills-cli.md`
-§7 #5): "If the OpenAI Symphony project hasn't shipped a v1, this skill
-is preemptive." We ship it anyway as a migration path for the upstream
-implementations that do exist; the user-facing message "we have a
-migration path if you're coming from upstream" is worth the small effort
-even if zero people use it in v0.3's lifetime.
+If the upstream OpenAI Symphony project hasn't shipped a v1 by the time
+you're reading this, this skill is preemptive. We ship it as a migration
+path for the upstream implementations that DO exist (`openai/symphony`
+reference + `skorokithakis/symphony` Python port); the user-facing
+message "we have a migration path if you're coming from upstream" is
+worth the small effort even if zero people use it in v0.3's lifetime.
 
 ## Templates
 

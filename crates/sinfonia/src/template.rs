@@ -29,9 +29,9 @@ pub fn render_prompt(template: &str, issue: &Issue, attempt: Option<u32>) -> Res
     // the bridge hasn't populated it yet. Strict-mode Liquid errors on
     // "Unknown index" *before* the `| default:` filter would have a chance
     // to fire; pre-seeding the well-known keys as nil makes the
-    // `{{ issue.fields.X | default: "…" }}` pattern that the Phase 5
-    // `setup-state-machine` skill emits actually work. See H-1 in
-    // `docs/v0.3-plan/01-bridge-mvp.md` §4.2.
+    // `{{ issue.fields.X | default: "…" }}` pattern that the
+    // `setup-state-machine` skill emits actually work. See `docs/SPEC.md`
+    // §11.6.4.
     let mut issue_value = liquid::model::to_value(issue)
         .map_err(|e| Error::TemplateRenderError(format!("issue serialize: {e}")))?;
     if let Some(obj) = issue_value.as_object_mut() {

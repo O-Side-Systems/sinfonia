@@ -16,26 +16,25 @@ This implementation conforms to the Symphony spec (Draft v1) with three added pl
 - **Coding agents**: OpenAI, Anthropic, Google Gemini, Ollama (locally hosted) over raw LLM APIs with a built-in tool loop, **plus** the `claude` CLI (Claude Code), `codex` CLI (Codex CLI), and `opencode` CLI (OpenCode — adds LSP, MCP, and 75+ provider backends, including local Ollama with LSP) driven as subprocesses so you can leverage those products' full capabilities instead of a hand-rolled loop.
 - **Per-state runner overrides**: a `states:` block in `WORKFLOW.md` routes each tracker state to a different agent + prompt — e.g. `Todo` → Claude Code, `In Progress` → Claude Code with Opus, `In Review` → raw Haiku for a quick pass.
 
-## What's new in v0.3 (preview)
+## What's new in v0.3
 
-**v0.3.0-alpha.1** adds a separate `sinfonia-bridge` binary that turns GitHub CI results into tracker state transitions for the daemon to pick up — a CI failure on a PR moves the linked ticket back to a "needs fixes" state, Sinfonia's next poll routes the agent at the failure, and a per-ticket attempt counter caps the loop before runaway retries. The bridge runs alongside the existing `sinfonia` daemon; nothing about the v0.1 polling-loop behaviour has changed.
+v0.3 makes Sinfonia legible as a **team-grade orchestrator** — not just a single-user daemon. Five additions, all opt-in:
 
-If you're upgrading from v0.1 and don't want the bridge, you don't have to do anything — `sinfonia` still runs the same way against the same `WORKFLOW.md`. If you do want the bridge:
+1. **`sinfonia-bridge`** — a companion daemon that closes the CI → fix loop. When tests fail on the PR, the bridge transitions the ticket back to a configurable "needs fixes" state and lets Sinfonia run the agent again, with bounded attempt counts, optional failure categorization (route lint failures to a cheap raw-LLM lane and e2e failures to Claude Code), and per-ticket token / cost budget caps. See [`BRIDGE.example.md`](BRIDGE.example.md) for the fully-commented config and `sinfonia-bridge BRIDGE.md --self-test` for the install gate.
+2. **OpenCode as a first-class agent backend** (`provider: opencode`), alongside Claude Code and Codex CLI, and alongside the raw LLM backends. OpenCode brings LSP integration, MCP support, and 75+ provider routes including a local-Ollama-with-LSP path that the raw `ollama` backend can't provide.
+3. **OpenTelemetry emission**, tenant-tagged from day one — for answering "what did this cost us last month?" and similar questions with SQL. Six daemon spans + six bridge spans, every span carrying the resolved `tenant_id` at both the per-span and resource (`service.namespace`) levels. Reference Collector + Postgres deployment ships under [`examples/telemetry/`](examples/telemetry/).
+4. **Setup skills** that AI coding tools (Claude Code, OpenCode, Codex) can run to scaffold a working deployment without hand-editing YAML. Six skills at `skills/` (`setup-workflow`, `setup-bridge`, `setup-state-machine`, `setup-telemetry`, `setup-agent-backend`, `migrate-from-symphony`), each a self-contained `SKILL.md` + Liquid templates + optional shell validators. Two CLI extensions back them: `sinfonia --check <WORKFLOW.md>` (documented exit codes per failure class) and `sinfonia init` (AI-tool-free interactive REPL).
+5. **Docker images** for the supported topologies, published to `ghcr.io/o-side-systems`. Six images: `sinfonia` (daemon only), `sinfonia-bridge` (bridge only, ~80 MB), three single-agent variants, and `sinfonia-all-agents`. See [the Docker section below](#docker). The new root `docker-compose.yml` demonstrates the production topology (daemon + bridge + OTel Collector + Postgres).
 
-- Start with [`BRIDGE.example.md`](BRIDGE.example.md) — fully-commented config for the new binary, parses cleanly under `sinfonia-bridge BRIDGE.example.md --check`.
-- The recommended extension contract for any compatible bridge implementation is drafted in [`docs/SPEC.md` §11.6](docs/SPEC.md).
-- Run `sinfonia-bridge BRIDGE.md --self-test` once you've filled in real credentials — it returns one `PASS` / `FAIL` / `SKIP` line per install-gate check.
-- See [`CHANGELOG.md`](CHANGELOG.md) for the full Added / Changed / Known limitations list.
+The daemon's v0.1/v0.2 behaviour against an unchanged `WORKFLOW.md` is preserved — every v0.3 addition is opt-in. If you have a v0.2 install, see [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md).
 
-**Phase 3 (telemetry + budget enforcement, currently being landed)** layers an OPT-IN OpenTelemetry exporter over both binaries' existing `tracing` subscribers, adds a typed Sinfonia→bridge event channel for the cost / budget pipeline, and enforces per-ticket token + cost caps at the bridge's tracker-write boundary. When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset and no `telemetry:` block is configured in `WORKFLOW.md` / `BRIDGE.md`, behaviour matches v0.3.0-alpha.1 — the OTel layer is disabled and the binaries run stdout-only.
+### Where to go next
 
-**Phase 4 (Jira bridge support, currently being landed)** fills in the five `IssueTracker` bridge-write methods on the Jira side — state transitions via `POST /rest/api/3/issue/{id}/transitions`, custom-field reads/writes via cached `customfield_NNNNN` resolution, and ADF-rendered comments. Bridge config no longer rejects `tracker.kind: jira`. Self-hosted Jira (Server / Data Center) is supported via PAT-only auth. See `docs/v0.3-plan/04-jira-bridge.md` and `docs/v0.3-plan/04-jira-VERIFY.md`.
-
-**Phase 5 (setup skills + CLI extensions, currently being landed)** ships six setup skills at `skills/` (`setup-workflow`, `setup-bridge`, `setup-state-machine`, `setup-telemetry`, `setup-agent-backend`, `migrate-from-symphony`) that AI coding tools can invoke to scaffold a working deployment without hand-editing YAML. Two CLI extensions back the skills: `sinfonia --check <WORKFLOW.md>` validates a workflow file (exit codes per failure class) and `sinfonia init` is the AI-tool-free interactive REPL. `docs/SKILLS.md` is the cross-vendor pointer table.
-
-**Phase 6 (Docker images, currently being landed)** publishes six production images to `ghcr.io/o-side-systems/`: `sinfonia` (daemon only), `sinfonia-bridge` (bridge only), three single-agent variants (`sinfonia-with-claude-code`, `sinfonia-with-codex`, `sinfonia-with-opencode`), and the combined `sinfonia-all-agents`. A new root `docker-compose.yml` demonstrates the production topology (daemon + bridge + OTel Collector + Postgres). The pre-existing dev-shell image moves to `Dockerfile.dev` / `docker-compose.dev.yml`. See [the Docker section below](#docker).
-
-Still alpha — Phase 7 lands finalized docs.
+- **Want to deploy this for a team?** → [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) (four topologies, credential model, scaling, backup, upgrade).
+- **Bringing this to an enterprise?** → [`docs/CLIENT_SETUP.md`](docs/CLIENT_SETUP.md) (trust boundaries, audit trail, budget controls, vendor-evaluation worksheet).
+- **Want to skip the YAML?** → [`docs/SKILLS.md`](docs/SKILLS.md) (six setup skills your AI coding tool can run).
+- **Upgrading from v0.2?** → [`docs/MIGRATION-v0.2-to-v0.3.md`](docs/MIGRATION-v0.2-to-v0.3.md).
+- **Reading the spec?** → [`docs/SPEC.md`](docs/SPEC.md) (§11.6 / §11.7 / §18.2 carry the bridge-service + recommended-extension contracts).
 
 ## Observability (Phase 3 preview)
 
@@ -454,7 +453,9 @@ states:
     provider: claude_code      # use the `claude` CLI for initial investigation
     model: claude-sonnet-4-6
     prompt: |
-      Investigate {{ issue.identifier }} and sketch a plan in .sinfonia/plan.md
+      Investigate {{ issue.identifier }} and sketch a plan in
+      .sinfonia/plans/{{ issue.identifier | downcase }}.md (gitignored scratchpad —
+      per-issue path keeps parallel agent branches from merge-conflicting).
   "In Progress":
     provider: claude_code      # implementation pass on a stronger model
     model: claude-opus-4-7
@@ -509,8 +510,14 @@ Of spec §18.1 "Required for Conformance":
 
 Spec §18.2 "Recommended Extensions":
 
-- ✅ HTTP dashboard + JSON API
-- ✅ Jira tracker adapter
+- ✅ HTTP dashboard + JSON API.
+- ✅ Jira tracker adapter — Cloud + self-hosted (Server / Data Center), Basic-or-Bearer auth, with the bridge-write surface implemented.
 - ✅ OpenCode CLI backend (`provider: opencode`) — driven as a subprocess like `claude_code` / `codex`; brings LSP integration, MCP support, and 75+ provider routes (including local Ollama-with-LSP).
+- ✅ CI feedback bridge — `sinfonia-bridge` implements §11.6 (webhook, response, auth, self-test) + the seven `sinfonia_*` custom fields per ticket.
+- ✅ Failure categorization with priority-based state routing — `feedback_loop.failure_categories` in `BRIDGE.md`.
+- ✅ Budget enforcement — `max_tokens_per_ticket` + `max_cost_per_ticket_usd` + `budget_exceeded_state` + per-ticket overrides via `sinfonia_max_attempts` / `sinfonia_max_cost_usd`; cost-table freshness gates per §11.6.12.
+- ✅ PR label management — six canonical labels under the configurable `sinfonia:` prefix; verbatim aliases via `github.label_aliases`.
+- ✅ OpenTelemetry emission — opt-in on both binaries; six daemon + six bridge spans, every span tenant-tagged.
+- ✅ Setup skills + CLI extensions — six skills at `skills/`; `sinfonia --check` and `sinfonia init` CLIs.
 - ⏳ `linear_graphql` client-side tool — wiring exists on the tracker trait but the LLM tool catalog does not currently expose it.
 - ⏳ Persistent retry queue across restarts.

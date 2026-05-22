@@ -32,21 +32,19 @@
 //!   value doesn't match anything in the user's local OpenCode config,
 //!   OpenCode itself surfaces the error.
 //!
-//! ## Verified flag set (per the upstream `run.ts` as of impl time)
+//! ## Verified flag set (per the upstream `run.ts`)
 //!
-//! The Phase 2 plan (`docs/v0.3-plan/02-opencode-backend.md` §7) proposed
-//! `--prompt-stdin --output-format json --quiet --continue <id> --model <name>`
-//! pending a doc spike. The doc spike (against
-//! <https://opencode.ai/docs/cli/> and the
-//! `sst/opencode` repository's `packages/opencode/src/cli/cmd/run.ts`) found:
+//! Sourced against <https://opencode.ai/docs/cli/> and the
+//! `sst/opencode` repository's `packages/opencode/src/cli/cmd/run.ts`. The
+//! shape Sinfonia drives:
 //!
-//! | Plan proposed                | Actual flag                              |
-//! |------------------------------|------------------------------------------|
-//! | `--prompt-stdin`             | (no flag — stdin auto-detected via piped TTY check) |
-//! | `--output-format json`       | `--format json`                          |
-//! | `--quiet`                    | (no quiet flag; `--format json` already suppresses the TUI) |
-//! | `--continue <id>`            | `--session <id>` (the bare `--continue` boolean resumes the *last* session, not by ID) |
-//! | `--model <name>`             | `--model <name>` (unchanged; value is `provider/model`)   |
+//! - No `--prompt-stdin` — stdin is auto-detected via the piped-TTY check.
+//! - `--format json` (NOT `--output-format json`) — this also suppresses
+//!   the TUI, so no separate `--quiet` is required.
+//! - `--session <id>` — the bare `--continue` boolean resumes the *last*
+//!   session globally, which is wrong for concurrent per-issue workspaces.
+//! - `--model <name>` — value is `provider/model` (e.g.
+//!   `anthropic/claude-sonnet-4-6`).
 //!
 //! The JSON event stream emits one object per line on stdout. Every event
 //! carries `type`, `timestamp` (unix-ms epoch), and `sessionID` (camelCase —

@@ -1,5 +1,12 @@
 # Skills
 
+**Audience:** anyone setting up a Sinfonia deployment with an AI coding tool
+(Claude Code, OpenCode, Codex, etc.) — or anyone preferring to follow a
+written runbook by hand. **Read time:** ~5 min. **Prerequisites:** the
+Sinfonia repo cloned (skills live in `skills/`), and either an AI coding
+tool that supports skills, or a willingness to read `SKILL.md` files as
+prose.
+
 Sinfonia ships six skills in the `skills/` directory at the repo root. Each
 skill is a self-contained procedure that helps you set up part of a Sinfonia
 deployment. AI coding tools (Claude Code, OpenCode, Codex, …) can invoke
@@ -93,8 +100,21 @@ v0.3.0. When a future release changes a skill's contract, the version
 bumps and the changelog calls it out. Skill cache invalidation in AI tools
 is owned by the tool — Sinfonia doesn't ship a refresh mechanism.
 
-## Source of truth
+## Where to go next
 
-The plan-doc for the skills system is at
-[`docs/v0.3-plan/05-skills-cli.md`](v0.3-plan/05-skills-cli.md). When the
-skills and the plan disagree, the skills are wrong — open an issue.
+- [`docs/DEPLOYMENT.md`](DEPLOYMENT.md) — production topologies (the skills
+  scaffold the config; this doc tells you where to run it).
+- [`docs/CLIENT_SETUP.md`](CLIENT_SETUP.md) — enterprise adoption (security
+  posture, audit trail, handoff).
+- [`docs/MIGRATION-v0.2-to-v0.3.md`](MIGRATION-v0.2-to-v0.3.md) — if you're
+  coming from v0.2 and want to adopt the bridge / state machine
+  incrementally.
+- [`docs/SPEC.md`](SPEC.md) §18.2 — the recommended-extension entry the
+  skills system formalizes.
+
+## Reporting bugs
+
+If a skill produces a `WORKFLOW.md` / `BRIDGE.md` / compose snippet that
+`sinfonia --check` or `sinfonia-bridge --self-test` rejects, that's a
+skill bug — open an issue against the repo with the rejected output
+attached.
