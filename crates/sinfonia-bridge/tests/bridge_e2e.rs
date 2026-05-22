@@ -657,7 +657,7 @@ async fn start_bridge(
         cfg.github.label_prefix.clone(),
         cfg.github.label_aliases.clone(),
     );
-    let state = AppState::new(cfg, store, tracker, gh, labels);
+    let state = AppState::with_default_budget(cfg, store, tracker, gh, labels);
     let app = router(state);
     let listener = TcpListener::bind("127.0.0.1:0")
         .await

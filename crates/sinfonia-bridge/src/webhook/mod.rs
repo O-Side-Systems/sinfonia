@@ -11,6 +11,7 @@
 pub mod handlers;
 pub mod verify;
 
+use crate::feedback::budget::BudgetManager;
 use crate::github::GhOps;
 use crate::labels::LabelManager;
 use crate::{storage::Store, BridgeConfig};
@@ -25,6 +26,12 @@ use std::sync::Arc;
 /// - `gh`: the GitHub client (PAT-only in P1-F; P1-G adds App mode).
 /// - `labels`: the [`LabelManager`] that short-circuits on
 ///   `manage_labels: false`.
+///
+/// Phase 3 adds:
+/// - `budget`: the [`BudgetManager`] that handles cost/token cap
+///   accounting and 30 s debounce flushing. The
+///   `POST /api/v1/sinfonia-events` handler feeds it; the bridge's
+///   own debounce reconciler task triggers idle flushes.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<BridgeConfig>,
@@ -32,6 +39,7 @@ pub struct AppState {
     pub tracker: Arc<dyn IssueTracker>,
     pub gh: Arc<dyn GhOps>,
     pub labels: LabelManager,
+    pub budget: BudgetManager,
 }
 
 impl AppState {
@@ -41,6 +49,7 @@ impl AppState {
         tracker: Arc<dyn IssueTracker>,
         gh: Arc<dyn GhOps>,
         labels: LabelManager,
+        budget: BudgetManager,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -48,7 +57,28 @@ impl AppState {
             tracker,
             gh,
             labels,
+            budget,
         }
+    }
+
+    /// Convenience constructor for tests + the existing P1-H integration
+    /// suite — auto-builds a `BudgetManager` from the embedded cost
+    /// table and the supplied config. Production code (`main.rs`) uses
+    /// `AppState::new` directly so it can optionally override the cost
+    /// table from `bridge.cost_table_path`.
+    pub fn with_default_budget(
+        config: BridgeConfig,
+        store: Store,
+        tracker: Arc<dyn IssueTracker>,
+        gh: Arc<dyn GhOps>,
+        labels: LabelManager,
+    ) -> Self {
+        let budget = BudgetManager::new(
+            crate::feedback::cost::CostTable::embedded_default(),
+            &config,
+            tracker.clone(),
+        );
+        Self::new(config, store, tracker, gh, labels, budget)
     }
 }
 

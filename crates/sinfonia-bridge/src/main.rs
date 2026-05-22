@@ -16,6 +16,8 @@
 
 use clap::Parser;
 use sinfonia_bridge::config::read_bridge_file;
+use sinfonia_bridge::feedback::budget::{spawn_debounce_reconciler, BudgetManager};
+use sinfonia_bridge::feedback::cost::CostTable;
 use sinfonia_bridge::github::{build_gh_ops, GhOps};
 use sinfonia_bridge::labels::LabelManager;
 use sinfonia_bridge::selftest::run_selftest;
@@ -162,7 +164,25 @@ async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         info!(target: "main", "label management disabled (manage_labels: false)");
     }
 
-    let state = AppState::new(cfg, store, tracker, gh, labels);
+    // Phase 3 §7.1 — load the cost table (embedded default unless
+    // BRIDGE.md provides an override path). The cost-cap freshness gate
+    // (M-2) fires inside `BudgetManager::new` if the table is past the
+    // 180-day block window.
+    let cost_table = CostTable::embedded_default();
+    let today = chrono::Utc::now().date_naive();
+    if cost_table.is_stale_warn(today) {
+        tracing::warn!(
+            target: "main",
+            verified_at = %cost_table.verified_at,
+            "cost table is older than {FRESHNESS_WARN_DAYS} days; consider refreshing",
+            FRESHNESS_WARN_DAYS = sinfonia_bridge::feedback::cost::FRESHNESS_WARN_DAYS,
+        );
+    }
+
+    let budget = BudgetManager::new(cost_table, &cfg, tracker.clone());
+    let _debounce_handle = spawn_debounce_reconciler(budget.clone());
+
+    let state = AppState::new(cfg, store, tracker, gh, labels, budget);
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;

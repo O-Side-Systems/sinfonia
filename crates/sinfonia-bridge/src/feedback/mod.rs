@@ -19,7 +19,9 @@
 //! adds the App-mode github client, this layer doesn't change.
 
 pub mod attempts;
+pub mod budget;
 pub mod categorize;
+pub mod cost;
 pub mod transition;
 
 use crate::github::{CheckRunSummary, GhOps};

@@ -137,9 +137,6 @@ async fn sinfonia_events_inner(
                 }
             };
             tracing::Span::current().record(spans::ATTR_TENANT_ID, parsed.tenant_id.as_str());
-            // The cost-pipeline ingestion lands with `feedback/budget.rs`
-            // (task #10/11). For now we acknowledge and log so an
-            // operator can verify the channel is alive end-to-end.
             info!(
                 target: "events",
                 issue_identifier = %parsed.issue_identifier,
@@ -150,11 +147,64 @@ async fn sinfonia_events_inner(
                 exit_reason = %parsed.exit_reason,
                 "session completed event received"
             );
-            (
-                StatusCode::ACCEPTED,
-                Json(json!({"status": "queued", "issue_id": parsed.issue_id})),
-            )
-                .into_response()
+
+            // Feed into the budget pipeline (plan §7.3).
+            let outcome = state.budget.apply_session(
+                &parsed.issue_id,
+                &parsed.provider,
+                &parsed.model,
+                parsed.prompt_tokens,
+                parsed.completion_tokens,
+            );
+            use crate::feedback::budget::SessionApplyOutcome;
+            match outcome {
+                SessionApplyOutcome::Accumulated => {
+                    // Will flush on the next 30 s debounce sweep.
+                    (
+                        StatusCode::ACCEPTED,
+                        Json(
+                            json!({"status": "accumulated", "issue_id": parsed.issue_id}),
+                        ),
+                    )
+                        .into_response()
+                }
+                SessionApplyOutcome::CapHit { kind } => {
+                    // Cap-crossing path: flush immediately + transition
+                    // the ticket. Errors are logged but don't block the
+                    // 202 — Sinfonia retries on the source side already
+                    // and re-driving the flush is harmless (the
+                    // accumulator handles the no-op idempotency).
+                    if let Err(e) = state.budget.flush_ticket(&parsed.issue_id).await {
+                        warn!(target: "events", issue_id = %parsed.issue_id, error = %e, "cap-hit flush failed");
+                    }
+                    if let Err(e) = state
+                        .tracker
+                        .transition_issue(
+                            &parsed.issue_id,
+                            &state.config.feedback_loop.budget_exceeded_state,
+                        )
+                        .await
+                    {
+                        warn!(target: "events", issue_id = %parsed.issue_id, error = %e, "budget_exceeded transition failed");
+                    }
+                    info!(
+                        target: "events",
+                        issue_id = %parsed.issue_id,
+                        cap_kind = kind.as_str(),
+                        target_state = %state.config.feedback_loop.budget_exceeded_state,
+                        "budget cap hit; transitioned to budget_exceeded_state"
+                    );
+                    (
+                        StatusCode::ACCEPTED,
+                        Json(json!({
+                            "status": "cap_hit",
+                            "issue_id": parsed.issue_id,
+                            "cap_kind": kind.as_str(),
+                        })),
+                    )
+                        .into_response()
+                }
+            }
         }
         other => {
             debug!(target: "events", event_type = %other, "event_type ignored (forward-compat)");

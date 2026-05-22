@@ -233,9 +233,47 @@ async fn handle_pull_request(
         }
     };
 
+    // Phase 3 §6 terminal-state detection. When a PR closes with
+    // merged=true, look up the linked ticket, flush any pending
+    // accumulator deltas, and emit a transition-to-done span so the
+    // analytics layer can count attempts-to-close and cost-per-ticket
+    // histograms span-derived (per the M-2 / metrics-deferral note).
+    if action == "closed" {
+        let merged = pr.and_then(|p| p.get("merged")).and_then(|v| v.as_bool());
+        if matches!(merged, Some(true)) {
+            if let Some(ticket_id) = state.store.lookup_pr_ticket(repo, pr_number).await.ok().flatten() {
+                if let Err(e) = state.budget.flush_ticket(&ticket_id).await {
+                    warn!(
+                        target: "webhook",
+                        error = %e, ticket = %ticket_id,
+                        "pr.closed.merged budget flush failed"
+                    );
+                }
+                info!(
+                    target: "webhook",
+                    %delivery_id, repo, pr_number, %ticket_id,
+                    "pr closed (merged); ticket reached terminal-via-our-pipeline state"
+                );
+                return (
+                    StatusCode::ACCEPTED,
+                    Json(json!({
+                        "status": "merged",
+                        "event": "pull_request",
+                        "action": action,
+                        "repo": repo,
+                        "pr_number": pr_number,
+                        "ticket_id": ticket_id,
+                        "delivery_id": delivery_id,
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     // Only `opened` and `synchronize` populate the mapping. Other actions
-    // (closed, edited, labeled, …) don't change which ticket the PR
-    // belongs to, so we leave the row alone.
+    // (closed without merge, edited, labeled, …) don't change which
+    // ticket the PR belongs to, so we leave the row alone.
     if action != "opened" && action != "synchronize" && action != "reopened" {
         debug!(
             target: "webhook",
@@ -601,7 +639,7 @@ telemetry:
         let tracker = Arc::new(LinearTracker::new(&tracker_cfg).expect("linear tracker"));
         let gh: Arc<dyn GhOps> = Arc::new(NoopGh);
         let labels = LabelManager::new(gh.clone(), false, "sinfonia", LabelAliases::default());
-        AppState::new(cfg, store, tracker, gh, labels)
+        AppState::with_default_budget(cfg, store, tracker, gh, labels)
     }
 
     fn sign(secret: &str, body: &[u8]) -> String {
@@ -960,7 +998,7 @@ telemetry:
             "sinfonia",
             LabelAliases::default(),
         );
-        AppState::new(cfg, store, tracker, gh_dyn, labels)
+        AppState::with_default_budget(cfg, store, tracker, gh_dyn, labels)
     }
 
     fn check_suite_payload(repo: &str, head_sha: &str, pr_number: u64) -> Vec<u8> {

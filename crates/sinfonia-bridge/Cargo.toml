@@ -67,6 +67,9 @@ rust_decimal = { workspace = true }
 # `uuid` is used for the OTel resource's `service.instance.id` attribute, and
 # (Phase 3 follow-up) for the typed event channel's per-event correlation id.
 uuid = { workspace = true }
+# parking_lot mutexes used by the budget accumulator + subscriber registry —
+# already a sinfonia dep, promoted to use here too.
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
