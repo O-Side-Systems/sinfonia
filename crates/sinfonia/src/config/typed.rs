@@ -132,6 +132,50 @@ pub struct ServerConfig {
     pub bind: String, // default "127.0.0.1"
 }
 
+/// Telemetry section (plan §3.1). All fields are optional; when nothing is
+/// configured the OTel layer stays disabled and behavior matches today's
+/// stdout-only logging. The bridge has a parallel `BridgeTelemetrySection`
+/// in `sinfonia-bridge`; the two share the same field semantics but live in
+/// separate types because the bridge has extra fields (cost_table_path,
+/// sinfonia event callback URLs) that don't apply on the daemon side.
+#[derive(Debug, Clone)]
+pub struct TelemetryConfig {
+    /// OTLP exporter endpoint. When unset, the OTel SDK falls back to the
+    /// standard `OTEL_EXPORTER_OTLP_ENDPOINT` env var; if both are unset the
+    /// OTel layer is disabled and the binary runs stdout-only.
+    pub otlp_endpoint: Option<String>,
+
+    /// `service.name` attribute on the OTel Resource. Defaults to `"sinfonia"`.
+    pub service_name: String,
+
+    /// Resolved tenant id. See `telemetry::tenant` for the precedence chain.
+    pub tenant_id: crate::telemetry::TenantId,
+
+    /// Extra HTTP / gRPC headers forwarded to the OTLP endpoint (Honeycomb,
+    /// Datadog API keys, etc.). Set by writing
+    /// `OTEL_EXPORTER_OTLP_HEADERS=k=v,...` before exporter init.
+    pub headers: HashMap<String, String>,
+
+    /// Shared HMAC secret for the typed Sinfonia↔bridge event channel
+    /// (plan §7.2). Both BRIDGE.md and WORKFLOW.md must carry the same
+    /// value, set either as a literal or `$ENV_VAR`. When the daemon has
+    /// any subscribers registered AND this is unset, every outbound POST
+    /// would be unsigned — startup validation flags that as a config error.
+    pub sinfonia_events_secret: Option<String>,
+}
+
+impl Default for TelemetryConfig {
+    fn default() -> Self {
+        Self {
+            otlp_endpoint: None,
+            service_name: "sinfonia".to_string(),
+            tenant_id: crate::telemetry::TenantId::resolve(None),
+            headers: HashMap::new(),
+            sinfonia_events_secret: None,
+        }
+    }
+}
+
 /// Per-tracker-state runner overrides. Every field is optional; absent fields
 /// fall back to the global `llm` / workflow body.
 #[derive(Debug, Clone, Default)]
@@ -156,6 +200,7 @@ pub struct ServiceConfig {
     pub agent: AgentConfig,
     pub llm: LlmConfig,
     pub server: ServerConfig,
+    pub telemetry: TelemetryConfig,
     /// Per-tracker-state overrides. Keys are state names normalized to lowercase.
     pub states: HashMap<String, StateOverride>,
     /// Path to the source WORKFLOW.md (used to resolve relative paths). §6.1.
@@ -178,6 +223,7 @@ impl ServiceConfig {
         let agent = parse_agent(&def.config)?;
         let llm = parse_llm(&def.config, &tracker.kind)?;
         let server = parse_server(&def.config)?;
+        let telemetry = parse_telemetry(&def.config)?;
         let states = parse_states(&def.config)?;
 
         Ok(ServiceConfig {
@@ -188,6 +234,7 @@ impl ServiceConfig {
             agent,
             llm,
             server,
+            telemetry,
             states,
             workflow_path: def.path.clone(),
         })
@@ -621,6 +668,51 @@ fn parse_server(config: &Json) -> Result<ServerConfig> {
         .unwrap_or("127.0.0.1")
         .to_string();
     Ok(ServerConfig { port, bind })
+}
+
+fn parse_telemetry(config: &Json) -> Result<TelemetryConfig> {
+    let t = config.get("telemetry").cloned().unwrap_or(Json::Null);
+
+    let otlp_endpoint = t
+        .get("otlp_endpoint")
+        .and_then(|v| v.as_str())
+        .and_then(resolve_var_string);
+
+    let service_name = t
+        .get("service_name")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| "sinfonia".to_string());
+
+    let raw_tenant = t
+        .get("tenant_id")
+        .and_then(|v| v.as_str())
+        .and_then(resolve_var_string);
+    let tenant_id = crate::telemetry::TenantId::resolve(raw_tenant.as_deref());
+
+    let mut headers: HashMap<String, String> = HashMap::new();
+    if let Some(obj) = t.get("headers").and_then(|v| v.as_object()) {
+        for (k, raw) in obj {
+            if let Some(value_str) = raw.as_str() {
+                if let Some(resolved) = resolve_var_string(value_str) {
+                    headers.insert(k.clone(), resolved);
+                }
+            }
+        }
+    }
+
+    let sinfonia_events_secret = t
+        .get("sinfonia_events_secret")
+        .and_then(|v| v.as_str())
+        .and_then(resolve_var_string);
+
+    Ok(TelemetryConfig {
+        otlp_endpoint,
+        service_name,
+        tenant_id,
+        headers,
+        sinfonia_events_secret,
+    })
 }
 
 /// Resolve a single value that may be `$VAR_NAME`. Returns `Some(value)` if the literal

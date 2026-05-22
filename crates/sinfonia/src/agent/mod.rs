@@ -36,10 +36,18 @@ use tokio::sync::mpsc;
 
 pub use events::{AgentEvent, EventSender};
 
-/// One turn outcome (§10.3 completion conditions).
+/// One turn outcome (§10.3 completion conditions). `usage` carries the
+/// turn's token totals so the runner can emit them on `runner.turn` and
+/// aggregate them on `runner.session` (plan §4) without re-parsing the
+/// event channel. Every backend already computes this — the field
+/// surfaces what was previously discarded after going into
+/// `AgentEvent::TurnCompleted`.
 #[derive(Debug, Clone)]
 pub enum TurnOutcome {
-    Completed { final_message: String },
+    Completed {
+        final_message: String,
+        usage: events::TokenUsage,
+    },
     Failed(String),
     Timeout,
     InputRequired,

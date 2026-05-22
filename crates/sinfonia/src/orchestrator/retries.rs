@@ -73,8 +73,8 @@ async fn fire_retry(inner: &Arc<Inner>, issue_id: String) {
         return;
     };
 
-    let dispatched = orch.dispatch_one(issue.clone(), Some(entry.attempt)).await;
-    if !dispatched {
+    let outcome = orch.dispatch_one(issue.clone(), Some(entry.attempt)).await;
+    if !outcome.continue_loop() {
         // No slot — requeue.
         let next = RetryEntry {
             issue_id: entry.issue_id.clone(),

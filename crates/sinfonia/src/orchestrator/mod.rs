@@ -40,7 +40,9 @@ use chrono::{Duration as ChronoDuration, Utc};
 use parking_lot::RwLock;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, Notify};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, warn, Instrument};
+
+use crate::telemetry::spans;
 
 /// Compact, cloneable handle to the running orchestrator.
 #[derive(Clone)]
@@ -70,6 +72,33 @@ pub(crate) enum WorkerReport {
         started_at: chrono::DateTime<Utc>,
         attempt: Option<u32>,
     },
+}
+
+/// Per-issue outcome of a dispatch attempt. `Dispatched` means a worker
+/// future was spawned; `Skipped` covers ineligibility / already-running /
+/// state-claimed cases (the tick loop keeps going); `NoSlot` means the
+/// orchestrator's concurrency budget is full and the caller should stop
+/// trying further candidates this tick.
+///
+/// `bool::from` flattens to "should the dispatch loop keep going?" which
+/// matches the pre-Phase-3 boolean contract: `Dispatched` and `Skipped`
+/// both keep the loop going; `NoSlot` breaks. `retries::tick_retries` only
+/// cares about the binary "did it dispatch?" — `is_dispatched()` answers
+/// that without exposing the enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DispatchOutcome {
+    Dispatched,
+    Skipped,
+    NoSlot,
+}
+
+impl DispatchOutcome {
+    pub(crate) fn continue_loop(self) -> bool {
+        !matches!(self, Self::NoSlot)
+    }
+    pub(crate) fn is_dispatched(self) -> bool {
+        matches!(self, Self::Dispatched)
+    }
 }
 
 impl Orchestrator {
@@ -169,12 +198,28 @@ impl Orchestrator {
         }
     }
 
-    /// One poll cycle (§8.1 tick sequence).
+    /// One poll cycle (§8.1 tick sequence). Wrapped in the
+    /// `orchestrator.tick` span (plan §4) so per-tick telemetry surfaces in
+    /// OTel with `tenant_id`, candidate count, dispatched count, and tick
+    /// duration as structured attributes.
     pub async fn tick(&self) {
+        let cfg = self.config();
+        let span = info_span!(
+            target: "orchestrator",
+            spans::ORCHESTRATOR_TICK,
+            { spans::ATTR_TENANT_ID } = %cfg.telemetry.tenant_id,
+            { spans::ATTR_CANDIDATES_COUNT } = tracing::field::Empty,
+            { spans::ATTR_DISPATCHED_COUNT } = tracing::field::Empty,
+            { spans::ATTR_TICK_DURATION_MS } = tracing::field::Empty,
+        );
+        self.tick_body(cfg).instrument(span).await;
+    }
+
+    async fn tick_body(&self, cfg: Arc<ServiceConfig>) {
+        let started = std::time::Instant::now();
         debug!(target: "orchestrator", "tick start");
         self.reconcile_running_issues().await;
 
-        let cfg = self.config();
         if let Err(e) = cfg.validate_for_dispatch() {
             warn!(target: "orchestrator", error=%e, "preflight validation failed; skipping dispatch");
             return;
@@ -190,58 +235,96 @@ impl Orchestrator {
         };
 
         let sorted = dispatch::sort_for_dispatch(issues);
+        let candidates_count = sorted.len();
+        let mut dispatched_count: u32 = 0;
         for issue in sorted {
-            if !self.dispatch_one(issue, None).await {
+            let outcome = self.dispatch_one(issue, None).await;
+            if outcome.is_dispatched() {
+                dispatched_count += 1;
+            }
+            if !outcome.continue_loop() {
                 break; // no slots
             }
         }
+
+        let current = tracing::Span::current();
+        current.record(spans::ATTR_CANDIDATES_COUNT, candidates_count as i64);
+        current.record(spans::ATTR_DISPATCHED_COUNT, dispatched_count as i64);
+        current.record(
+            spans::ATTR_TICK_DURATION_MS,
+            started.elapsed().as_millis() as i64,
+        );
         debug!(target: "orchestrator", "tick end");
     }
 
-    pub(crate) async fn dispatch_one(&self, issue: Issue, attempt: Option<u32>) -> bool {
+    pub(crate) async fn dispatch_one(
+        &self,
+        issue: Issue,
+        attempt: Option<u32>,
+    ) -> DispatchOutcome {
         let cfg = self.config();
-        if !dispatch::is_dispatch_eligible(&issue, &cfg) {
-            return true;
-        }
-        let mut state = self.inner.state.lock().await;
-        if state.running.contains_key(&issue.id) {
-            return true;
-        }
-        // For retries the issue is already claimed; for fresh dispatch we add it now.
-        if !state.claimed.contains(&issue.id) {
-            // Claim it preemptively to avoid races with the next tick.
-            if !dispatch::has_slot(&state, &issue, &cfg) {
-                return false;
+        let span = info_span!(
+            target: "orchestrator",
+            spans::ORCHESTRATOR_DISPATCH,
+            { spans::ATTR_TENANT_ID } = %cfg.telemetry.tenant_id,
+            { spans::ATTR_ISSUE_ID } = %issue.id,
+            { spans::ATTR_ISSUE_IDENTIFIER } = %issue.identifier,
+            { spans::ATTR_STATE } = %issue.state,
+            { spans::ATTR_PROVIDER } = tracing::field::Empty,
+            { spans::ATTR_MODEL } = tracing::field::Empty,
+        );
+        async move {
+            if !dispatch::is_dispatch_eligible(&issue, &cfg) {
+                return DispatchOutcome::Skipped;
             }
-            state.claimed.insert(issue.id.clone());
-        } else if !dispatch::has_slot(&state, &issue, &cfg) {
-            // Slot exhausted on retry — caller should requeue.
-            return false;
-        }
-        let started_at = Utc::now();
-        let workspace_path = self
-            .workspace_manager()
-            .workspace_path_for(&issue.identifier)
-            .display()
-            .to_string();
-        let entry = RunningEntry {
-            issue_id: issue.id.clone(),
-            identifier: issue.identifier.clone(),
-            issue: issue.clone(),
-            workspace_path,
-            session: Default::default(),
-            retry_attempt: attempt,
-            started_at,
-        };
-        state.running.insert(issue.id.clone(), entry);
-        state.retry_attempts.remove(&issue.id);
-        drop(state);
+            // Record the resolved provider/model so a per-state routing dashboard
+            // can filter on them without re-reading the config from the span.
+            let eff_llm = cfg.effective_llm_for_state(&issue.state);
+            tracing::Span::current()
+                .record(spans::ATTR_PROVIDER, format!("{:?}", eff_llm.provider).as_str());
+            tracing::Span::current().record(spans::ATTR_MODEL, eff_llm.model.as_str());
 
-        let orch = self.clone();
-        tokio::spawn(async move {
-            orch.run_worker(issue, attempt, started_at).await;
-        });
-        true
+            let mut state = self.inner.state.lock().await;
+            if state.running.contains_key(&issue.id) {
+                return DispatchOutcome::Skipped;
+            }
+            // For retries the issue is already claimed; for fresh dispatch we add it now.
+            if !state.claimed.contains(&issue.id) {
+                if !dispatch::has_slot(&state, &issue, &cfg) {
+                    return DispatchOutcome::NoSlot;
+                }
+                state.claimed.insert(issue.id.clone());
+            } else if !dispatch::has_slot(&state, &issue, &cfg) {
+                // Slot exhausted on retry — caller should requeue.
+                return DispatchOutcome::NoSlot;
+            }
+            let started_at = Utc::now();
+            let workspace_path = self
+                .workspace_manager()
+                .workspace_path_for(&issue.identifier)
+                .display()
+                .to_string();
+            let entry = RunningEntry {
+                issue_id: issue.id.clone(),
+                identifier: issue.identifier.clone(),
+                issue: issue.clone(),
+                workspace_path,
+                session: Default::default(),
+                retry_attempt: attempt,
+                started_at,
+            };
+            state.running.insert(issue.id.clone(), entry);
+            state.retry_attempts.remove(&issue.id);
+            drop(state);
+
+            let orch = self.clone();
+            tokio::spawn(async move {
+                orch.run_worker(issue, attempt, started_at).await;
+            });
+            DispatchOutcome::Dispatched
+        }
+        .instrument(span)
+        .await
     }
 
     async fn run_worker(

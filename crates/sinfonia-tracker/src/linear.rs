@@ -10,7 +10,22 @@ use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde_json::{json, Value as Json};
 use std::time::Duration;
-use tracing::debug;
+use tracing::{debug, info_span, Instrument};
+
+/// Build a `tracker.fetch` span (Phase 3 plan §4). Span name + attribute
+/// keys are hardcoded literals so the tracker crate stays free of any
+/// build-time dependency on the binary crates' `telemetry::spans` modules
+/// — the strings are the operator-facing contract, identical on both
+/// sides.
+fn tracker_fetch_span(request_kind: &'static str) -> tracing::Span {
+    info_span!(
+        "tracker.fetch",
+        tracker_kind = "linear",
+        request_kind = request_kind,
+        result_count = tracing::field::Empty,
+        duration_ms = tracing::field::Empty,
+    )
+}
 
 const ISSUE_FRAGMENT: &str = r#"
   id
@@ -299,20 +314,43 @@ impl LinearTracker {
 #[async_trait]
 impl IssueTracker for LinearTracker {
     async fn fetch_candidate_issues(&self) -> Result<Vec<Issue>> {
-        self.page_issues_by_state_in(&self.active_states).await
+        let span = tracker_fetch_span("candidate_issues");
+        let started = std::time::Instant::now();
+        let res = self
+            .page_issues_by_state_in(&self.active_states)
+            .instrument(span.clone())
+            .await;
+        if let Ok(v) = &res {
+            span.record("result_count", v.len() as i64);
+        }
+        span.record("duration_ms", started.elapsed().as_millis() as i64);
+        res
     }
 
     async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>> {
         if states.is_empty() {
             return Ok(vec![]);
         }
-        self.page_issues_by_state_in(states).await
+        let span = tracker_fetch_span("issues_by_states");
+        let started = std::time::Instant::now();
+        let res = self
+            .page_issues_by_state_in(states)
+            .instrument(span.clone())
+            .await;
+        if let Ok(v) = &res {
+            span.record("result_count", v.len() as i64);
+        }
+        span.record("duration_ms", started.elapsed().as_millis() as i64);
+        res
     }
 
     async fn fetch_issue_states_by_ids(&self, ids: &[String]) -> Result<Vec<IssueState>> {
         if ids.is_empty() {
             return Ok(vec![]);
         }
+        let span = tracker_fetch_span("issue_states_by_ids");
+        let started = std::time::Instant::now();
+        let res: Result<Vec<IssueState>> = (async {
         // GraphQL ID typing per §11.2.
         let query = r#"query($ids: [ID!]) {
             issues(filter: { id: { in: $ids } }) {
@@ -354,6 +392,14 @@ impl IssueTracker for LinearTracker {
             });
         }
         Ok(out)
+        })
+        .instrument(span.clone())
+        .await;
+        if let Ok(v) = &res {
+            span.record("result_count", v.len() as i64);
+        }
+        span.record("duration_ms", started.elapsed().as_millis() as i64);
+        res
     }
 
     async fn raw_graphql(

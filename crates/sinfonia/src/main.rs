@@ -6,10 +6,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use sinfonia::config::{ServiceConfig, WorkflowWatcher};
 use sinfonia::orchestrator::Orchestrator;
+use sinfonia::telemetry;
 use sinfonia::tracker;
 use sinfonia::workspace::WorkspaceManager;
 use tracing::{error, info, warn};
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(name = "sinfonia", about = "Coding-agent orchestrator (Symphony-spec implementation)")]
@@ -27,10 +27,16 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    init_logging(&args.log_format);
 
     if let Err(e) = run(args).await {
-        error!(target: "main", error=%e, "fatal");
+        // `run` initializes the subscriber as soon as it has a parsed config,
+        // so `error!` works for any failure past that point. Errors raised
+        // earlier (e.g. WORKFLOW.md missing) fall back to stderr — the
+        // structured subscriber doesn't exist yet to receive them.
+        if !e.to_string().is_empty() {
+            error!(target: "main", error=%e, "fatal");
+            eprintln!("fatal: {e}");
+        }
         std::process::exit(1);
     }
 }
@@ -51,6 +57,18 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
     let workflow = sinfonia::config::read_workflow_file(&workflow_path)?;
     let cfg = ServiceConfig::from_workflow(&workflow)?;
     cfg.validate_for_dispatch()?;
+
+    // Install the tracing subscriber + optional OTel layer now that we have
+    // the parsed `telemetry:` block. The returned guard flushes buffered
+    // spans on drop at end of `main`.
+    let _telemetry_guard = telemetry::init_observability(&args.log_format, &cfg.telemetry);
+    info!(
+        target: "main",
+        tenant_id = %cfg.telemetry.tenant_id,
+        otel_enabled = cfg.telemetry.otlp_endpoint.is_some()
+            || std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok(),
+        "telemetry initialized"
+    );
 
     let tracker = tracker::build_from_config(&cfg)?;
     let workspace = Arc::new(WorkspaceManager::new(&cfg)?);
@@ -110,14 +128,3 @@ async fn reload(
     Ok(())
 }
 
-fn init_logging(format: &str) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    if format == "json" {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init();
-    } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
-    }
-}

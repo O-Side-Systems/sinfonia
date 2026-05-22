@@ -20,13 +20,13 @@ use sinfonia_bridge::github::{build_gh_ops, GhOps};
 use sinfonia_bridge::labels::LabelManager;
 use sinfonia_bridge::selftest::run_selftest;
 use sinfonia_bridge::storage::Store;
+use sinfonia_bridge::telemetry;
 use sinfonia_bridge::webhook::{router, AppState};
 use sinfonia_tracker::{IssueTracker, LinearTracker, TrackerKind};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -60,13 +60,17 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    init_logging(&args.log_format);
 
     match run(args).await {
         Ok(code) if code == 0 => {}
         Ok(code) => std::process::exit(code),
         Err(e) => {
+            // If the failure happened after `init_observability`, the
+            // subscriber is live and `error!` lands in stdout/OTel. Earlier
+            // failures (BRIDGE.md missing, parse errors) fall back to stderr
+            // because the subscriber doesn't exist yet.
             error!(target: "main", error=%e, "fatal");
+            eprintln!("fatal: {e}");
             std::process::exit(1);
         }
     }
@@ -89,6 +93,8 @@ async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
 
     if args.check {
         // Match `sinfonia --check`'s convention: print one line and exit 0.
+        // No subscriber is installed for --check — the call is a one-shot
+        // schema validator and doesn't need the OTel layer.
         println!("ok");
         return Ok(0);
     }
@@ -99,6 +105,21 @@ async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
         let failures = run_selftest(&cfg).await;
         return Ok(failures);
     }
+
+    // Install the tracing subscriber + optional OTel layer now that we have
+    // the parsed `telemetry:` block. Held across the listener's lifetime;
+    // the guard's Drop flushes buffered spans on graceful shutdown.
+    let telemetry_guard = telemetry::init_observability(&args.log_format, &cfg.telemetry);
+    info!(
+        target: "main",
+        tenant_id = %telemetry_guard.tenant_id,
+        otel_enabled = cfg.telemetry.otlp_endpoint.is_some()
+            || std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok(),
+        "telemetry initialized"
+    );
+    // Bind the guard's lifetime to the rest of `run`. Dropped at function
+    // return — graceful shutdown of the OTel batch processor.
+    let _telemetry_guard = telemetry_guard;
 
     let port = args.port.unwrap_or(cfg.server.port);
     let bind: SocketAddr = format!("{}:{}", cfg.server.bind, port)
@@ -152,14 +173,3 @@ async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     Ok(0)
 }
 
-fn init_logging(format: &str) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    if format == "json" {
-        tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init();
-    } else {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
-    }
-}

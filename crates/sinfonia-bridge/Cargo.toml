@@ -44,16 +44,29 @@ shellexpand = { workspace = true }
 # - octocrab          GitHub API client (PAT + App auth in P1-G)
 # - rusqlite          idempotency + PR↔ticket map (P1-E)
 # - subtle            constant-time HMAC compare (P1-E)
-# - hmac, sha2        signature verification (P1-E)
+# - hmac, sha2        signature verification (P1-E + Phase 3 typed event channel,
+#                     workspace-scoped because Sinfonia now signs outbound POSTs
+#                     with the same algorithm — see §7.2)
 # - jsonwebtoken      EncodingKey for GitHub App JWT auth (P1-G); pinned
 #                     to the major used transitively by octocrab 0.39 to
 #                     avoid duplicate compilation.
 octocrab = "0.39"
 rusqlite = { version = "0.31", features = ["bundled"] }
 subtle = "2.5"
-hmac = "0.12"
-sha2 = "0.10"
+hmac = { workspace = true }
+sha2 = { workspace = true }
 jsonwebtoken = "9"
+
+# Phase 3 — OTel emission + cost pipeline.
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry-semantic-conventions = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+rust_decimal = { workspace = true }
+# `uuid` is used for the OTel resource's `service.instance.id` attribute, and
+# (Phase 3 follow-up) for the typed event channel's per-event correlation id.
+uuid = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

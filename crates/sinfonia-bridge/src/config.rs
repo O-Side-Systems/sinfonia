@@ -167,9 +167,16 @@ pub struct StorageSection {
 pub struct TelemetrySection {
     pub otlp_endpoint: Option<String>,
     pub service_name: String,
+    /// Raw tenant id from BRIDGE.md. Resolved into a `TenantId` at
+    /// telemetry-init time via `telemetry::TenantId::resolve` so the
+    /// config struct stays purely declarative.
     pub tenant_id: Option<String>,
+    /// Extra HTTP / gRPC headers forwarded to the OTLP endpoint
+    /// (Honeycomb, Datadog API keys, etc.). Forwarded via
+    /// `OTEL_EXPORTER_OTLP_HEADERS=k=v,...` at exporter init time.
+    pub headers: std::collections::HashMap<String, String>,
     /// Shared HMAC secret for the typed Sinfonia↔bridge event channel
-    /// (Phase 3 §7.2). Validation rule: required when
+    /// (Phase 3 §7.2). Validation rule (N-1 fix): required when
     /// `sinfonia_event_subscribe_url` is set.
     pub sinfonia_events_secret: Option<String>,
     pub sinfonia_event_subscribe_url: Option<String>,
@@ -588,6 +595,19 @@ fn parse_telemetry(config: &Json) -> Result<TelemetrySection> {
             .map(|s| s.to_string())
             .and_then(|s| resolve_var_string(&s))
     };
+
+    let mut headers: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    if let Some(obj) = t.get("headers").and_then(|v| v.as_object()) {
+        for (k, raw) in obj {
+            if let Some(value_str) = raw.as_str() {
+                if let Some(resolved) = resolve_var_string(value_str) {
+                    headers.insert(k.clone(), resolved);
+                }
+            }
+        }
+    }
+
     Ok(TelemetrySection {
         otlp_endpoint: resolve("otlp_endpoint"),
         service_name: t
@@ -596,6 +616,7 @@ fn parse_telemetry(config: &Json) -> Result<TelemetrySection> {
             .unwrap_or("sinfonia-bridge")
             .to_string(),
         tenant_id: resolve("tenant_id"),
+        headers,
         sinfonia_events_secret: resolve("sinfonia_events_secret"),
         sinfonia_event_subscribe_url: resolve("sinfonia_event_subscribe_url"),
         sinfonia_event_callback_url: resolve("sinfonia_event_callback_url"),

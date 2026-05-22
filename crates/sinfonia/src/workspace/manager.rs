@@ -141,6 +141,7 @@ mod tests {
                 temperature: None,
             },
             server: ServerConfig::default(),
+            telemetry: Default::default(),
             states: Default::default(),
             workflow_path: PathBuf::from("/dev/null"),
         }

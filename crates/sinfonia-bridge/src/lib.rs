@@ -40,6 +40,7 @@ pub mod github;
 pub mod labels;
 pub mod selftest;
 pub mod storage;
+pub mod telemetry;
 pub mod webhook;
 
 pub use config::BridgeConfig;

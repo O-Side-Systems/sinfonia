@@ -7,6 +7,6 @@ mod watcher;
 pub use loader::{parse_workflow_str, read_workflow_file, WorkflowDefinition};
 pub use typed::{
     AgentConfig, AgentProvider, HooksConfig, LlmConfig, PollingConfig, ServerConfig,
-    ServiceConfig, TrackerConfig, TrackerKind, WorkspaceConfig,
+    ServiceConfig, TelemetryConfig, TrackerConfig, TrackerKind, WorkspaceConfig,
 };
 pub use watcher::WorkflowWatcher;

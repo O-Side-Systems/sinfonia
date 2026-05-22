@@ -12,6 +12,7 @@ pub mod domain;
 pub mod errors;
 pub mod http;
 pub mod orchestrator;
+pub mod telemetry;
 pub mod template;
 pub mod tracker;
 pub mod workspace;
