@@ -1,19 +1,57 @@
 //! Sinfonia CLI entry point.
+//!
+//! Two subcommands plus a backwards-compatible default:
+//! - `sinfonia <WORKFLOW.md>` / `sinfonia run <WORKFLOW.md>` — orchestrator.
+//! - `sinfonia <WORKFLOW.md> --check` — validate WORKFLOW.md without running
+//!   (Phase 5 §3.1). Exit codes: 0 ok / 2 yaml / 3 schema / 4 template /
+//!   5 tracker auth. Errors outside those classes (missing file, IO) exit 1.
+//! - `sinfonia init [--out <path>]` — interactive REPL scaffolding a new
+//!   WORKFLOW.md (Phase 5 §3.2). The AI-tool-free equivalent of the
+//!   `setup-workflow` skill.
 
-use clap::Parser;
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::sync::Arc;
+mod check;
+mod init_repl;
+
+use check::CheckExit;
+use clap::{Args, Parser, Subcommand};
 use sinfonia::config::{ServiceConfig, WorkflowWatcher};
 use sinfonia::orchestrator::Orchestrator;
 use sinfonia::telemetry;
 use sinfonia::tracker;
 use sinfonia::workspace::WorkspaceManager;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 
 #[derive(Parser, Debug)]
-#[command(name = "sinfonia", about = "Coding-agent orchestrator (Symphony-spec implementation)")]
-struct Args {
+#[command(
+    name = "sinfonia",
+    about = "Coding-agent orchestrator (Symphony-spec implementation)",
+    args_conflicts_with_subcommands = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Cmd>,
+
+    /// Legacy / default-subcommand args. Used when no explicit subcommand is
+    /// given so that `sinfonia WORKFLOW.md [--port N] [--check]` continues
+    /// to work the same as it did pre-Phase-5.
+    #[command(flatten)]
+    run: RunArgs,
+}
+
+#[derive(Subcommand, Debug)]
+enum Cmd {
+    /// Run the orchestrator. Identical to invoking `sinfonia` with no
+    /// subcommand — present so `sinfonia run …` is documentable.
+    Run(RunArgs),
+    /// Scaffold a new WORKFLOW.md interactively (Phase 5 §3.2).
+    Init(InitArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct RunArgs {
     /// Path to WORKFLOW.md. Defaults to ./WORKFLOW.md.
     workflow: Option<PathBuf>,
     /// Bind the HTTP dashboard on this port (overrides WORKFLOW.md `server.port`).
@@ -22,26 +60,76 @@ struct Args {
     /// Log format: `pretty` (default) or `json`.
     #[arg(long, default_value = "pretty")]
     log_format: String,
+    /// Validate WORKFLOW.md (schema + every prompt template renders against a
+    /// stub Issue) and exit. Returns 0 / 2 / 3 / 4 / 5 per Phase 5 §3.1.
+    #[arg(long)]
+    check: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct InitArgs {
+    /// Write the generated workflow to this path. Defaults to ./WORKFLOW.md.
+    #[arg(long)]
+    out: Option<PathBuf>,
+    /// Skip the final `--check` validation pass. The REPL still asks every
+    /// question; only useful when the operator wants the file written even
+    /// though their tracker env-vars aren't set yet.
+    #[arg(long, hide = true)]
+    no_validate: bool,
 }
 
 #[tokio::main]
 async fn main() {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    if let Err(e) = run(args).await {
-        // `run` initializes the subscriber as soon as it has a parsed config,
-        // so `error!` works for any failure past that point. Errors raised
-        // earlier (e.g. WORKFLOW.md missing) fall back to stderr — the
-        // structured subscriber doesn't exist yet to receive them.
-        if !e.to_string().is_empty() {
-            error!(target: "main", error=%e, "fatal");
-            eprintln!("fatal: {e}");
+    let result: ExitOutcome = match cli.command {
+        Some(Cmd::Init(args)) => init_repl::run(args)
+            .map(|_| ExitOutcome::Ok)
+            .unwrap_or_else(ExitOutcome::Fatal),
+        Some(Cmd::Run(args)) => dispatch_run(args).await,
+        None => dispatch_run(cli.run).await,
+    };
+
+    match result {
+        ExitOutcome::Ok => {}
+        ExitOutcome::CheckExit(code) => std::process::exit(code),
+        ExitOutcome::Fatal(e) => {
+            if !e.to_string().is_empty() {
+                error!(target: "main", error=%e, "fatal");
+                eprintln!("fatal: {e}");
+            }
+            std::process::exit(1);
         }
-        std::process::exit(1);
     }
 }
 
-async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
+enum ExitOutcome {
+    Ok,
+    CheckExit(i32),
+    Fatal(Box<dyn std::error::Error>),
+}
+
+async fn dispatch_run(args: RunArgs) -> ExitOutcome {
+    if args.check {
+        match check::check_workflow(&args) {
+            Ok(()) => {
+                println!("ok");
+                ExitOutcome::CheckExit(CheckExit::Ok as i32)
+            }
+            Err((code, msg)) => {
+                eprintln!("check failed: {msg}");
+                ExitOutcome::CheckExit(code as i32)
+            }
+        }
+    } else {
+        match run(args).await {
+            Ok(()) => ExitOutcome::Ok,
+            Err(e) => ExitOutcome::Fatal(e),
+        }
+    }
+}
+
+async fn run(args: RunArgs) -> Result<(), Box<dyn std::error::Error>> {
     let workflow_path = args
         .workflow
         .clone()
@@ -149,4 +237,3 @@ async fn reload(
     orch.apply_reload(workflow, cfg, tracker, workspace).await;
     Ok(())
 }
-
