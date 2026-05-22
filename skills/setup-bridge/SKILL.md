@@ -33,7 +33,7 @@ Ask the operator:
 
 ### 2a. PAT mode
 
-1. Direct the operator to https://github.com/settings/tokens to create a
+1. Direct the operator to <https://github.com/settings/tokens> to create a
    classic PAT with `repo` (and optionally `read:org`) scope.
 2. Have them set `GITHUB_TOKEN` in their shell.
 3. Validate: `gh api user` should succeed and return their handle.
@@ -44,7 +44,7 @@ Ask the operator:
    JSON to `./bridge-app-manifest.json` with the bridge's required
    permissions (pull_requests: write, issues: write, checks: read, actions:
    read, contents: read).
-2. Direct them to https://github.com/settings/apps/new with the manifest
+2. Direct them to <https://github.com/settings/apps/new> with the manifest
    URL.
 3. After creation, have them install the App on the target repo(s).
 4. Collect: App ID, Client ID, private key path, installation ID. Surface

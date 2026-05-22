@@ -625,6 +625,6 @@ config keeps serving traffic.
 - [`docs/SKILLS.md`](SKILLS.md) — the six setup skills that scaffold a
   working deployment without hand-editing YAML.
 - [`docs/SPEC.md`](SPEC.md) §11 — the underlying spec for the tracker
-  + bridge contract.
+  and bridge contract.
 - [`examples/telemetry/`](../examples/telemetry/) — reference Collector +
   Postgres + dashboard SQL.

@@ -474,7 +474,7 @@ What to hand the operating team along with this doc:
 - [`WORKFLOW.example.md`](../WORKFLOW.example.md) — every daemon config
   field with a state-machine example.
 - [`docs/SPEC.md`](SPEC.md) — the underlying spec. Read §11 (tracker
-  + bridge contract) and §15 (trust posture) first.
+  and bridge contract) and §15 (trust posture) first.
 - [`docs/SKILLS.md`](SKILLS.md) — the setup skills, for ongoing changes.
 - [`docs/JIRA-SCREEN-SCHEME.md`](JIRA-SCREEN-SCHEME.md) — Jira admin
   reference for first-run custom-field binding.
@@ -540,4 +540,4 @@ file where the claim is verifiable.
 - [`docs/MIGRATION-v0.2-to-v0.3.md`](MIGRATION-v0.2-to-v0.3.md) — if
   you're upgrading from v0.2.
 - [`docs/SPEC.md`](SPEC.md) — the underlying spec. Read §11 (tracker
-  + bridge) and §15 (trust posture) first.
+  and bridge) and §15 (trust posture) first.

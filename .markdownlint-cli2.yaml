@@ -1,0 +1,35 @@
+# markdownlint-cli2 configuration for Sinfonia docs.
+#
+# Style goals (from docs/v0.3-plan/07-docs.md §11.2):
+# - ATX headings (# Heading, not underline-style).
+# - Reference-style links allowed but consistent within each file.
+# - No bare URLs (`<https://example.com>` instead).
+#
+# We turn OFF a handful of rules that would force gratuitous churn on
+# already-shipped docs without improving readability:
+# - MD013 (line length): markdown lines wrap naturally in editors; a
+#   per-line cap fights long-lived URLs and inline code spans.
+# - MD024 (no-duplicate-heading): "Where to go next" / "Steps" recur by
+#   design across topology / topic sections.
+# - MD033 (no-inline-html): the reference Postgres schema doc uses
+#   <details> blocks; CHANGELOG references HTML entities; keep this off.
+# - MD041 (first-line-h1): some fenced YAML examples lead with comments,
+#   and example files at the repo root open with YAML front matter
+#   instead of an H1.
+# - MD046 (code-block-style): we use fenced (``` ```) blocks everywhere
+#   and indented elsewhere in source listings; allow both.
+
+config:
+  default: true
+  MD013: false
+  MD024: false
+  MD031: false
+  MD032: false
+  MD033: false
+  MD040: false
+  MD041: false
+  MD046: false
+  MD060: false
+
+# Globs are passed via the workflow's `with: globs: …` block; this file
+# only carries the rule configuration.

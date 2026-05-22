@@ -940,7 +940,7 @@ RECOMMENDED additional process settings:
 
 ### 10.2 Session Startup Responsibilities
 
-Reference: https://developers.openai.com/codex/app-server/
+Reference: <https://developers.openai.com/codex/app-server/>
 
 Startup MUST follow the targeted Codex app-server contract. Symphony additionally requires the
 client to:
@@ -2467,7 +2467,7 @@ Use the same validation profiles as Section 17:
   §11.6. The reference adapter targets the Jira Cloud REST API v3 and the self-hosted Jira Server
   / Data Center REST API; auth is Basic (email + API token) on Cloud and Bearer (PAT) for
   self-hosted. See §11.7.2 for custom-field discovery.
-- **OpenCode backend** — drive the `opencode` CLI (https://opencode.ai) as a subprocess in the
+- **OpenCode backend** — drive the `opencode` CLI (<https://opencode.ai>) as a subprocess in the
   per-issue workspace, alongside the Codex app-server backend. Auth is owned by the OpenCode
   CLI; the orchestrator pipes the prompt over stdin, consumes one JSON event per line on
   stdout (`--format json`), and resumes prior sessions on retry turns via `--session <id>`.
