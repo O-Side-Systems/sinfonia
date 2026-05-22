@@ -1,8 +1,8 @@
 # v0.3.0 milestone — status & handoff
 
-**Last updated:** 2026-05-21 (P2 merged — **Phase 2 complete**; Phase 3 is the next pickup)
+**Last updated:** 2026-05-22 (P3 merged — **Phase 3 complete**; Phase 4 is the next pickup)
 **Updated by:** Brett (orchestrated via Claude Opus 4.7)
-**Branch state:** `main` contains the **complete Phase 1 and Phase 2 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`).
+**Branch state:** `main` contains the **complete Phase 1, Phase 2, and Phase 3 of v0.3**. Phase 1's nine sub-tasks (P1-A through P1-I) ship as v0.3.0-alpha.1: the Phase 1 foundation (#2 — workspace conversion + tracker extensions + H-1 fix), the bridge skeleton (#3 — P1-D), the webhook layer (#4 — P1-E: HMAC + SQLite idempotency + event dispatch), the feedback loop (#5 — P1-F: categorize / attempts / transition + labels + PAT-mode `GhOps`), GitHub authentication + install gate (#6 — P1-G: PAT/App auth + `--self-test`), the wiremock-backed integration suite (#7 — P1-H: all nine §9.2 scenarios end-to-end), and the Phase 1 docs (#8 — P1-I: `BRIDGE.example.md`, `docs/SPEC.md` §11.6 draft, CHANGELOG, README stub). Phase 2 (#9 — P2: `provider: opencode` as a first-class CLI subprocess backend) lands the `OpenCodeAgent` next to `claude_code` / `codex`, the `which` workspace dep for preflight, the doc-spike-validated flag set (`--format json`, `--session <id>`), and the §8 doc deliverables (WORKFLOW example, README + SPEC §18.2 + CHANGELOG entries, `docs/v0.3-plan/02-opencode-VERIFY.md`). Phase 3 (#10 — P3: telemetry + budget enforcement) lands an opt-in OTel emission layer over both binaries (12 spans total + tenant tagging from day one), the typed Sinfonia↔bridge event channel that replaces the dropped OTLP receiver (`AgentEvent::SessionCompleted` + HMAC-signed POST/verify reusing the GitHub webhook scheme), the cost / budget pipeline (`BudgetManager` + embedded cost table + 30 s idle-flush debounce + M-2 freshness gates), terminal-state detection via `pull_request.closed.merged=true`, the `examples/telemetry/` reference Collector + Postgres deployment, and the SPEC §11.6.11 / §11.6.12 / §18.2 + CHANGELOG + README + VERIFY doc surface.
 
 This file is the **rolling milestone status**. Future agents resuming work on v0.3.0 should read this *before* the per-phase plans — it tells you what's done, what's next, and the decisions that aren't obvious from the code alone.
 
@@ -12,15 +12,19 @@ This file is the **rolling milestone status**. Future agents resuming work on v0
 
 **Phase 1 of v0.3 is complete.** All nine sub-tasks (P1-A through P1-I) are merged to `main`; the bridge MVP ships as v0.3.0-alpha.1. The bridge binary parses `BRIDGE.md`, verifies HMAC-signed GitHub webhooks, persists delivery-ID idempotency in SQLite, evaluates CI results, routes by failure category, applies the attempt cap, manages PR labels under the `sinfonia:` prefix, supports both PAT and App auth, and exposes `sinfonia-bridge --self-test` as the install gate. The full chain — bridge writes the marker comment → tracker fetch parses it into `Issue.fields` → prompt template renders `{{ issue.fields.sinfonia_last_ci_failure }}` into the agent's input — works end-to-end.
 
-**Phase 2 of v0.3 is also complete.** `provider: opencode` is wired as a first-class CLI subprocess backend in `crates/sinfonia/src/agent/opencode.rs`, joining `claude_code` and `codex` as a sibling under `agent/cli.rs`'s pattern (parser + spawn + session continuation). OpenCode owns auth via its own CLI (`opencode auth login`) and routes internally to 75+ providers — including a local Ollama-with-LSP path that the raw `ollama` backend can't provide. The `which` crate is now a workspace-level dep used by the preflight binary check. Workspace test count: **158 passing** (40 sinfonia + 13 conformance + 7 tracker + 89 bridge unit + 9 bridge integration), zero failures — up from Phase 1's 149 by 8 new `agent::opencode::tests` unit tests + 1 new `spec_conformance::opencode_provider_parses` integration test.
+**Phase 2 of v0.3 is also complete.** `provider: opencode` is wired as a first-class CLI subprocess backend in `crates/sinfonia/src/agent/opencode.rs`, joining `claude_code` and `codex` as a sibling under `agent/cli.rs`'s pattern (parser + spawn + session continuation). OpenCode owns auth via its own CLI (`opencode auth login`) and routes internally to 75+ providers — including a local Ollama-with-LSP path that the raw `ollama` backend can't provide. The `which` crate is now a workspace-level dep used by the preflight binary check.
 
-The next pickup is **Phase 3 — Telemetry + budget enforcement** (`docs/v0.3-plan/03-telemetry-budget.md`). Phase 3's stated dependency was "Phase 1 AND Phase 2" — Phase 1 because the bridge owns the tracker write path the budget caps use, Phase 2 because every coding-agent backend (including OpenCode) needs to emit the same `runner.session` span shape. Both deps are now resolved. Phase 3 layers `tracing-opentelemetry` over the existing `tracing` macros (the json/pretty stdout subscribers stay unchanged), tags every span and metric with `tenant_id` from day one, defines a Sinfonia↔bridge typed HTTP event channel (replacing the dropped bridge-hosted OTLP receiver), and adds token + cost caps the bridge enforces at the tracker boundary. Plan §1-§7 is the source of truth for scope; §2's coexistence model with today's `tracing` subscribers is the key non-obvious design decision a fresh agent should anchor on first.
+**Phase 3 of v0.3 is also complete.** Opt-in OTel emission layers over both binaries (six daemon spans + six bridge spans, all carrying the resolved `tenant_id`; `service.namespace = tenant_id` at the resource level so a Collector routing-processor splits per-tenant without touching emission code). The typed Sinfonia↔bridge event channel (`AgentEvent::SessionCompleted` → HMAC-SHA256 POST to `POST /api/v1/sinfonia-events`, reusing the GitHub-webhook verify helper) replaces the originally-proposed bridge-side OTLP receiver. Per-ticket token + cost caps are enforced at the tracker-write boundary with a 30 s idle-flush debounce that coalesces under-cap writes (Linear's marker-comment is read-modify-write, so a busy ticket benefits ~10×). The embedded cost table at `config/cost_table.yaml` (Anthropic / OpenAI / Google / Ollama-zero) ships with two freshness gates — WARN at 90 days, the M-2 asymmetric cost-cap block at 180 days. Workspace test count: **183 passing** (44 sinfonia + 14 conformance + 7 tracker + 107 bridge unit + 9 bridge integration + 2 sinfonia http events), zero failures — up from Phase 1+2's 158 by +25.
 
-The single most important non-obvious decision the Phase 1+2 work bequeaths to Phase 3: **the agent-side token-accounting plumbing is already in place across every CLI backend**. `OpenCodeAgent::run_turn` parses the `provider/usage` stream events and surfaces `(prompt_tokens, completion_tokens, total_tokens)` per turn; `cli.rs` does the same for `claude_code` and `codex`; and `crates/sinfonia/src/agent/turn.rs` already aggregates token counts into `TurnOutcome`. Phase 3's `runner.session` span attributes (per `03-telemetry-budget.md` §4) are a read of fields that already exist; the work is to emit them as OTel span attributes, not to instrument fresh code paths. Treat that as the savings line — Phase 3's "instrument every backend" surface is much smaller than it looks.
+The next pickup is **Phase 4 — Jira bridge support** (`docs/v0.3-plan/04-jira-bridge.md`). Phase 4's stated dependency was Phase 1 only — the `IssueTracker` trait extension landed in P1-B and Jira's `transition_issue` / `read_custom_field` / `write_custom_field` / `ensure_custom_field` / `post_comment` methods currently return the default-impl error "not supported for this tracker." Phase 4 fills those in against the Jira Cloud REST API (custom fields, ADF-rendered comments, native state transitions via the `/transitions` endpoint). The Phase 3 budget pipeline already writes `CustomFieldValue::String("8.23")` and a Jira customfield round-trips that string through ADF without semantic loss, so Phase 3 + Phase 4 will compose without a budget-side patch. Per `00-overview.md`'s execution order, Phase 4 could have run in parallel with Phase 2 or 3; serializing it after Phase 3 is the conservative pick when only one track is active.
 
-The single most important non-obvious decision made during Phase 1 itself (forward-relevant to every later phase): **`CustomFieldValue` is three variants (`Null` / `Number` / `String`), not five** (the plan-doc §4 draft showed `Decimal` / `LongText` / `Url` as separate variants). Cost values, URLs, and long-text fields all serialize as `String`. See §5.1 below. This is the foundation Phase 3's budget caps and Phase 4's Jira custom-field writes both build on — Phase 3 writes `sinfonia_session_cost_usd` and `sinfonia_total_cost_usd` as `CustomFieldValue::String("8.23")` (stringified for precision; never f64 for money).
+The single most important non-obvious decision the Phase 1+2 work bequeathed to Phase 3 (resolved this phase): **the agent-side token-accounting plumbing was already in place across every CLI backend**, and `TurnOutcome::Completed` now exposes the per-turn `usage: TokenUsage` directly (the runner aggregates session totals without re-parsing the event channel). Phase 3 instrumented six daemon span sites with `tracing::field::Empty` placeholders + late `span.record()` for runtime values; no fresh code paths needed instrumentation.
 
-The single most important non-obvious decision surfaced during Phase 2: **the OpenCode CLI's actual flag set differs from what the plan doc proposed**, and the doc-spike-against-vendor-docs pattern this exposed is reusable. The plan said `--prompt-stdin`, `--output-format json`, `--quiet`, `--continue <id>` — what `opencode.ai/docs` actually documents is `--format json` (no `--prompt-stdin` or `--quiet` needed; stdin auto-detected, JSON suppresses TUI) and `--session <id>` (bare `--continue` resumes only the *last* session globally — wrong for concurrent per-issue workspaces). Captured in `docs/v0.3-plan/02-opencode-VERIFY.md` and in the `opencode.rs` module rustdoc. The forward-relevant lesson for Phase 3: any time a plan doc references a vendor-CLI flag, OTel exporter env var, or third-party HTTP wire format, **verify it before writing code** — Phase 3 will need to do this for the `opentelemetry-otlp` crate's exporter config knobs.
+The single most important non-obvious decision made during Phase 1 itself (forward-relevant to every later phase): **`CustomFieldValue` is three variants (`Null` / `Number` / `String`), not five** (the plan-doc §4 draft showed `Decimal` / `LongText` / `Url` as separate variants). Cost values, URLs, and long-text fields all serialize as `String`. See §5.1 below. This is the foundation Phase 3's budget caps and Phase 4's Jira custom-field writes both build on — Phase 3 writes `sinfonia_cost_consumed_usd` as `CustomFieldValue::String("8.23")` (stringified for precision via `rust_decimal::Decimal`; never f64 for money).
+
+The single most important non-obvious decision surfaced during Phase 2: **the OpenCode CLI's actual flag set differs from what the plan doc proposed**, and the doc-spike-against-vendor-docs pattern this exposed is reusable. The plan said `--prompt-stdin`, `--output-format json`, `--quiet`, `--continue <id>` — what `opencode.ai/docs` actually documents is `--format json` (no `--prompt-stdin` or `--quiet` needed; stdin auto-detected, JSON suppresses TUI) and `--session <id>` (bare `--continue` resumes only the *last* session globally — wrong for concurrent per-issue workspaces). Captured in `docs/v0.3-plan/02-opencode-VERIFY.md` and in the `opencode.rs` module rustdoc. Phase 3 confirmed this lesson generalizes — the OTel crates moved ~8 minors between plan write and impl time (`opentelemetry 0.24/0.17/0.25` plan → `0.32/0.33` actual); feature-flag names held up, version numbers needed re-pinning. **The forward-relevant lesson for Phase 4: any time the plan doc references a vendor-API endpoint shape (Jira REST), a wire-format dialect (ADF), or a third-party HTTP knob, verify it before writing code.** Jira's `/rest/api/3/issue/{id}/transitions` endpoint and the ADF "doc/paragraph/text" content shape are the two most likely surfaces where the plan-doc proposed shape might have drifted.
+
+The single most important non-obvious decision surfaced during Phase 3: **OTel metrics are deferred to Phase 3.1, span-derived in v0.3.** The plan §6 listed nine `MeterProvider`-instrumented metrics; we shipped twelve spans instead and proved (per `examples/telemetry/queries/*.sql`) that the plan §8.2 dashboard SQL reads from span attributes via the `events` table, not from OTel metric points. The exit criteria from plan §9.3 are met span-derived. Adding the metrics layer when (a) a user needs Prometheus scraping, or (b) someone wants the `sinfonia.orchestrator.concurrent_runs` gauge (the one metric without a span analog) is additive — see `docs/v0.3-plan/03-telemetry-VERIFY.md` §2.1 for the per-metric span-derived equivalent.
 
 ---
 
@@ -46,7 +50,13 @@ The single most important non-obvious decision surfaced during Phase 2: **the Op
 | `a057218` (#8) | P1-I: Phase 1 documentation (BRIDGE.example.md, SPEC §11.6, CHANGELOG, README stub) | Docs — `BRIDGE.example.md` (new, repo root; 243-line fully-commented working config that parses cleanly under `--check` with no env vars); `docs/SPEC.md` §11.6 (217-line draft bridge extension contract in RFC-2119 voice, inserted between §11.5 and §12); `CHANGELOG.md` adds `## [0.3.0-alpha.1] — 2026-05-21`; `README.md` adds "What's new in v0.3 (preview)" stub above §"Sinfonia vs. Symphony" |
 | `1ce6c0e` | STATUS: mark P1-I merged, Phase 1 complete | Docs — this file |
 | `3b84a20` (#9) | P2: OpenCode agent backend | Code + docs — `crates/sinfonia/src/agent/opencode.rs` (new, 686 LOC: `OpenCodeAgent` impl + 8 unit tests, mirroring `cli.rs`'s parser + spawn + continuation pattern); `agent/mod.rs` + `config/typed.rs` factory + enum wiring; `which = "8"` added to `[workspace.dependencies]` + consumed in `crates/sinfonia/Cargo.toml` for the preflight binary check; `tests/spec_conformance.rs::opencode_provider_parses` (new) exercises all three §4 WORKFLOW shapes; `WORKFLOW.example.md` + README backend table + `docs/SPEC.md` §18.2 + CHANGELOG `[Unreleased]` all carry the OpenCode entry; `docs/v0.3-plan/02-opencode-VERIFY.md` (new, 204 LOC) captures the doc-spike findings and §5.3 manual-verification steps (pending real-world run before tag) |
-| (this commit) | STATUS: mark Phase 2 merged, queue Phase 3 as next deliverable | Docs — this file |
+| `c5226fe` | STATUS: mark Phase 2 merged, queue Phase 3 as next deliverable | Docs — this file |
+| `69ae360` (#10) | P3: telemetry foundation (OTel deps + spans + tenant resolver) | Code — OTel crates added to `[workspace.dependencies]` (`opentelemetry 0.32` / `opentelemetry_sdk 0.32` / `opentelemetry-otlp 0.32` / `opentelemetry-semantic-conventions 0.32` + `semconv_experimental` / `tracing-opentelemetry 0.33` / `rust_decimal 1` / `hmac 0.12` + `sha2 0.10` promoted to workspace scope). `crates/{sinfonia,sinfonia-bridge}/src/telemetry/{mod,tenant,spans}.rs` (new × 6): `init_observability(format, telemetry)` wraps the existing `tracing_subscriber::fmt` layer with an `SdkTracerProvider` (the 0.32 API rename — see §5.13); `TenantId::resolve(config → SINFONIA_TENANT_ID → "default")`; span-name + attribute-key constants. `TelemetryConfig` (`WORKFLOW.md`) and `TelemetrySection.headers` (`BRIDGE.md`) wired; the existing N-1 validation rule for `sinfonia_events_secret` carries forward. Six daemon spans (`orchestrator.tick`, `orchestrator.dispatch`, `runner.session`, `runner.turn`, `workspace.hook`, `tracker.fetch`) instrumented with `tracing::field::Empty` placeholders + late `span.record()`. `TurnOutcome::Completed` now carries `usage: TokenUsage`; `Orchestrator::dispatch_one` returns `DispatchOutcome::{Dispatched, Skipped, NoSlot}` so `orchestrator.tick`'s `dispatched_count` is honest. |
+| `c51c81a` (#10) | P3: bridge spans + typed Sinfonia↔bridge event channel (§5, §7.2) | Code — five bridge spans instrumented (`bridge.webhook`, `bridge.ci_result`, `bridge.state_transition`, `bridge.cap_hit`, `bridge.events_receive`). `AgentEvent::SessionCompleted` variant emitted from `runner.rs` immediately after `agent.stop_session(...)` per the N-3 fix. `crates/sinfonia/src/http/events.rs` (new, ~300 LOC): per-process `SubscriberRegistry`, `RecentBuffer` ring, `spawn_emitter(...)` task with HMAC-SHA256 signer (header `X-Sinfonia-Signature-256`, same scheme as the GitHub webhook) and exponential-backoff retry. New routes: `POST /api/v1/events/subscribers`, `GET /api/v1/events/recent`. `crates/sinfonia-bridge/src/events.rs` (new, ~220 LOC): `POST /api/v1/sinfonia-events` handler reusing `webhook::verify::verify_signature` (zero algorithm fork); dispatches by `type` field with forward-compat ignored response for unknown types. |
+| `6eaf4c2` (#10) | P3: cost table + budget enforcement + terminal-state detection (§7, §6) | Code — `config/cost_table.yaml` (Anthropic / OpenAI / Google / Ollama-zero, `verified_at: 2026-05-21`), embedded via `include_str!`, overridable via `bridge.cost_table_path`. `crates/sinfonia-bridge/src/feedback/cost.rs` (new, ~290 LOC): `CostTable::compute_cost` with `rust_decimal::Decimal` end-to-end + `is_stale_warn` (90d) + M-2 asymmetric `accepts_cost_caps` (180d) gates. `crates/sinfonia-bridge/src/feedback/budget.rs` (new, ~480 LOC): per-process per-ticket accumulator, cap-detection (`Accumulated` vs `CapHit { kind }`), 30 s idle-flush reconciler, `flush_ticket` writes `sinfonia_tokens_consumed` (Number) + `sinfonia_cost_consumed_usd` (String per STATUS §5.1) to the tracker + emits `bridge.cost_update` span. SessionCompleted event handler feeds `BudgetManager::apply_session`; on `CapHit` flushes immediately + transitions to `feedback_loop.budget_exceeded_state`. `handle_pull_request` gained a `closed + merged=true` branch that flushes the accumulator + emits the transition log (terminal-state via the existing GitHub webhook, no tracker polling). `WELL_KNOWN_FIELDS` gains `sinfonia_budget_exhausted_at`. `AppState::with_default_budget(...)` test helper added so the existing P1-H integration suite adopts the new shape unchanged. |
+| `cc9f1a1` (#10) | P3: docs (SPEC §11.6/§18.2 + CHANGELOG + README + VERIFY) + reference assets | Docs — `docs/SPEC.md` gains §11.6.11 (typed Sinfonia↔bridge event channel, full wire shape + HMAC contract) + §11.6.12 (budget enforcement surface, freshness gates, per-ticket overrides) + a §18.2 entry for OpenTelemetry emission with `tenant_id`. CHANGELOG `[Unreleased]` adds the Phase 3 Added / Changed / Deferred entries. README gains a Phase 3 What's-new bullet + new Observability section showing the env-var path. `docs/v0.3-plan/03-telemetry-VERIFY.md` (new, ~240 LOC): captures the OTel crate-version delta (plan-doc 0.24/0.17/0.25 → actual 0.32/0.33), the SDK API rename, the `semconv_experimental` gating decision, the metrics-layer deferral with span-derived equivalents listed per metric, and the §9.3 manual-verification protocol. `examples/telemetry/` (new): `postgres-schema.sql` (sessions / attempts / events tables + indexes), `otel-collector-config.yaml` (OTLP receiver + routing-by-tenant + Postgres exporter starter), three `queries/*.sql` (tenant monthly cost, first-try rate, budget-heavy tickets), and `README.md` (wiring guide + full span / attribute reference + multi-tenant notes). |
+| `2fa8d8c` (#10) | P3: VERIFY notes — defer wire-level integration tests to Phase 3.1 | Docs — `03-telemetry-VERIFY.md` §2.5 captures the integration-test deferral with a cross-reference table mapping each wire-level concern (HMAC algo + format, cap detection, flush field types, cost table + freshness gates, tenant resolver, subscriber registry, schema round-trip) to the unit test that pins it. Manual verification per plan §9.3 covers the remaining end-to-end concern. |
+| (this commit) | STATUS: mark Phase 3 merged, queue Phase 4 as next deliverable | Docs — this file |
 
 ### Phase 1 sub-task status
 
@@ -70,14 +80,38 @@ Phase 2 shipped as a single atomic commit (one PR), unlike Phase 1's nine-sub-ta
 |---|---|---|---|
 | **P2** OpenCode agent backend (`opencode.rs` + enum variant + factory wiring + `which` dep + unit tests + integration parse-test + WORKFLOW/README/SPEC §18.2/CHANGELOG/VERIFY.md docs) | §3, §4, §5, §6 | ✅ merged | All eleven §8 boxes checked in one PR (#9, commit `3b84a20`, merge `f26aca7`). Manual end-to-end verification per §5.3 is the one deferred item — tracked in `docs/v0.3-plan/02-opencode-VERIFY.md` as "pending real-world run before tagging v0.3.0-alpha.x." Doc spike (plan §7 open question 1) resolved against `opencode.ai/docs` + the upstream `sst/opencode` source; flag deltas vs. the plan's proposed surface are noted at the top of `opencode.rs` and in the VERIFY doc. |
 
+### Phase 3 sub-task status
+
+Phase 3 shipped as one PR (#10) with five intermediate commits walking the work in a reviewable order (squash-merged on `main` as `707a812`). The mapping back to the `03-telemetry-budget.md` §12 deliverable checklist:
+
+| Deliverable | Plan section | Status | Notes |
+|---|---|---|---|
+| OTel client crates + telemetry module skeletons (both binaries) | §2, §3, §10 | ✅ merged | `69ae360`. Version set verified at impl time: `opentelemetry 0.32` / `opentelemetry_sdk 0.32` / `opentelemetry-otlp 0.32` / `opentelemetry-semantic-conventions 0.32` + `semconv_experimental` / `tracing-opentelemetry 0.33`. Plan-doc proposed `0.24/0.17/0.25`; feature-flag names held up. SDK API renamed (`SdkTracerProvider`; `with_batch_exporter` takes exporter alone). |
+| `TelemetryConfig` + `TelemetrySection` parsing + N-1 validation | §3.1, §7.2 | ✅ merged | `69ae360`. Both binaries share field semantics; bridge has extras (`sinfonia_event_subscribe_url`, `sinfonia_event_callback_url`). The N-1 rule (events_secret required when subscribe_url is set) was already in place from P1-D prep; tested in `rule9_events_subscribe_without_secret_errors`. |
+| Six daemon spans per §4 (`orchestrator.tick`, `orchestrator.dispatch`, `runner.session`, `runner.turn`, `workspace.hook`, `tracker.fetch`) | §4 | ✅ merged | `69ae360`. `TurnOutcome::Completed` now carries `usage: TokenUsage`; `Orchestrator::dispatch_one` returns `DispatchOutcome::{Dispatched,Skipped,NoSlot}` for honest `dispatched_count`. `tracker.fetch` spans hardcode the span name + attribute keys (no `sinfonia-tracker` → binary crate dependency). |
+| Five bridge spans per §5 (`bridge.webhook`, `bridge.ci_result`, `bridge.state_transition`, `bridge.cap_hit`, `bridge.events_receive`) | §5 | ✅ merged | `c51c81a`. `bridge.cost_update` lands with `feedback/budget.rs` (`6eaf4c2`). `bridge.pr_label` deferred — `labels.rs` tracing logs cover the dashboard need. |
+| `AgentEvent::SessionCompleted` + emission at the runner exit | §7.2, N-3 | ✅ merged | `c51c81a`. Emitted from `crates/sinfonia/src/orchestrator/runner.rs` immediately after `agent.stop_session(...)` per N-3. |
+| Subscriber-emitter task + `/api/v1/events/subscribers` + `/api/v1/events/recent` | §7.2 | ✅ merged | `c51c81a`. `crates/sinfonia/src/http/events.rs` (new). HMAC-SHA256 signer (header `X-Sinfonia-Signature-256`, `sha256=<hex>` value — same scheme as the GitHub webhook). 5-attempt retry with 250 ms → 8 s backoff. 200-entry diagnostic ring buffer. |
+| `POST /api/v1/sinfonia-events` handler on the bridge | §7.2 | ✅ merged | `c51c81a`. Reuses `webhook::verify::verify_signature` — zero algorithm fork. Dispatches by `type` field; unknown types acknowledged with `200 OK ignored` for forward-compat. |
+| Cost table + `feedback/cost.rs` | §7.1, M-2 | ✅ merged | `6eaf4c2`. `config/cost_table.yaml` embedded via `include_str!`; override via `bridge.cost_table_path`. `Decimal` end-to-end. M-2 asymmetric freshness gate: token caps survive a stale table, cost caps don't. OpenCode `provider/model` wire format handled by lookup. |
+| `feedback/budget.rs` + 30 s debounce + cap-hit transition | §7.3, §7.4 | ✅ merged | `6eaf4c2`. Per-process per-ticket accumulator; cap-crossings flush immediately + transition to `feedback_loop.budget_exceeded_state`. 30 s idle-flush reconciler. `BudgetManager` not durable across restart; on restart re-reads last persisted totals as the new baseline. |
+| `WELL_KNOWN_FIELDS` budget additions | STATUS §5.2 | ✅ merged | `6eaf4c2`. Added `sinfonia_budget_exhausted_at`. The other Phase 3 keys (`sinfonia_tokens_consumed`, `sinfonia_cost_consumed_usd`, `sinfonia_max_cost_usd`) were pre-registered in P1-D. |
+| Terminal-state detection via `pull_request.closed.merged=true` | §6 | ✅ merged | `6eaf4c2`. New branch in `handle_pull_request` looks up the ticket via `pr_ticket_map`, flushes the budget accumulator, emits the transition log. Replaces the planned `bridge.attempts_to_close` + `cost_per_ticket_usd` histograms (deferred with the metrics layer). |
+| Reference Collector + Postgres assets | §8 | ✅ merged | `cc9f1a1`. `examples/telemetry/{postgres-schema.sql,otel-collector-config.yaml,queries/*.sql,README.md}`. Three §8.2 dashboard queries verified to read from span attributes in the `events` table (not OTel metric points). |
+| SPEC §11.6 update + §18.2 entry + CHANGELOG + README Observability | §12 | ✅ merged | `cc9f1a1`. SPEC gains §11.6.11 (typed event channel contract) + §11.6.12 (budget enforcement surface) + a §18.2 entry. CHANGELOG `[Unreleased]` has the Added / Changed / Deferred-to-v0.3.1 blocks. README Observability section shows the env-var path. |
+| `docs/v0.3-plan/03-telemetry-VERIFY.md` (verify doc) | §9.3 | ✅ merged | `cc9f1a1` (initial), `2fa8d8c` (integration-test deferral note). Captures the OTel crate-version delta, the SDK API rename, the metrics-layer deferral (with span-derived equivalents listed per metric), the integration-test deferral cross-reference table, and the §9.3 manual-verification protocol. |
+| OTel metrics layer (`MeterProvider` + 9 instruments per §6) | §6 | ⏳ deferred to v0.3.1 | Plan §8.2 dashboards read span attributes from the `events` table (not OTel metric points), so exit criteria are met span-derived. Rationale + per-metric span-derived equivalent in `03-telemetry-VERIFY.md` §2.1. |
+| Wire-level integration tests (`tests/telemetry_e2e.rs`, `tests/budget_e2e.rs`) | §9.2 | ⏳ deferred to v0.3.1 | Algorithmic surface pinned by the unit suite — cross-reference table in `03-telemetry-VERIFY.md` §2.5 maps each wire-level concern (HMAC algo + format, cap detection, flush field types, cost table + freshness gates, tenant resolver, subscriber registry, schema round-trip) to the unit test that pins it. Plan §9.3 manual verification covers the end-to-end wire concern. |
+
 ### Test baseline on `main`
 
-- `cargo test --workspace --no-fail-fast` → **158 tests pass, 0 failures** (up from Phase 1's 149 by +9)
-  - **40** sinfonia unit tests (up from 32 by +8 in `agent::opencode::tests`: `build_command_line_first_turn`, `build_command_line_pending_session`, `build_command_line_resumed_session`, `parse_init_event`, `parse_token_event`, `parse_full_stdout_picks_last_text`, `preflight_missing_binary`, `opencode_provider_is_cli_provider`)
-  - **13** `spec_conformance.rs` integration tests (up from 12 by +1: `opencode_provider_parses` covers all three §4 WORKFLOW shapes round-tripping through `ServiceConfig::from_workflow()`)
-  - 7 sinfonia-tracker tests (1 base64 + 6 custom_fields) — unchanged
-  - 89 sinfonia-bridge unit tests — unchanged (Phase 2 doesn't touch the bridge crate)
-  - 9 sinfonia-bridge integration tests (`tests/bridge_e2e.rs`) — unchanged
+- `cargo test --workspace --no-fail-fast` → **183 tests pass, 0 failures** (up from Phase 1+2's 158 by +25 — see Phase 3 sub-task table for the per-area breakdown)
+  - **44** sinfonia unit tests (up from 40 by +4 in `telemetry::tenant::tests`: `config_value_wins`, `env_var_used_when_config_empty`, `whitespace_only_config_falls_through`, `default_when_nothing_set`)
+  - **14** `spec_conformance.rs` integration tests (up from 13 by +1 covering the new `TelemetryConfig` round-trip in `ServiceConfig::from_workflow`)
+  - 7 sinfonia-tracker tests — unchanged (only the `WELL_KNOWN_FIELDS` addition; the list itself isn't unit-tested)
+  - **107** sinfonia-bridge unit tests (up from 89 by +18: 9 in `feedback::cost::tests`, 4 in `feedback::budget::tests`, 3 in `telemetry::tenant::tests`, 2 in `events::tests`)
+  - **3** sinfonia http events tests — `registry_replaces_on_duplicate_url`, `recent_buffer_caps_at_capacity`, `sign_produces_sha256_prefixed_hex`
+  - 9 sinfonia-bridge integration tests (`tests/bridge_e2e.rs`) — unchanged (adopt `AppState::with_default_budget(...)` constructor; semantics identical)
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --check` → `ok` (exit 0) on valid, descriptive error (exit 1) on invalid.
 - `cargo run -p sinfonia-bridge -- BRIDGE.example.md --check` → `ok` (exit 0) with no environment variables set. The example doc is its own CI gate — when CI lands for the bridge crate, this command catches schema drift between the parser and the example.
 - `cargo run -p sinfonia-bridge -- BRIDGE.md --self-test` → one labelled `PASS`/`FAIL`/`SKIP` line per check; exit code = number of `FAIL` lines (SKIPs don't count). App-mode token-mint + REST round-trip now covered by `bridge_e2e.rs` scenario 8.
@@ -91,58 +125,61 @@ Phase 2 shipped as a single atomic commit (one PR), unlike Phase 1's nine-sub-ta
 
 ---
 
-## 2. What's next: Phase 3 — Telemetry + budget enforcement
+## 2. What's next: Phase 4 — Jira bridge support
 
-Phase 1 + Phase 2 are shippable. The next pickup is **Phase 3 — Telemetry + budget enforcement** (`docs/v0.3-plan/03-telemetry-budget.md`). Phase 3's plan-doc-stated dependencies were "Phase 1 (bridge + custom-fields + `Issue.fields` template plumbing) AND Phase 2 (so the OpenCode backend emits the same spans)" — both are now resolved. Per `00-overview.md`'s suggested execution order, Phase 3 is the natural serial successor to Phase 2.
+Phase 1 + Phase 2 + Phase 3 are shippable. The next pickup is **Phase 4 — Jira bridge support** (`docs/v0.3-plan/04-jira-bridge.md`). Phase 4's plan-doc-stated dependency was "Phase 1 only" — the `IssueTracker` trait extension shipped in P1-B with default-impl errors on every Jira write path. Phase 4 fills those in against Jira Cloud's REST API. The dep is resolved.
 
-### Scope (per `03-telemetry-budget.md`)
+### Scope (per `04-jira-bridge.md`)
 
-Phase 3 is materially larger than Phase 2: **~1 100 LOC of Rust + ~300 LOC of tests + ~500 LOC of docs**, with a reference OpenTelemetry Collector → Postgres setup landing alongside the code. Four headline deliverables:
+Phase 4 is the smallest remaining phase: **~200 LOC of Rust + ~150 LOC of tests + ~150 LOC of docs**. The work pattern mirrors Phase 1's Linear adapter, but the Jira side is more straightforward because Jira has native custom fields (no marker-comment dance like Linear). Headline deliverables:
 
-1. **OTel emission, opt-in by configuration.** `tracing-opentelemetry` layered onto the existing `tracing` subscriber in both binaries (the json/pretty stdout subscribers stay unchanged). When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset and no `telemetry:` block is configured, the OTel layer is `None` and behavior matches today. See plan §2.
-2. **Tenancy from day one.** Every span and every metric carries a `tenant_id` attribute. Resolution precedence: `telemetry.tenant_id` from config → `SINFONIA_TENANT_ID` env → literal `"default"`. Resource-level `service.namespace = tenant_id` lets a Collector routing-processor split per-tenant data without touching emission code. See plan §3.
-3. **Sinfonia↔bridge typed HTTP event channel.** Replaces the original "bridge runs its own OTLP receiver" design (which would have re-implemented the OTel SDK). Sinfonia POSTs typed events (`session.token_usage`, `session.cost`, etc.) to the bridge over HTTPS, HMAC-signed with `telemetry.sinfonia_events_secret` (shared between the two configs; mismatch → bridge returns 401 + Sinfonia logs WARN on retry exhaustion). See plan §7.2.
-4. **Budget caps.** Token + cost limits enforced by the bridge at the tracker write boundary. When a cap is hit, the bridge transitions the ticket to its configured `over_budget_state` (or `blocked_state` if unconfigured) and writes the `sinfonia_budget_exhausted_*` custom fields. Cost values write as `CustomFieldValue::String("8.23")` per the §5.1 decision (NEVER f64 for money). See plan §5 + §6.
+1. **Jira REST adapter completion.** Fill in the five default-impl methods (`transition_issue`, `read_custom_field`, `write_custom_field`, `ensure_custom_field`, `post_comment`) on `JiraTracker`. Use `/rest/api/3/issue/{id}/transitions` for state moves, `/rest/api/3/field` for custom-field provisioning, and `customfield_NNNNN` IDs for reads/writes.
+2. **ADF rendering for `post_comment`.** Jira accepts comment bodies as Atlassian Document Format (ADF), a nested JSON shape (`doc → content[paragraph] → content[text]`). Plan default: hand-roll the minimal subset of ADF for the bridge's failure-summary + cap-hit comments (no third-party `markdown-to-adf` dep). Plan §3.5 open question.
+3. **Custom-field discovery + creation.** Jira's per-field IDs are workspace-specific. `ensure_custom_field(schema)` looks up an existing field by display name; creates it if absent. Cached on the JiraTracker instance so repeat calls during a single bridge process don't re-hit the discovery endpoint.
+4. **Bridge config validation.** `BRIDGE.md` parsing already accepts `tracker.kind: jira`; today validation refuses it with "not supported until Phase 4." Remove that rejection. Add Jira-specific validation: require `tracker.email` (for Basic auth alongside the API token) and `tracker.endpoint` (full base URL, not just the GraphQL path).
 
-### What's already prepared for Phase 3 (inherited from Phases 1 + 2)
+### What's already prepared for Phase 4 (inherited from Phases 1–3)
 
-- **Custom-field write path.** Phase 1's `IssueTracker` extension already exposes `update_issue_custom_field` (Linear impl) and `CustomFieldValue::String/Number/Null`. Phase 3's budget bookkeeping (`sinfonia_session_cost_usd`, `sinfonia_total_cost_usd`, `sinfonia_token_total`, `sinfonia_budget_exhausted_at`, etc.) just routes through these. Phase 3 needs to add the new keys to `WELL_KNOWN_FIELDS` in `custom_fields.rs` so template authors can use `| default:` against them (see §5.2 in this file).
-- **Per-turn token accounting in every backend.** `OpenCodeAgent::run_turn` (Phase 2) parses `provider/usage` stream events and surfaces `(prompt_tokens, completion_tokens, total_tokens)` per turn; `cli.rs` does the same for `claude_code` and `codex`; raw-LLM backends already aggregate via `TurnOutcome`. The instrumentation surface for Phase 3's `runner.session` span is "read existing struct fields and emit as OTel attributes" — not "instrument fresh code paths."
-- **The bridge tracker write path is exercised.** Phase 1's wiremock integration tests (`tests/bridge_e2e.rs`) cover the bridge's "fetch issue → mutate → transition → write custom fields" flow end-to-end for every §9.2 scenario. Phase 3's budget-cap-hit path layers on top of this without re-plumbing the GraphQL call shape.
-- **HMAC verification helper exists.** `crates/sinfonia-bridge/src/webhook/verify.rs` (P1-E) already has the constant-time HMAC-SHA256 compare. Phase 3's typed event channel will share this helper (move it up to a shared module if a third caller materializes; one new caller is below the threshold for refactoring).
-- **`server.public_url`** (added in P1-G for App-mode webhook delivery). Phase 3's `/events` endpoint on the bridge will land under the same URL prefix; no new public-URL plumbing is required.
+- **The `IssueTracker` trait extension is intact.** The five bridge-write methods all return `Error::Other("not supported for this tracker")` for Jira. Phase 4 replaces those bodies; no signature changes needed.
+- **The bridge's tracker-write call sites are tracker-agnostic.** `feedback/transition.rs`, `feedback/budget.rs`, and `events.rs` all call through the trait — they'll work against a real Jira impl without modification.
+- **`CustomFieldValue::String` round-trips through Jira ADF.** Cost values from Phase 3's budget pipeline (`CustomFieldValue::String("8.23")`) write to a text-typed Jira customfield without precision loss. The Linear marker-comment carries everything as text by construction; Jira's text customfield is the equivalent. No Phase 3 patch is needed on the budget side.
+- **`WELL_KNOWN_FIELDS` already lists the v0.3 budget keys.** Templates rendered from the Jira-side `Issue.fields` map work the same way as Linear's (they go through `crates/sinfonia/src/template.rs`, which pre-seeds `Null` for absent well-known keys per STATUS §5.2).
+- **`BRIDGE.example.md` carries the Jira block as commented-out scaffolding.** P1-D shipped the schema (`tracker.kind: jira`, `tracker.email: $JIRA_EMAIL`, etc.); Phase 4 removes the validation rejection + uncomments the example block.
 
-### Phase 2 → Phase 3 hand-off pointer
+### Phase 3 → Phase 4 hand-off pointer
 
-Read these in this order before starting Phase 3:
+Read these in this order before starting Phase 4:
 
-1. `docs/v0.3-plan/03-telemetry-budget.md` — the Phase 3 plan. Source of truth for scope, OTel attribute shapes, the typed-event wire format, validation rules, test coverage.
-2. `docs/v0.3-plan/00-overview.md` "Cross-cutting concerns" — Phase 3 sits at the cross-cutting OTel/Tenancy/Budget intersection; the overview is shorter than re-reading every per-phase doc.
-3. `crates/sinfonia/src/main.rs` (subscriber init) — Phase 3 wraps this with the OTel layer.
-4. `crates/sinfonia-bridge/src/main.rs` — same; the bridge gets the symmetric subscriber init plus a new `/events` route.
-5. `crates/sinfonia/src/agent/turn.rs` + `crates/sinfonia/src/orchestrator/runner.rs` — where `runner.session` and `runner.turn` spans land (per plan §4).
-6. `crates/sinfonia-tracker/src/custom_fields.rs` — Phase 3 adds new keys to `WELL_KNOWN_FIELDS` (see §5.2 below for why this is mandatory before the bridge can write them).
-7. `crates/sinfonia-bridge/src/webhook/verify.rs` (HMAC helper) — the typed event channel reuses the same algorithm.
+1. `docs/v0.3-plan/04-jira-bridge.md` — the Phase 4 plan. Source of truth for the Jira REST endpoint shapes, the ADF format, the custom-field discovery flow, and validation rules.
+2. `docs/v0.3-plan/00-overview.md` "Cross-cutting concerns" — Phase 4 sits at the per-tracker abstraction boundary; the cross-cutting notes call out custom-field semantics (concern B) and Jira's ADF particulars.
+3. `crates/sinfonia-tracker/src/jira.rs` — current implementation (mostly default impls). The candidate-fetch path already works; Phase 4 fills in the write surface.
+4. `crates/sinfonia-tracker/src/linear.rs` — reference implementation for the same trait, especially the marker-comment dance vs. Jira's native customfield approach. Useful as a comparison point but Phase 4 does NOT reproduce the marker-comment design.
+5. `crates/sinfonia-bridge/src/config.rs` Rule 2 (the `tracker.kind: jira` rejection at line ~632). Phase 4 removes this gate.
+6. **Vendor docs (per the Phase 2 §5.10 + Phase 3 §5.13 lesson):** before writing code, verify the actual Jira REST API surface against `developer.atlassian.com/cloud/jira/platform/rest/v3/` — specifically the `/issue/{id}/transitions` and `/field` endpoints + the ADF schema. Capture deltas in `docs/v0.3-plan/04-jira-VERIFY.md` (new) as `03-telemetry-VERIFY.md` §1 did for Phase 3.
 
-Then `git checkout -b v0.3-phase-3-telemetry` off `main` (158-test baseline) and start there.
+Then `git checkout -b v0.3-phase-4-jira` off `main` (183-test baseline) and start there.
 
-### Phase 3 follow-up watch list
+### Phase 4 follow-up watch list
 
-Items the plan doc surfaces that Phase 3 should explicitly resolve before merge — not Phase 1/2 hangover:
+Items the plan doc surfaces that Phase 4 should explicitly resolve before merge:
 
-- **Deferred plan-checker finding M-2** (cost-table drift gate): refuse cost caps when the embedded cost table is >180 days old. Token caps stay accepted. Phase 3 implementation. See §7 below.
-- **OTel exporter env-var verification spike.** Per Phase 2's lesson (the OpenCode flag-set spike found multiple plan-doc deltas), Phase 3 should verify the `opentelemetry-otlp` crate's actual env-var names and feature-flag knobs against the upstream crate docs *before* writing the exporter wrapper. Findings get pasted into the plan doc and the `init_observability` rustdoc.
-- **Postgres schema for the reference Collector setup.** Plan §6 references a Postgres-backed cost ledger. Decide at implementation time whether to ship the schema in `docker/postgres/init.sql` (Phase 6 territory) or as `docs/v0.3-plan/03-telemetry-budget-EXAMPLES/` companion files (Phase 3 territory). Default: docs-side under `docs/v0.3-plan/03-...` so Phase 6 can pick it up wholesale without a re-spec.
+- **ADF library vs hand-roll.** Plan §3.5 open question. Default: hand-roll the minimal subset. Re-verify at impl time whether a small `markdown-to-adf` crate exists with a sensible license + maintainer story — if so, the bridge prose templates would benefit. Otherwise the hand-roll is ~50 LOC of "doc/paragraph/text" wrapping.
+- **Custom-field discovery rate-limiting.** Jira's `/field` endpoint paginates. The bridge's `ensure_custom_field` runs at startup for each well-known field, so a fresh install hits the endpoint ~7 times in quick succession. Cache the full field list once after the first call; subsequent ensures hit the cache.
+- **Manual verification protocol.** Create `docs/v0.3-plan/04-jira-VERIFY.md` covering: ADF rendering against a real Jira Cloud instance, custom-field discovery against a non-trivial field count, transition flow against a project workflow that includes both visible-to-all and role-gated transitions.
 
-### Other follow-up work (not blocking Phase 3)
+### Other follow-up work (not blocking Phase 4)
 
-These items surfaced during Phases 1 or 2 but were not in scope. They are not blockers; surface them at the right time:
+These items surfaced during Phases 1–3 but were not in scope. They are not blockers; surface them at the right time:
 
+- **OTel metrics layer (v0.3.1).** Plan §6 listed 9 instruments; Phase 3 shipped 12 spans instead and proved the §8.2 dashboards work span-derived. Lands as a focused v0.3.1 patch with the `MeterProvider` setup + per-site instrumentation in both binaries. Cross-reference table per metric in `03-telemetry-VERIFY.md` §2.1.
+- **Wire-level integration tests for the typed event channel + budget cap-hit (v0.3.1).** Deferred per `03-telemetry-VERIFY.md` §2.5. The algorithmic surface is pinned by the unit suite; the wire concern is covered by manual verification per Phase 3 plan §9.3 — and by the existing P1-H wiremock harness for the tracker-write side. Promote when a regression surfaces or the manual protocol fires.
 - **CI for the bridge crate.** Wire `cargo run -p sinfonia-bridge -- BRIDGE.example.md --check` into CI so schema drift between `config.rs` and the example doc fails the build. Listed in §1 as one of the Phase 1 deliverables' implicit guarantees but not currently enforced by a CI job — add it when CI is being touched anyway.
-- **Manual verification.** Two docs are pending real-world manual runs:
+- **Manual verification (across phases).** Three docs are pending real-world runs:
   - `docs/v0.3-plan/01-bridge-mvp-VERIFY.md` (NOT yet written; plan §9.3 calls for end-to-end verification against a real Linear project + sandbox GitHub repo before declaring v0.3.0-alpha.1 shippable).
-  - `docs/v0.3-plan/02-opencode-VERIFY.md` (written in P2; manual run against a real OpenCode install + Linear project still pending). Both should be exercised before tagging `v0.3.0-alpha.x` to an actual release. The 158 automated tests cover the logic; manual verification confirms the auth/credential dance against real services.
-- **STATUS doc retire path.** This file's "Phase 1 + 2" framing accretes per merged phase. Two options: (a) keep accreting new sections per phase, (b) freeze this as `docs/v0.3-plan/STATUS-phase-1-2.md` (or `STATUS-archive.md`) and start a fresh `STATUS.md` once Phase 3 is in flight. Decide if/when this file starts to feel noisy — current length (~390 lines) is still manageable.
+  - `docs/v0.3-plan/02-opencode-VERIFY.md` (written in P2; manual run against a real OpenCode install + Linear project still pending).
+  - `docs/v0.3-plan/03-telemetry-VERIFY.md` (written in P3; the §3 protocol — bring up Collector + Postgres + drive one ticket cycle + verify the $0.01 cap-hit transition — pending).
+  All three should be exercised before tagging `v0.3.0-alpha.x` to an actual release. The 183 automated tests cover the logic; manual verification confirms the auth/credential dances + the wire-level cap-hit transition against real services.
+- **STATUS doc retire path.** This file's "Phase 1 + 2 + 3" framing accretes per merged phase. Current length (~530 lines) is still manageable; the natural cut point is between v0.3 and v0.4 milestones, not between phases within v0.3. Re-evaluate at v0.3.0 release tag.
 
 ---
 
@@ -152,21 +189,24 @@ These items surfaced during Phases 1 or 2 but were not in scope. They are not bl
 sinfonia/
 ├── Cargo.toml                   # workspace manifest; shared [workspace.dependencies]
 ├── Cargo.lock
+├── config/
+│   └── cost_table.yaml          # P3 — embedded via include_str! into sinfonia-bridge; overridable via bridge.cost_table_path
 ├── crates/
 │   ├── sinfonia/                # the daemon (existing)
 │   │   ├── Cargo.toml
 │   │   ├── src/
 │   │   │   ├── agent/           # raw + CLI agent backends (incl. opencode.rs from P2)
-│   │   │   ├── config/          # WORKFLOW.md parser; typed config
+│   │   │   ├── config/          # WORKFLOW.md parser; typed config (P3 adds TelemetryConfig)
 │   │   │   ├── domain.rs        # orchestrator-only types + re-exports
 │   │   │   ├── errors.rs        # sinfonia::Error (wraps tracker::Error)
-│   │   │   ├── http/            # axum dashboard + /api/v1/state
+│   │   │   ├── http/            # axum dashboard + /api/v1/state + P3 events.rs (subscribers + emitter)
 │   │   │   ├── lib.rs
-│   │   │   ├── main.rs          # clap entry
-│   │   │   ├── orchestrator/    # polling, dispatch, runner, retries
+│   │   │   ├── main.rs          # clap entry; P3 wires telemetry::init_observability + emitter task
+│   │   │   ├── orchestrator/    # polling, dispatch (P3 DispatchOutcome), runner (P3 session/turn spans), retries
+│   │   │   ├── telemetry/       # P3 — mod.rs (init_observability), tenant.rs (resolver), spans.rs (constants)
 │   │   │   ├── template.rs      # Liquid prompt rendering (H-1 well-known seed)
 │   │   │   ├── tracker.rs       # shim re-exporting sinfonia_tracker + build_from_config
-│   │   │   └── workspace/       # per-issue dir + hooks
+│   │   │   └── workspace/       # per-issue dir + hooks (P3 workspace.hook span)
 │   │   └── tests/
 │   │       └── spec_conformance.rs
 │   ├── sinfonia-tracker/        # shared tracker abstraction
@@ -174,26 +214,51 @@ sinfonia/
 │   │   └── src/
 │   │       ├── lib.rs           # IssueTracker trait + re-exports
 │   │       ├── config.rs        # TrackerKind, TrackerConfig
-│   │       ├── custom_fields.rs # CustomFieldValue, MARKER, WELL_KNOWN_FIELDS, codec
+│   │       ├── custom_fields.rs # CustomFieldValue, MARKER, WELL_KNOWN_FIELDS (P3 + sinfonia_budget_exhausted_at), codec
 │   │       ├── error.rs         # tracker-specific Error
-│   │       ├── jira.rs          # JiraTracker (defaults for bridge-write methods)
-│   │       ├── linear.rs        # LinearTracker (full bridge-write impls)
+│   │       ├── jira.rs          # JiraTracker (defaults for bridge-write methods — Phase 4 fills these in)
+│   │       ├── linear.rs        # LinearTracker (full bridge-write impls; P3 tracker.fetch span)
 │   │       └── types.rs         # Issue (with .fields), IssueState, BlockerRef, ChildRef
-│   └── sinfonia-bridge/         # the bridge daemon — Phase 1 complete (config + webhook + feedback loop + GitHub auth + --self-test + wiremock integration tests + Phase 1 docs all landed; v0.3.0-alpha.1)
+│   └── sinfonia-bridge/         # the bridge daemon — Phase 1 + 3 complete (config + webhook + feedback loop + GitHub auth + --self-test + wiremock integration tests + Phase 1 docs + OTel telemetry + typed event channel + budget enforcement); v0.3.0-alpha.1 + Unreleased Phase 3 entries
+│       ├── src/
+│       │   ├── config.rs        # BRIDGE.md parser (P3 added TelemetrySection.headers)
+│       │   ├── events.rs        # P3 — POST /api/v1/sinfonia-events inbound handler
+│       │   ├── feedback/        # attempts, categorize, transition (P1-F) + P3 cost.rs + budget.rs
+│       │   ├── github/          # PAT + App auth (P1-G)
+│       │   ├── labels.rs        # LabelManager (P1-F)
+│       │   ├── lib.rs
+│       │   ├── main.rs          # P3 wires BudgetManager + debounce reconciler
+│       │   ├── selftest.rs      # --self-test runner (P1-G)
+│       │   ├── storage.rs       # SQLite (P1-E)
+│       │   ├── telemetry/       # P3 — sibling of sinfonia's telemetry/
+│       │   └── webhook/         # handlers, mod, verify (P3 reused by events.rs)
+│       └── tests/
+│           └── bridge_e2e.rs    # P1-H wiremock integration suite
 ├── docs/
-│   ├── SPEC.md                  # Symphony spec; §11.6 (bridge extension contract) draft landed in P1-I
+│   ├── SPEC.md                  # Symphony spec; §11.6 (bridge extension contract) + P3 §11.6.11/§11.6.12 + §18.2 OTel
 │   └── v0.3-plan/
 │       ├── 00-overview.md       # milestone index + revision history
-│       ├── 01-bridge-mvp.md     # Phase 1 plan (source of truth)
-│       ├── 02-..07-…            # later-phase plans
+│       ├── 01-bridge-mvp.md     # Phase 1 plan
+│       ├── 02-opencode-backend.md / 02-opencode-VERIFY.md  # Phase 2 plan + verify
+│       ├── 03-telemetry-budget.md / 03-telemetry-VERIFY.md # Phase 3 plan + verify
+│       ├── 04-jira-bridge.md    # Phase 4 plan (next pickup)
+│       ├── 05-skills-cli.md     # Phase 5 plan
+│       ├── 06-docker.md         # Phase 6 plan
+│       ├── 07-docs.md           # Phase 7 plan
 │       └── STATUS.md            # this file
+├── examples/
+│   └── telemetry/               # P3 — reference Collector + Postgres deployment
+│       ├── README.md            # wiring guide + span / attribute reference + multi-tenant routing notes
+│       ├── otel-collector-config.yaml
+│       ├── postgres-schema.sql  # sessions, attempts, events tables + indexes
+│       └── queries/             # 01-tenant-monthly-cost, 02-first-try-rate, 03-budget-heavy-tickets
 ├── scripts/
 │   └── verify-workspace-move.sh # one-shot gate for the P1-A commit
 ├── Dockerfile                   # current dev-shell image; refactored in Phase 6
 ├── docker-compose.yml           # current dev-shell compose; refactored in Phase 6
 ├── BRIDGE.example.md            # new in P1-I — fully-commented working bridge config (parses under `--check`)
-├── README.md                    # "What's new in v0.3 (preview)" stub landed in P1-I; Phase 7 expands
-├── CHANGELOG.md                 # [0.3.0-alpha.1] entry landed in P1-I
+├── README.md                    # "What's new in v0.3 (preview)" stub (P1-I) + P3 Observability section
+├── CHANGELOG.md                 # [0.3.0-alpha.1] (P1) + Unreleased (P2 + P3)
 └── WORKFLOW.example.md          # already documents states: block usage
 ```
 
@@ -311,45 +376,151 @@ The script exists because the workspace-move commit needed a verifiable "logic u
 
 **Implication:** if Phase 3 (or any later phase) needs preflight binary checks — Phase 6's docker image bootstrap might, Phase 5's setup skills definitely will — reuse `which` instead of shelling out to `command -v`. The crate handles Windows path-extension semantics that `command -v` doesn't. The pre-existing `cli.rs` preflight (for `claude` and `codex`) was written before `which` was a workspace dep; refactoring it to use `which` is below the threshold for Phase 3's scope but could happen as part of Phase 6's docker work if `cli.rs` gets touched anyway.
 
+### 5.13 OTel crate version delta is ~8 minors past the plan-doc proposal
+
+**Plan doc (`03-telemetry-budget.md` §10):** `opentelemetry = 0.24` / `opentelemetry_sdk = 0.24` + `rt-tokio` / `opentelemetry-otlp = 0.17` + `grpc-tonic + http-proto` / `tracing-opentelemetry = 0.25`.
+**Implementation (`Cargo.toml` workspace deps):** `opentelemetry 0.32` / `opentelemetry_sdk 0.32` + `rt-tokio` / `opentelemetry-otlp 0.32` + `grpc-tonic + http-proto` / `opentelemetry-semantic-conventions 0.32` + `semconv_experimental` / `tracing-opentelemetry 0.33`.
+
+**Why:** the OTel Rust crates moved roughly eight minors past the plan-doc numbers in the ~6 months between plan write and Phase 3 start. The four-crate release shipped together on 2026-05-08 (opentelemetry / sdk / otlp 0.32); `tracing-opentelemetry 0.33` followed on 2026-05-18, tracking `opentelemetry 0.32` as `^0.32`. Feature-flag names the plan doc proposed held up — only the version numbers needed re-pinning.
+
+**Implication for future phases:** the Phase 2 §5.10 + Phase 3 vendor-doc-spike pattern generalizes — any time a plan doc references a vendor library version, OTel exporter env var, or wire-format dialect, verify against the upstream docs before writing code. The 30-minute spike is cheap insurance against re-doing the work post-merge. Captured in `docs/v0.3-plan/03-telemetry-VERIFY.md` §1.
+
+### 5.14 OTel 0.32 SDK API differs from plan-doc snippet
+
+**Plan doc (`03-telemetry-budget.md` §2):**
+```rust
+opentelemetry_sdk::trace::TracerProvider::builder()
+    .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+```
+**Implementation (`telemetry/mod.rs` of both crates):**
+```rust
+opentelemetry_sdk::trace::SdkTracerProvider::builder()
+    .with_batch_exporter(exporter)  // runtime picked from `rt-tokio` feature
+```
+
+**Why:** the provider type renamed (`TracerProvider` → `SdkTracerProvider`) and `with_batch_exporter` now takes the exporter alone — the batch processor implicitly picks the runtime from the SDK's feature flags. Phase 3 captures this in the `init_observability` rustdoc; future OTel-touching code should reference the rustdoc, not the plan-doc snippet.
+
+### 5.15 Semantic conventions: `SERVICE_NAMESPACE` is gated behind `semconv_experimental`
+
+**Plan doc** anchors the routing-processor split on `service.namespace = tenant_id` (§3.3) without addressing how to reference the constant.
+**Implementation:** `opentelemetry-semantic-conventions 0.32` ships a `semconv_experimental` feature that gates `SERVICE_NAMESPACE` + `SERVICE_INSTANCE_ID` constants. The crate's "stable" subset is essentially just `SERVICE_NAME`; the feature flag is a versioning hedge against churn in the wider semconv spec.
+
+**Implication:** the feature is enabled at workspace scope with a comment. Long term — if the constants are promoted to stable (likely; the underlying conventions ARE stable) — drop the feature flag and the comment together. No code change needed.
+
+### 5.16 OTel metrics layer deferred to Phase 3.1; span-derived dashboards in v0.3
+
+**Plan doc (`03-telemetry-budget.md` §6):** lists nine OTel metric instruments (`sinfonia.agent.tokens_total` Counter, `bridge.cost_per_ticket_usd` Histogram, etc.) on a `MeterProvider`.
+**Implementation:** zero metrics shipped in v0.3. Twelve spans shipped instead.
+
+**Why:** the §8.2 dashboard SQL queries (`examples/telemetry/queries/*.sql`) read from span attributes via the `events` table, not from OTel metric points. The plan exit criteria (`docs/v0.3-plan/03-telemetry-budget.md` §9.3) are met span-derived. Setting up a `MeterProvider` + 9 instrumented sites is substantial work whose primary consumer is the same span-attribute set we already emit. Adding metrics later is purely additive — existing spans stay; new metric sites layer on top.
+
+**Implication:** future patches adding metrics should NOT change span attribute names (the dashboards depend on them) — instrument metric sites at the same locations the spans currently emit, with the same attribute names where they overlap. The one metric without a span analog is `sinfonia.orchestrator.concurrent_runs` (a gauge needs the in-process state.running.len(), not an event); see `03-telemetry-VERIFY.md` §2.3.
+
+### 5.17 OTel emission is opt-in by configuration
+
+**Implementation:** when `telemetry.otlp_endpoint` is unset in the parsed config AND `OTEL_EXPORTER_OTLP_ENDPOINT` env var is unset, `build_otel_layer` returns `(None, None)` and the binary's behavior matches v0.3.0-alpha.1 — stdout-only. Logged at startup with `telemetry initialized otel_enabled=false`.
+
+**Implication:** the metrics-layer addition (v0.3.1) can land without breaking deployments that don't want OTel — the same opt-in gate applies. Phase 4's Jira adapter, Phase 5's setup skills, and Phase 6's docker image all run cleanly without OTel configured.
+
+### 5.18 Sinfonia↔bridge HMAC scheme reuses the GitHub-webhook verify helper
+
+**Implementation:** Sinfonia's outbound POST signer (`crates/sinfonia/src/http/events.rs::sign`) produces a `sha256=<hex>` header value. The bridge verifies via `crates/sinfonia-bridge/src/webhook/verify.rs::verify_signature` — the SAME helper that verifies GitHub's `X-Hub-Signature-256`. Only the header name differs (`X-Sinfonia-Signature-256` for the typed channel, `X-Hub-Signature-256` for the GitHub webhook).
+
+**Why:** zero algorithm fork — one constant-time HMAC-SHA256 compare on the bridge side, two callers. If a security review finds a flaw in the verify helper, the fix lands once and protects both inbound channels. The header-name split lets a reverse proxy / API gateway route GitHub webhooks separately from Sinfonia events without inspecting the body.
+
+**Implication:** if a third HMAC-signed inbound path appears, route it through the same helper — DO NOT introduce a parallel verify function. The header-name choice is the dispatch key. Pinned by `bridge::events::tests::hmac_signature_format_matches_sinfonia`.
+
+### 5.19 `TurnOutcome::Completed` carries `usage` directly
+
+**Before Phase 3:** `TurnOutcome::Completed { final_message: String }`. The per-turn `TokenUsage` was passed into `AgentEvent::TurnCompleted` via the event channel and then DROPPED at the runner — the orchestrator dashboard kept a running view, but the runner couldn't aggregate session totals without re-reading the channel.
+**After Phase 3:** `TurnOutcome::Completed { final_message: String, usage: TokenUsage }`. Every backend already had the `total_usage` value at the call site (`turn.rs:total_usage`, `cli.rs:parsed.usage`, `opencode.rs:parsed.usage`); they just weren't surfacing it.
+
+**Implication:** future agent backends MUST also populate `usage` (the trait method signature carries it). `TokenUsage::default()` is acceptable for backends that genuinely don't track tokens (CodexAppServer stub). The runner aggregates per-session totals at the natural exit point (`crates/sinfonia/src/orchestrator/runner.rs`) and emits them on the `runner.session` span + the `SessionCompleted` event.
+
+### 5.20 `Orchestrator::dispatch_one` returns `DispatchOutcome`, not `bool`
+
+**Before Phase 3:** `dispatch_one(...) -> bool` where `true` = "keep trying" and `false` = "no slot, break."
+**After Phase 3:** `dispatch_one(...) -> DispatchOutcome::{Dispatched, Skipped, NoSlot}` with `continue_loop()` + `is_dispatched()` helpers.
+
+**Why:** `orchestrator.tick`'s `dispatched_count` attribute (plan §4) needs to know how many candidates actually spawned a worker — the prior bool conflated "spawned" with "ineligible / already-running, but keep going." `retries::tick_retries` uses `outcome.continue_loop()` to preserve its existing "no slot → requeue" semantics; tick uses `outcome.is_dispatched()` to count.
+
+**Implication:** future callers MUST match exhaustively or use the helpers. Don't reach for a fourth variant on a whim — `Skipped` already covers "eligible but already running" and "ineligible" (they're indistinguishable from the orchestrator's point of view). Adding a fifth `OutcomeReason` for that distinction would surface where it isn't currently needed.
+
+### 5.21 Cost values use `rust_decimal::Decimal` end-to-end
+
+**Implementation:** `crates/sinfonia-bridge/src/feedback/{cost,budget}.rs` use `Decimal` for `compute_cost`, the per-ticket accumulator's `pending_cost_usd` and `running_total_cost_usd`, the cap-comparison, AND the flush. `cost_to_string(Decimal)` is the one place we cross to a string for the tracker write (per STATUS §5.1: money is NEVER f64 on the wire).
+
+**Why:** `f64` arithmetic on tiny cost deltas (e.g. claude-haiku-4-5 at 1µ + 5µ USD per million tokens × few-thousand tokens) accumulates error fast. `Decimal` preserves exact arithmetic; the stringification step at the tracker boundary rounds to 4 decimal places (sufficient for the per-million-token rates at current prices).
+
+**Implication:** Phase 4's Jira adapter writes the same stringified value to a text-typed customfield. Phase 5's setup skills, when generating cost-cap dashboard helpers, should treat the stored value as text and `::numeric` cast in SQL (see `examples/telemetry/queries/01-tenant-monthly-cost.sql`). No part of the v0.3 wire format carries a JSON number for money.
+
+### 5.22 M-2 freshness gate is asymmetric: token caps survive, cost caps don't
+
+**Implementation:** `CostTable::accepts_cost_caps(today)` returns `false` when `today - verified_at > 180 days`. `BudgetManager::apply_session` only enforces cost caps when the table accepts them; token caps fire unconditionally.
+
+**Why:** a stale cost table can over- or under-charge by an unbounded factor (provider prices halve / double on a single release). Token caps stay correct under stale data — they're a count, not a price. Operators who care about cost SLOs need fresh data; operators who only want a token-count guardrail get one regardless.
+
+**Implication:** future cost-table updates (the M-2 follow-up — replacing `verified_at: <hardcoded date>` with `chrono::Utc::now()` whenever the table changes) need to bump the date in the YAML AND ensure the price values are actually current. The 180-day window is conservative; if pricing churn accelerates (e.g. provider announces monthly price changes) tighten the constant in `crates/sinfonia-bridge/src/feedback/cost.rs::COST_CAP_BLOCK_DAYS`.
+
+### 5.23 The 30-second debounce flush is per-ticket, not global
+
+**Implementation:** `BudgetManager`'s `state.tickets: HashMap<String, TicketAccumulator>` carries per-ticket `last_event_at`. The reconciler runs every 5 seconds (`spawn_debounce_reconciler`) and flushes any ticket where `now - last_event_at >= 30s` AND there are pending deltas. Cap-crossings bypass the debounce entirely and flush immediately.
+
+**Why:** Linear's tracker write is a read-modify-write on a single bot-owned comment per ticket. A busy ticket emits 3-5 `runner.session.completed` events per minute; writing the comment each time burns Linear API budget on values nobody reads until the next agent dispatch. Coalescing to 30 s idle drops the write rate ~10× with no observable user impact (the cost-cap dashboards read span attributes, not the tracker comment).
+
+**Implication:** the accumulator is in-process state. It does NOT survive bridge restart. On restart the bridge re-reads the last persisted totals from the tracker as the new baseline; any deltas pending at restart are lost. Acceptable per plan §7.3 — budget caps are an SLO, not a billing system. Phase 4's Jira adapter inherits the same trade-off (Jira's text customfield + the 30 s debounce both work identically).
+
+### 5.24 `BudgetManager` is held in `AppState`; `with_default_budget(...)` builds it for tests
+
+**Implementation:** `crates/sinfonia-bridge/src/webhook/mod.rs::AppState` carries `budget: BudgetManager` alongside `config`, `store`, `tracker`, `gh`, `labels`. Production wires it in `main.rs` after loading the cost table; tests + the P1-H integration suite use `AppState::with_default_budget(cfg, store, tracker, gh, labels)` which builds a BudgetManager from the embedded cost table.
+
+**Why:** production needs to honor `bridge.cost_table_path` overrides (per plan §7.1). Tests don't care. Splitting the constructor into a "production" form (`AppState::new(... budget)`) and a "test" convenience (`AppState::with_default_budget(...)`) keeps the test ergonomics unchanged while letting `main.rs` thread the override through.
+
+**Implication:** Phase 4's Jira integration tests should adopt `with_default_budget` like the Linear tests do — the budget pipeline is tracker-agnostic, and the default cost table works for any provider/model lookup.
+
 ---
 
 ## 6. Resume protocol — first commands a fresh agent should run
 
 ```bash
-# 1. Land on a clean main with the full Phase 1 of v0.3.
+# 1. Land on a clean main with the full Phase 1 + 2 + 3 of v0.3.
 git checkout main
 git pull --ff-only origin main
 
-# 2. Confirm test baseline (should be 158 passing tests, zero failures).
+# 2. Confirm test baseline (should be 183 passing tests, zero failures).
 cargo test --workspace --no-fail-fast 2>&1 | grep -E "test result"
 
 # 3. Read the rolling status (this file), the milestone overview, and the
-#    Phase 3 plan.
+#    Phase 4 plan.
 cat docs/v0.3-plan/STATUS.md
 cat docs/v0.3-plan/00-overview.md
-cat docs/v0.3-plan/03-telemetry-budget.md
+cat docs/v0.3-plan/04-jira-bridge.md
 
-# 4. Spot-check Phase 1 + 2 deliverables on disk (none of these should error).
-ls crates/sinfonia-bridge/src/        # expect: config.rs, lib.rs, main.rs, storage.rs, labels.rs, selftest.rs, webhook/, feedback/, github/
-ls crates/sinfonia-bridge/tests/      # expect: bridge_e2e.rs
-ls crates/sinfonia/src/agent/opencode.rs    # Phase 2: the OpenCode CLI backend
+# 4. Spot-check Phase 1 + 2 + 3 deliverables on disk (none of these should error).
+ls crates/sinfonia-bridge/src/        # expect: config.rs, lib.rs, main.rs, storage.rs, labels.rs, selftest.rs, webhook/, feedback/, github/, telemetry/, events.rs
+ls crates/sinfonia-bridge/src/feedback # expect: attempts.rs, budget.rs, categorize.rs, cost.rs, mod.rs, transition.rs
+ls crates/sinfonia/src/telemetry/     # Phase 3: tenant.rs, spans.rs, mod.rs
+ls crates/sinfonia/src/http/events.rs # Phase 3: subscriber-emitter + endpoints
+ls examples/telemetry/                # Phase 3: postgres-schema.sql, otel-collector-config.yaml, queries/, README.md
 ls BRIDGE.example.md                  # Phase 1 docs, P1-I
 cargo run -q -p sinfonia-bridge -- BRIDGE.example.md --check  # expect: ok
 
-# 5. Read the Phase-3 hand-off blueprint before writing any code.
-#    Phase 3 layers tracing-opentelemetry over the existing subscribers and
-#    adds a typed Sinfonia→bridge event channel; the existing tracing wiring
-#    in both main.rs files is what gets wrapped.
-cat crates/sinfonia/src/main.rs            # subscriber init
-cat crates/sinfonia-bridge/src/main.rs     # symmetric init; will gain /events route
-cat crates/sinfonia/src/agent/turn.rs      # where runner.turn / runner.session spans land
-cat crates/sinfonia/src/orchestrator/runner.rs
+# 5. Read the Phase-4 hand-off blueprint before writing any code.
+#    Phase 4 fills in the Jira side of the IssueTracker trait extension
+#    that P1-B landed. The Linear adapter is the reference; the Jira
+#    adapter does NOT reproduce the marker-comment design — Jira has
+#    native customfields. Vendor docs (Jira REST + ADF) MUST be
+#    verified before writing code per the §5.13 + §5.10 lesson.
+cat crates/sinfonia-tracker/src/jira.rs           # current default impls
+cat crates/sinfonia-tracker/src/linear.rs         # reference (different design)
+cat crates/sinfonia-tracker/src/custom_fields.rs  # WELL_KNOWN_FIELDS, marker scheme
+grep -n "tracker.kind 'jira' not supported" crates/sinfonia-bridge/src/config.rs  # the gate Phase 4 removes
 
-# 6. Start a Phase 3 branch off main.
-git checkout -b v0.3-phase-3-telemetry
+# 6. Start a Phase 4 branch off main.
+git checkout -b v0.3-phase-4-jira
 ```
 
-Phase 1 + Phase 2 of v0.3 are complete (P1-A..P1-I + P2 all merged). Phase 3 (Telemetry + budget enforcement) is the next pickup; Phases 4..7 follow in plan-doc order unless a parallel run is desired (see §7 below for which inter-phase dependencies are real — Phase 4 is the next plausible parallel candidate after Phase 3 starts, since it only depends on Phase 1 and touches disjoint code).
+Phase 1 + Phase 2 + Phase 3 of v0.3 are complete (P1-A..P1-I + P2 + P3 all merged). Phase 4 (Jira bridge support) is the next pickup; Phases 5..7 follow in plan-doc order. After Phase 4 lands, Phase 5 (setup skills + CLI), Phase 6 (Docker images), and Phase 7 (documentation) round out v0.3.
 
 ---
 
@@ -362,7 +533,7 @@ From the second-pass `gsd-plan-checker` review. The originals are in `docs/v0.3-
 | ID | Gist | Resolve when |
 |---|---|---|
 | **M-1** | Phase 2 depends only on Phase 1's workspace conversion, not the rest of P1. Parallelism unlock. | ✅ Closed by Phase 2 merge (PR #9, commit `3b84a20`, merge `f26aca7`). No longer applicable. |
-| **M-2** | Cost-table drift gate is asymmetric. Refuse cost caps (not token caps) when table >180 days old. | Phase 3 implementation (next pickup). The embedded cost table lives in the budget-enforcement module per `03-telemetry-budget.md`; the drift gate fires at config-load time. |
+| **M-2** | Cost-table drift gate is asymmetric. Refuse cost caps (not token caps) when table >180 days old. | ✅ Closed by Phase 3 merge (PR #10, commit `6eaf4c2`). Implemented in `crates/sinfonia-bridge/src/feedback/cost.rs::accepts_cost_caps` + `BudgetManager::new`. Pinned by `feedback::cost::tests::freshness_gate_warn_and_block`. See §5.22. |
 | **M-4** | (Closed) §6's "tracker poll every 60s" was rewritten to webhook-driven. | N/A — done. |
 | **M-8** | `inquire` should be `crates/sinfonia/Cargo.toml`-scoped, not workspace-scoped. | Phase 5. |
 
@@ -380,9 +551,20 @@ From the second-pass `gsd-plan-checker` review. The originals are in `docs/v0.3-
 
 | Topic | Where | When to address |
 |---|---|---|
-| Vendor-CLI flag deltas (Phase 2 plan-doc surface didn't match `opencode.ai/docs`) | `opencode.rs` rustdoc + `docs/v0.3-plan/02-opencode-VERIFY.md` | ✅ resolved in P2; pattern documented in §5.10 for future phases (especially Phase 3's OTel exporter env vars). |
+| Vendor-CLI flag deltas (Phase 2 plan-doc surface didn't match `opencode.ai/docs`) | `opencode.rs` rustdoc + `docs/v0.3-plan/02-opencode-VERIFY.md` | ✅ resolved in P2; pattern documented in §5.10 for future phases. Generalized in Phase 3 §5.13 (OTel crate-version delta). The lesson is now phase-agnostic. |
 | Manual end-to-end verification of OpenCode against a real Linear project | `docs/v0.3-plan/02-opencode-VERIFY.md` §5.3 | Before tagging `v0.3.0-alpha.x` to an actual release. The 9 new tests cover logic; manual run confirms the OpenCode auth dance and the per-state routing. |
-| `cli.rs` preflight could migrate to `which` now that it's a workspace dep | `crates/sinfonia/src/agent/cli.rs` preflight helper | Optional; below threshold for Phase 3. Could fold into Phase 6 if `cli.rs` gets touched anyway for docker-image work. See §5.12. |
+| `cli.rs` preflight could migrate to `which` now that it's a workspace dep | `crates/sinfonia/src/agent/cli.rs` preflight helper | Optional; below threshold for Phase 3 (was not touched). Could fold into Phase 6 if `cli.rs` gets touched anyway for docker-image work. See §5.12. |
+
+### Found during P3 implementation
+
+| Topic | Where | When to address |
+|---|---|---|
+| OTel crate-version delta (~8 minors past the plan-doc proposal). The vendor-doc-spike lesson from P2 §5.10 generalizes — any plan-referenced vendor surface MUST be re-verified before writing code. | `Cargo.toml` workspace deps + `03-telemetry-VERIFY.md` §1 | ✅ resolved in P3; documented in §5.13. Forward-relevant for Phase 4 (Jira REST + ADF schema), Phase 5 (`inquire` API), Phase 6 (multi-arch Docker base images). |
+| OTel metrics layer (9 instruments per plan §6) deferred to v0.3.1. The §8.2 dashboard SQL reads span attributes from the events table, NOT OTel metric points, so plan exit criteria met span-derived. | `03-telemetry-VERIFY.md` §2.1 (per-metric span-derived equivalent) | v0.3.1 — focused patch with `MeterProvider` setup + the 9 instruments. Future patches MUST NOT change span attribute names (the dashboards depend on them) — see §5.16. |
+| Wire-level integration tests (`tests/telemetry_e2e.rs`, `tests/budget_e2e.rs`) deferred to v0.3.1. Algorithmic surface pinned by unit suite; the wire concern is covered by manual verification per Phase 3 plan §9.3 + the existing P1-H wiremock harness for the tracker-write side. | `03-telemetry-VERIFY.md` §2.5 (concern-to-test cross-reference table) | v0.3.1 — promote when a regression surfaces against the unit-tested surface, OR when manual verification runs for the first time and a wire bug is found. |
+| Manual end-to-end verification against the reference Collector + Postgres stack + a `$0.01` cap-hit scenario | `docs/v0.3-plan/03-telemetry-VERIFY.md` §3 protocol | Before tagging `v0.3.0-alpha.x` to an actual release. The 183 automated tests cover logic; manual run confirms the OTLP gRPC handshake + the cap-hit transition end-to-end. |
+| `bridge.pr_label` span not implemented; the existing `labels.rs` tracing logs cover the dashboard need. | `crates/sinfonia-bridge/src/labels.rs` | Re-evaluate if a `bridge.pr_label`-keyed dashboard query lands and the log-emission isn't enough. Below threshold otherwise. |
+| `sinfonia.orchestrator.concurrent_runs` gauge has no span analog — it's a true gauge over `state.running.len()`. Lands with the OTel metrics layer. | `crates/sinfonia/src/orchestrator/state.rs` | v0.3.1 alongside the metrics layer. The metric site is on `state.running` mutations (claim / release). |
 
 ---
 
@@ -393,9 +575,10 @@ For the next agent's first message to itself when context is fresh:
 ```
 Working directory: /Users/brettlee/work/sinfonia
 Current branch: main (assumed; verify with `git branch --show-current`)
-Last merged work: P2 OpenCode agent backend (PR #9, commit 3b84a20, merge f26aca7)
-                  — **Phase 2 of v0.3 is now complete.**
-Earlier merges: P1-I Phase 1 docs (PR #8, commit a057218, merge e8f224a)
+Last merged work: P3 telemetry + budget enforcement (PR #10, merge 707a812)
+                  — **Phase 3 of v0.3 is now complete.**
+Earlier merges: P2 OpenCode agent backend (PR #9, commit 3b84a20, merge f26aca7);
+                P1-I Phase 1 docs (PR #8, commit a057218, merge e8f224a)
                   — closed out Phase 1 of v0.3;
                 P1-H wiremock integration tests (PR #7, commit d7ad72d, merge 749c9c4);
                 P1-G GitHub auth (PR #6, commit b0d7272, merge 8055659);
@@ -407,35 +590,54 @@ Earlier merges: P1-I Phase 1 docs (PR #8, commit a057218, merge e8f224a)
 Read these in this order:
   1. docs/v0.3-plan/STATUS.md   (this file — rolling milestone status)
   2. docs/v0.3-plan/00-overview.md   (milestone index, phase deps)
-  3. docs/v0.3-plan/03-telemetry-budget.md   (Phase 3 plan; next pickup)
-     — and skim the four hand-off files in §2 above before writing code:
-     crates/sinfonia/src/main.rs (subscriber init that Phase 3 wraps),
-     crates/sinfonia-bridge/src/main.rs (symmetric init + future /events),
-     crates/sinfonia/src/agent/turn.rs and
-     crates/sinfonia/src/orchestrator/runner.rs (where the runner.session
-     / runner.turn spans land).
+  3. docs/v0.3-plan/04-jira-bridge.md   (Phase 4 plan; next pickup)
+     — and skim the hand-off files in §2 above before writing code:
+     crates/sinfonia-tracker/src/jira.rs (current default impls),
+     crates/sinfonia-tracker/src/linear.rs (reference impl; different design),
+     crates/sinfonia-tracker/src/custom_fields.rs (WELL_KNOWN_FIELDS + marker scheme),
+     crates/sinfonia-bridge/src/config.rs (the Rule 2 Jira-rejection gate).
+     Vendor docs (Jira REST + ADF schema) MUST be re-verified before code
+     per the §5.13 / §5.10 lesson.
 
 Source of truth for the underlying change set:
   /Users/brettlee/Downloads/sinfonia-change-proposal.md
 
 Workspace shape:
   crates/sinfonia/         — the daemon; Phase 2 added src/agent/opencode.rs
-                             as a sibling of cli.rs. Phase 3 wraps
-                             src/main.rs subscriber init and adds an OTel
-                             layer.
+                             as a sibling of cli.rs. Phase 3 added
+                             src/telemetry/{mod,tenant,spans}.rs and
+                             src/http/events.rs (subscriber-emitter +
+                             registry + recent-buffer ring + endpoints).
   crates/sinfonia-tracker/ — shared tracker (Linear + Jira adapters,
-                             custom_fields). Phase 3 adds new
-                             budget-related keys to WELL_KNOWN_FIELDS
-                             (see §5.2 and the §7 "Found during P1"
-                             checklist).
-  crates/sinfonia-bridge/  — bridge binary; Phase 1 complete, ships as
-                             v0.3.0-alpha.1. Phase 3 adds the /events
-                             route + budget-enforcement module.
+                             custom_fields). Phase 3 added
+                             sinfonia_budget_exhausted_at to
+                             WELL_KNOWN_FIELDS. Phase 4 fills in the
+                             five Jira write methods that currently
+                             return default-impl errors.
+  crates/sinfonia-bridge/  — bridge binary; Phase 3 added telemetry/,
+                             events.rs (inbound typed events),
+                             feedback/{cost,budget}.rs (cost table +
+                             accumulator + 30s debounce). The
+                             /api/v1/sinfonia-events route reuses
+                             webhook::verify::verify_signature.
 
-Test baseline: 158 passing, 0 failures (40 sinfonia unit + 13 conformance
-+ 7 tracker + 89 bridge unit + 9 bridge integration). Phase 3 adds
-~300 LOC of tests per 03-telemetry-budget.md; do not regress the
-existing 158.
+Test baseline: 183 passing, 0 failures (44 sinfonia unit + 14 conformance
++ 7 tracker + 107 bridge unit + 9 bridge integration + 2 sinfonia http
+events). Phase 4 adds ~150 LOC of tests per 04-jira-bridge.md; do not
+regress the existing 183.
+
+Reference assets:
+  config/cost_table.yaml                 — embedded; override via
+                                            bridge.cost_table_path
+  examples/telemetry/                    — Postgres schema + Collector
+                                            config + 3 dashboard
+                                            queries + README
+  docs/v0.3-plan/03-telemetry-VERIFY.md  — Phase 3 verify doc:
+                                            crate-version delta,
+                                            metrics-deferral rationale,
+                                            integration-test deferral
+                                            cross-reference, manual
+                                            verification protocol
 ```
 
 ---
@@ -505,4 +707,58 @@ Phase 2 of v0.3 is **shippable on top of Phase 1**. Phases 3–7 layer on top of
 
 ---
 
-**Last actionable step before clearing context:** check `docs/v0.3-plan/STATUS.md` reads cleanly (this file), then `git push` if any local-only changes remain. Phase 3 picks up from a fresh context with this doc as the entry point.
+---
+
+## 11. What Phase 3 shipped (closing summary)
+
+All success criteria from the Phase 3 deliverable checklist (`03-telemetry-budget.md` §12) are met, with two items explicitly deferred to v0.3.1 (OTel metrics layer + wire-level integration tests; see §7 "Found during P3 implementation" and `docs/v0.3-plan/03-telemetry-VERIFY.md` §2):
+
+**OTel emission (both binaries):**
+- OTel client crate set (`opentelemetry 0.32`, `opentelemetry_sdk 0.32`, `opentelemetry-otlp 0.32`, `opentelemetry-semantic-conventions 0.32` + `semconv_experimental`, `tracing-opentelemetry 0.33`) added to `[workspace.dependencies]`. Version set verified at impl time — the plan-doc proposed numbers were ~8 minors stale; feature-flag names held up. See §5.13.
+- `crates/sinfonia/src/telemetry/` module with `mod.rs` (`init_observability(format, telemetry) -> ObservabilityGuard`), `tenant.rs` (`TenantId::resolve` precedence chain), `spans.rs` (span name + attribute key constants).
+- `crates/sinfonia-bridge/src/telemetry/` mirror with the same shape; sibling not shared because span-name evolution is per-binary.
+- Six daemon spans per §4: `orchestrator.tick`, `orchestrator.dispatch`, `runner.session`, `runner.turn`, `workspace.hook`, `tracker.fetch`. All carry the resolved `tenant_id`.
+- Five bridge spans per §5: `bridge.webhook`, `bridge.ci_result`, `bridge.state_transition`, `bridge.cap_hit`, `bridge.events_receive`. Plus `bridge.cost_update` from `feedback::budget::flush_ticket`. `bridge.pr_label` deferred (covered by existing tracing logs).
+- Metric sites per §6: deferred to v0.3.1; §8.2 dashboards work span-derived from the events table per `examples/telemetry/queries/*.sql`.
+
+**Sinfonia → bridge typed event channel (§7.2):**
+- `AgentEvent::SessionCompleted` variant added in `crates/sinfonia/src/agent/events.rs`; emitted from `crates/sinfonia/src/orchestrator/runner.rs` immediately after `agent.stop_session(...)` per N-3.
+- `crates/sinfonia/src/http/events.rs` (~300 LOC): subscriber-emitter task consuming the existing `EventSender` channel via a fan-out tx, filtering for `SessionCompleted`, dispatching HMAC-SHA256-signed POSTs with retry-with-backoff (5 attempts, 250ms → 8s) and a 200-entry bounded ring buffer.
+- `POST /api/v1/events/subscribers` and `GET /api/v1/events/recent` endpoints on the Sinfonia HTTP surface.
+- `sinfonia_events_secret` plumbed through `ServiceConfig.telemetry` and used by the HMAC signer; the N-1 validation rule for "secret required when subscribe_url is set" already lived in BridgeConfig (P1-D prep).
+- `POST /api/v1/sinfonia-events` endpoint on the bridge, verifying the HMAC via the existing `webhook::verify::verify_signature` helper (zero algorithm fork — see §5.18).
+
+**Budget + cost pipeline (§7.3):**
+- `crates/sinfonia-bridge/src/feedback/cost.rs` (~290 LOC) with the embedded `config/cost_table.yaml` via `include_str!`, the M-2 asymmetric freshness gate (warn at 90 days, refuse cost caps at 180 days; token caps unconditional), and the OpenCode `provider/model` lookup adaptation.
+- `crates/sinfonia-bridge/src/feedback/budget.rs` (~480 LOC) with the per-process per-ticket accumulator, cap-detection (`Accumulated` / `CapHit { kind }`), 30s idle-flush debounce reconciler, and the cap-crossing path that flushes + transitions to `feedback_loop.budget_exceeded_state`.
+- Terminal-state detection via the existing GitHub webhook `pull_request.closed.merged=true` path: a new branch in `handle_pull_request` flushes the accumulator + emits the transition log.
+
+**Reference Collector → Postgres deployment:**
+- `examples/telemetry/postgres-schema.sql` + `otel-collector-config.yaml` + three `queries/*.sql` + `README.md`. Three §8.2 dashboard queries verified against the span-attribute path.
+
+**Tests + verification:**
+- Workspace tests: **183 passing, 0 failed** (up from 158 by +25). Per-area breakdown in §1 "Test baseline."
+- Manual verification protocol captured in `docs/v0.3-plan/03-telemetry-VERIFY.md` §3 (pending real-world run before tagging `v0.3.0-alpha.x`).
+
+**Documentation:**
+- `docs/SPEC.md` gains §11.6.11 (typed event channel contract — wire shape + HMAC contract) + §11.6.12 (budget enforcement surface — accumulator, debounce, freshness gates, per-ticket overrides) + a §18.2 RECOMMENDED entry for OpenTelemetry emission with `tenant_id`.
+- `CHANGELOG.md` `[Unreleased]` section carries the Phase 3 Added / Changed / Deferred-to-v0.3.1 blocks.
+- `README.md` gains the Phase 3 What's-new bullet + a new Observability section showing the env-var path + pointing at the Collector config + dashboard queries.
+- `docs/v0.3-plan/03-telemetry-VERIFY.md` (new) captures the OTel crate-version delta, the SDK API rename, the `semconv_experimental` gating decision, the OTel-metrics + integration-test deferrals with span-derived equivalents / unit-coverage cross-references, the known-good integration points, and the §9.3 manual-verification protocol.
+
+Phase 3 of v0.3 is **shippable on top of Phase 1 + Phase 2**. Phase 4 (Jira bridge), Phase 5 (skills + CLI), Phase 6 (Docker images), and Phase 7 (documentation) layer on top of all three.
+
+---
+
+**Phase 3 retrospective bullets** (for the v0.3 retro, when one is written):
+
+- The vendor-doc-spike pattern from Phase 2 §5.10 generalized cleanly to Phase 3: the OTel crate set was ~8 minors past the plan doc, and a 5-minute hit-the-crates.io-API check during task #1 saved a downstream "why doesn't this compile" cycle. The lesson is now phase-agnostic — every plan-referenced vendor surface gets a re-verify before code is written. Phase 4 inherits the same expectation against the Jira REST + ADF surface.
+- Deferring the OTel metrics layer to v0.3.1 was the right call. The §8.2 dashboard SQL queries genuinely read from span attributes via the events table — confirmed by reading the queries before deciding. The MeterProvider + 9-instrument plumbing is ~400 LOC of work whose primary consumer is data we already emit. Shipping spans-only got Phase 3 across the line without re-cutting the scope; metrics land additively in v0.3.1 alongside the one truly missing metric (`sinfonia.orchestrator.concurrent_runs`).
+- The PR-shape call (one PR, five intermediate commits → squash merge) was a sweet spot between Phase 1's nine-PR fragmentation and a single mega-commit. Each commit was its own reviewable unit (foundation / bridge spans + event channel / cost + budget + terminal-state / docs + assets / VERIFY notes); the squash merge gives one Phase 2-style commit on main. For a phase materially larger than Phase 2 but with internally cohesive layers, this is the model.
+- Choosing to reuse `webhook::verify::verify_signature` for the new typed event channel (§5.18) saved the algorithm-fork risk and means one place to fix any future HMAC issue. The header-name split (`X-Sinfonia-Signature-256` vs `X-Hub-Signature-256`) is the routing key — a reverse proxy can dispatch on header without inspecting the body. Pinned by an algorithm-format test that pins both directions.
+- `TurnOutcome::Completed { usage }` (§5.19) was a tiny refactor with outsized impact: every backend already computed the value; surfacing it removed the need for the runner to listen on the event channel for its own session totals. Pattern: when the data already exists at a call site, surface it through the type system instead of plumbing a parallel observation path. Future agent backends (CodexAppServer is the holdout) MUST populate `usage` even if it's `TokenUsage::default()` — the type enforces the discipline.
+- The 30s debounce + per-ticket accumulator (§5.23) is intentionally lossy on restart. The plan doc was explicit about this trade-off (budget caps as SLO, not billing); the implementation surfaces it in the budget.rs module-level rustdoc. If a future v0.5+ phase wants exact billing it'll need a different design (a SQLite write-ahead log keyed on issue_id) — but it should NOT try to make the accumulator durable while keeping the debounce.
+
+---
+
+**Last actionable step before clearing context:** check `docs/v0.3-plan/STATUS.md` reads cleanly (this file), then `git push` if any local-only changes remain. Phase 4 picks up from a fresh context with this doc as the entry point.
