@@ -217,12 +217,14 @@ async fn run_agent_attempt_inner(
     }
     .await;
 
+    let thread_id_for_event = session.thread_id.clone();
     let _ = agent.stop_session(session).await;
     run_after_run_best_effort(&cfg.hooks, &ws.path).await;
 
     // Record `runner.session` final attributes. The span is the current
     // ambient span — `Instrument` from `run_agent_attempt` keeps it active
     // through this function.
+    let session_duration_ms = session_started.elapsed().as_millis() as u64;
     let current = tracing::Span::current();
     current.record(spans::ATTR_TURN_COUNT, turn_count as i64);
     current.record(spans::ATTR_TOTAL_TOKENS, session_total.total_tokens as i64);
@@ -233,10 +235,26 @@ async fn run_agent_attempt_inner(
     );
     let exit_reason = exit_reason_for(&outcome);
     current.record(spans::ATTR_EXIT_REASON, exit_reason);
-    current.record(
-        spans::ATTR_DURATION_MS,
-        session_started.elapsed().as_millis() as i64,
-    );
+    current.record(spans::ATTR_DURATION_MS, session_duration_ms as i64);
+
+    // Phase 3 §7.2 + N-3: emit the SessionCompleted event for the
+    // subscriber-emitter task to POST to the bridge. This rides the
+    // existing `AgentEvent` channel rather than building a parallel one.
+    events.send(AgentEvent::SessionCompleted {
+        timestamp: Utc::now(),
+        thread_id: thread_id_for_event,
+        issue_id: issue.id.clone(),
+        issue_identifier: issue.identifier.clone(),
+        state: issue.state.clone(),
+        provider: format!("{:?}", llm.provider),
+        model: llm.model.clone(),
+        turn_count,
+        prompt_tokens: session_total.input_tokens,
+        completion_tokens: session_total.output_tokens,
+        total_tokens: session_total.total_tokens,
+        duration_ms: session_duration_ms,
+        exit_reason: exit_reason.to_string(),
+    });
 
     outcome
 }

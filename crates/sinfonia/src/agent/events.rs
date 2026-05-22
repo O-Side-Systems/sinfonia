@@ -80,6 +80,30 @@ pub enum AgentEvent {
         timestamp: DateTime<Utc>,
         raw: String,
     },
+    /// Phase 3 §7.2 — session lifecycle terminator. Emitted from the
+    /// runner immediately after `agent.stop_session(session).await` so
+    /// the subscriber-emitter task can POST a typed event to the bridge
+    /// (HMAC-signed) for cost / budget bookkeeping.
+    ///
+    /// `tenant_id` is not on the per-event payload — the subscriber
+    /// emitter task supplies it from the process-wide config at POST
+    /// time (the bridge's typed event channel is per-tenant by deployment
+    /// shape, not per-event).
+    SessionCompleted {
+        timestamp: DateTime<Utc>,
+        thread_id: String,
+        issue_id: String,
+        issue_identifier: String,
+        state: String,
+        provider: String,
+        model: String,
+        turn_count: u32,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        total_tokens: u64,
+        duration_ms: u64,
+        exit_reason: String,
+    },
 }
 
 impl AgentEvent {
@@ -99,6 +123,7 @@ impl AgentEvent {
             AgentEvent::Notification { .. } => "notification",
             AgentEvent::OtherMessage { .. } => "other_message",
             AgentEvent::Malformed { .. } => "malformed",
+            AgentEvent::SessionCompleted { .. } => "session_completed",
         }
     }
 
@@ -117,7 +142,8 @@ impl AgentEvent {
             | AgentEvent::UnsupportedToolCall { timestamp, .. }
             | AgentEvent::Notification { timestamp, .. }
             | AgentEvent::OtherMessage { timestamp, .. }
-            | AgentEvent::Malformed { timestamp, .. } => *timestamp,
+            | AgentEvent::Malformed { timestamp, .. }
+            | AgentEvent::SessionCompleted { timestamp, .. } => *timestamp,
         }
     }
 

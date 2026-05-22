@@ -58,5 +58,10 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health))
         .route("/webhook", post(handlers::webhook))
+        // Phase 3 §7.2 — inbound typed Sinfonia event channel.
+        .route(
+            "/api/v1/sinfonia-events",
+            post(crate::events::sinfonia_events),
+        )
         .with_state(state)
 }

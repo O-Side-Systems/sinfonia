@@ -35,6 +35,7 @@
 //! they own genuinely different concerns.
 
 pub mod config;
+pub mod events;
 pub mod feedback;
 pub mod github;
 pub mod labels;

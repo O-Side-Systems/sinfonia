@@ -1,5 +1,12 @@
 //! Optional HTTP server extension (spec §13.7).
 
+pub mod events;
+
+pub use events::{
+    spawn_emitter, EmitterConfig, EventsHttpState, RecentBuffer, Subscriber,
+    SubscriberRegistry, EVENT_TYPE_SESSION_COMPLETED, EVENT_VERSION, SIGNATURE_HEADER,
+};
+
 use crate::orchestrator::Orchestrator;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -16,15 +23,30 @@ pub struct HttpState {
     pub orch: Orchestrator,
 }
 
-pub async fn serve(orch: Orchestrator, bind: SocketAddr) -> std::io::Result<()> {
+pub async fn serve(
+    orch: Orchestrator,
+    bind: SocketAddr,
+    events_state: Arc<EventsHttpState>,
+) -> std::io::Result<()> {
     let state = Arc::new(HttpState { orch });
     let app = Router::new()
         .route("/", get(index))
         .route("/api/v1/state", get(get_state))
         .route("/api/v1/refresh", post(post_refresh))
         .route("/api/v1/:identifier", get(get_issue))
-        .fallback(method_or_path_not_allowed)
-        .with_state(state);
+        .with_state(state)
+        // Events sub-router uses its own state. Merging keeps both
+        // surfaces on the same listener under `/api/v1/events/*`.
+        .merge(
+            Router::new()
+                .route(
+                    "/api/v1/events/subscribers",
+                    post(events::register_subscriber),
+                )
+                .route("/api/v1/events/recent", get(events::recent_events))
+                .with_state(events_state),
+        )
+        .fallback(method_or_path_not_allowed);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     let actual = listener.local_addr()?;

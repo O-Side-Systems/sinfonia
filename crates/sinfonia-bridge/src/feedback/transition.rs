@@ -16,9 +16,10 @@ use crate::config::FailureCategory;
 use crate::feedback::attempts::AttemptDecision;
 use crate::github::GhOps;
 use crate::labels::{BridgeLabel, LabelManager};
+use crate::telemetry::spans;
 use crate::{Error, Result};
 use sinfonia_tracker::{CustomFieldValue, IssueTracker};
-use tracing::{info, warn};
+use tracing::{info, info_span, warn, Instrument};
 
 /// Inputs the red paths need that aren't already obvious from the
 /// signature.
@@ -59,6 +60,43 @@ pub async fn apply_green(labels: &LabelManager, repo: &str, pr_number: u64) -> R
 /// 4. Post the rendered `failure_comment_template` to the PR.
 #[allow(clippy::too_many_arguments)]
 pub async fn apply_red_below_cap(
+    tracker: &dyn IssueTracker,
+    labels: &LabelManager,
+    gh: &dyn GhOps,
+    ctx: &RedContext<'_>,
+    category: &FailureCategory,
+    next_attempt: u32,
+    max_attempts: u32,
+    custom_fields: &crate::config::CustomFieldsSection,
+    rendered_comment: &str,
+    failure_summary: &str,
+) -> Result<()> {
+    let span = info_span!(
+        target: "feedback",
+        spans::BRIDGE_STATE_TRANSITION,
+        { spans::ATTR_TICKET_ID } = ctx.ticket_id,
+        { spans::ATTR_TO_STATE } = %category.target_state,
+        { spans::ATTR_REASON } = spans::REASON_CI_FAILURE,
+        { spans::ATTR_ATTEMPT_COUNT } = next_attempt,
+    );
+    apply_red_below_cap_inner(
+        tracker,
+        labels,
+        gh,
+        ctx,
+        category,
+        next_attempt,
+        max_attempts,
+        custom_fields,
+        rendered_comment,
+        failure_summary,
+    )
+    .instrument(span)
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_red_below_cap_inner(
     tracker: &dyn IssueTracker,
     labels: &LabelManager,
     gh: &dyn GhOps,
@@ -162,6 +200,41 @@ pub async fn apply_red_below_cap(
 /// 2. Apply `cap-hit`; remove `in-progress` and `needs-fixes`.
 /// 3. Post the rendered cap-explanation comment to the PR.
 pub async fn apply_cap_hit(
+    tracker: &dyn IssueTracker,
+    labels: &LabelManager,
+    gh: &dyn GhOps,
+    ctx: &RedContext<'_>,
+    decision: &AttemptDecision,
+    blocked_state: &str,
+    rendered_comment: &str,
+) -> Result<()> {
+    let (stayed_at, max) = match decision {
+        AttemptDecision::CapHit { stayed_at, max } => (*stayed_at, *max),
+        _ => (0, 0), // re-checked below; placeholder so the spans see real values
+    };
+    let cap_span = info_span!(
+        target: "feedback",
+        spans::BRIDGE_CAP_HIT,
+        { spans::ATTR_TICKET_ID } = ctx.ticket_id,
+        { spans::ATTR_CAP_KIND } = spans::CAP_KIND_ATTEMPTS,
+        { spans::ATTR_FINAL_ATTEMPT_COUNT } = stayed_at,
+    );
+    let transition_span = info_span!(
+        target: "feedback",
+        spans::BRIDGE_STATE_TRANSITION,
+        { spans::ATTR_TICKET_ID } = ctx.ticket_id,
+        { spans::ATTR_TO_STATE } = blocked_state,
+        { spans::ATTR_REASON } = spans::REASON_CAP_HIT,
+        { spans::ATTR_FINAL_ATTEMPT_COUNT } = stayed_at,
+    );
+    let _ = max; // claimed in trace below
+    apply_cap_hit_inner(tracker, labels, gh, ctx, decision, blocked_state, rendered_comment)
+        .instrument(cap_span.clone())
+        .instrument(transition_span)
+        .await
+}
+
+async fn apply_cap_hit_inner(
     tracker: &dyn IssueTracker,
     labels: &LabelManager,
     gh: &dyn GhOps,

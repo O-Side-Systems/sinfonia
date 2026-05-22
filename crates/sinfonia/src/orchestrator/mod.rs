@@ -59,6 +59,16 @@ pub(crate) struct Inner {
     refresh: Notify,
     pub(crate) worker_tx: mpsc::UnboundedSender<WorkerReport>,
     agent_tx: mpsc::UnboundedSender<(String, AgentEvent)>,
+    /// Phase 3 §7.2 — secondary fan-out for `AgentEvent`s the subscriber
+    /// emitter task consumes. `forward_events` writes to both this and
+    /// `agent_tx`; the emitter task filters for `SessionCompleted` and
+    /// POSTs to every registered subscriber. Kept as a `RwLock<Option<_>>`
+    /// so `main.rs` can install the sender after spawning the emitter
+    /// task without making it mandatory for tests that don't exercise
+    /// the event channel.
+    pub(crate) subscribers_tx: parking_lot::RwLock<
+        Option<mpsc::UnboundedSender<(String, AgentEvent)>>,
+    >,
 }
 
 #[derive(Debug)]
@@ -126,6 +136,7 @@ impl Orchestrator {
             refresh: Notify::new(),
             worker_tx,
             agent_tx,
+            subscribers_tx: parking_lot::RwLock::new(None),
         });
 
         let orch = Orchestrator { inner: inner.clone() };
@@ -341,7 +352,13 @@ impl Orchestrator {
         let (event_tx, event_rx) = event_channel();
         let issue_id = issue.id.clone();
         let agent_tx = self.inner.agent_tx.clone();
-        tokio::spawn(forward_events(issue_id.clone(), event_rx, agent_tx));
+        let subscribers_tx = self.inner.subscribers_tx.read().clone();
+        tokio::spawn(forward_events(
+            issue_id.clone(),
+            event_rx,
+            agent_tx,
+            subscribers_tx,
+        ));
 
         let outcome = runner::run_agent_attempt(
             issue.clone(),
@@ -673,14 +690,34 @@ impl Orchestrator {
         let cfg = self.config();
         state::build_issue_view(&state, &cfg, identifier)
     }
+
+    /// Phase 3 §7.2 — install the subscriber-emitter channel. `main.rs`
+    /// constructs the (tx, rx) pair, hands the rx to the emitter task,
+    /// and registers the tx here so subsequent worker spawns fan out
+    /// their AgentEvents to subscribers. Idempotent — last writer wins.
+    pub fn install_subscribers_tx(
+        &self,
+        tx: mpsc::UnboundedSender<(String, AgentEvent)>,
+    ) {
+        *self.inner.subscribers_tx.write() = Some(tx);
+    }
 }
 
 async fn forward_events(
     issue_id: String,
     mut rx: mpsc::UnboundedReceiver<AgentEvent>,
     tx: mpsc::UnboundedSender<(String, AgentEvent)>,
+    subscribers_tx: Option<mpsc::UnboundedSender<(String, AgentEvent)>>,
 ) {
     while let Some(ev) = rx.recv().await {
+        // Fan-out to the subscriber emitter task (Phase 3 §7.2). The send
+        // is best-effort: when no subscribers are configured the optional
+        // sender is `None` and the broadcast is skipped. The dashboard
+        // channel (`tx`) remains the source of truth for the live
+        // `/api/v1/state` view.
+        if let Some(stx) = subscribers_tx.as_ref() {
+            let _ = stx.send((issue_id.clone(), ev.clone()));
+        }
         if tx.send((issue_id.clone(), ev)).is_err() {
             break;
         }
