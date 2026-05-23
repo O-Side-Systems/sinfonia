@@ -127,16 +127,30 @@ jobs:
           fi
           echo "value=$v" >> "$GITHUB_OUTPUT"
 
-      # Gate: fail the workflow on CRITICAL only. HIGH and below still appear
-      # in the uploaded SARIF (the trivy-action expands severity to ALL when
-      # format=sarif) so the Security tab keeps full visibility — but a
-      # midnight HIGH disclosure doesn't block an unrelated release.
-      - name: Scan ${{ matrix.image }} for CRITICAL CVEs (HIGH reported, non-blocking)
+      # Two-step Trivy: the aquasecurity/trivy-action overrides TRIVY_SEVERITY
+      # to ALL when format=sarif (so the SARIF captures everything), but that
+      # override *also* makes exit-code trigger on any finding regardless of
+      # the `severity` input. To get "report everything, gate on CRITICAL only"
+      # we split into:
+      #   1) SARIF generation, never gates (exit-code: 0)
+      #   2) Gate scan, table output, fails on CRITICAL
+      # The second invocation reuses the vuln DB downloaded by the first via
+      # the shared cache-dir, so it's ~5s rather than another full ~25s.
+      - name: Scan ${{ matrix.image }} — generate SARIF (report-only)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ghcr.io/o-side-systems/${{ matrix.image }}:${{ steps.version.outputs.value }}
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Scan ${{ matrix.image }} — gate on CRITICAL
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/o-side-systems/${{ matrix.image }}:${{ steps.version.outputs.value }}
+          format: table
           severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true
