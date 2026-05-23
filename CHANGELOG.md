@@ -6,6 +6,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0-alpha.8] — 2026-05-23
+
+First v0.3 alpha with a fully-green Docker publish pipeline end-to-end (build → push → image smoke → compose stack smoke → per-image Trivy CVE scans). Closes out the four-tag iteration on the publish workflow that began at `[0.3.0-alpha.5]`. Source-code payload is unchanged from `[0.3.0-alpha.4]`; only `.github/workflows/docker-publish.yml` changes in this tag.
+
+### Fixed
+
+- **Split Trivy into two action invocations so the CRITICAL-only gate fires correctly.** `[0.3.0-alpha.7]` set `severity: CRITICAL` on the single existing Trivy step expecting it to gate only on CRITICAL findings — but `aquasecurity/trivy-action`, when `format: sarif`, internally overrides `TRIVY_SEVERITY` to ALL severities so the SARIF captures the full picture ("Building SARIF report with all severities" appears in the action log). That override also makes `exit-code: 1` trigger on any finding, ignoring the user-supplied `severity` input — so the alpha.7 gate change was effectively a no-op and the workflow still failed on HIGH findings despite zero CRITICAL findings. Fix splits into two steps: (1) `format: sarif`, `severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN`, `exit-code: "0"` — generates the SARIF report-only, never gates; (2) `format: table`, `severity: CRITICAL`, `exit-code: "1"` — actually gates strictly on CRITICAL. The second invocation reuses the vuln DB downloaded by the first via the shared workspace `cache-dir` (~5s incremental cost per matrix entry). Security tab still receives the full CRITICAL+HIGH+below picture per-image; HIGH findings no longer block a release.
+
+## [0.3.0-alpha.7] — 2026-05-22
+
+Re-publish of `[0.3.0-alpha.6]` addressing the real CVEs that alpha.6's scan surfaced. The Debian CRITICAL is fully resolved by this tag (every image dropped to 0 CRITICAL findings); the Trivy gate-relaxation attempted alongside it is a no-op due to an `aquasecurity/trivy-action` SARIF quirk and is corrected in `[0.3.0-alpha.8]`.
+
+### Fixed
+
+- **`apt-get upgrade -y` in `sinfonia-base` and `sinfonia-bridge` RUN blocks.** `[0.3.0-alpha.6]`'s Trivy scan surfaced 2 CRITICAL + 9 HIGH real CVEs across the six published images. The CRITICAL — `CVE-2026-42010`, a gnutls authentication bypass via NUL character in username — came from the `libgnutls30` package in `debian:bookworm-slim`. Adding `apt-get upgrade -y` after the install line in both base layers (so each rebuild picks up Debian security backports without bumping the base tag) eliminates `CVE-2026-42010` along with the four other gnutls HIGHs. The `sinfonia-bridge` image — the only one not depending on `sinfonia-base` and the only one without `gh` baked in — returns a fully clean scan after this change, confirming Debian's backport is in `bookworm-security`. Remaining HIGHs (`gh`'s Go-stdlib CVEs at `usr/bin/gh`, and npm/picomatch transitively under `@anthropic-ai/claude-code` in claude-code-bearing variants) persist until the upstream packages rebuild against patched dependencies.
+
+### Changed
+
+- **Attempted to relax the Trivy gate from `CRITICAL,HIGH` to `CRITICAL` only.** Set `severity: CRITICAL` on `.github/workflows/docker-publish.yml`'s Trivy scan step with the goal of letting HIGH findings appear in the Security tab without blocking the release. Change is functionally a no-op due to the `aquasecurity/trivy-action` SARIF behavior described in `[0.3.0-alpha.8]`'s entry — corrected there.
+
+## [0.3.0-alpha.6] — 2026-05-22
+
+Re-publish of `[0.3.0-alpha.5]` with the Trivy GHCR-auth bug fixed. First tag in the v0.3 series where the post-publish CVE scan ran end-to-end and produced meaningful findings rather than failing on tooling.
+
+### Fixed
+
+- **Add `docker/login-action` to the Trivy `scan` job in `.github/workflows/docker-publish.yml`.** The matrix `scan` job had no GHCR-login step (the existing `docker/login-action` was scoped to the sibling `build-and-push` job), so Trivy could neither inspect the freshly-pushed image via the local Docker daemon (never pulled into the scan runner) nor fall back to its `remote` source — the latter returned `GET https://ghcr.io/token?...&service=ghcr.io: UNAUTHORIZED: authentication required`. Each scan exited ~18s with a `unable to find the specified image` fatal, no SARIF produced, and `Upload SARIF` then failed with `Path does not exist: trivy-<image>.sarif`. Fix re-uses the same `docker/login-action@v3` block `build-and-push` already uses, scoped to `ghcr.io` with `github.actor` + `secrets.GITHUB_TOKEN`. First surfaced on `[0.3.0-alpha.5]` because that was the first tag whose `build-and-push` job got far enough to reach the scan stage; the bug had been latent since Phase 6 added the Trivy matrix.
+
+### Surfaced (not blocking; informational)
+
+- **First real CVE picture for the published images.** With the gate now actually running, six per-image Trivy analyses uploaded SARIF to the Security tab: 13–26 findings per image total, of which 2 CRITICAL + 9 HIGH in the base `sinfonia` image alone. CRITICAL was `CVE-2026-42010` (gnutls auth bypass) in the Debian 12 base; HIGHs distributed across `usr/bin/gh` (5 Go-stdlib CVEs) and gnutls (4 more). The claude-code-bearing variants additionally carried `CVE-2026-33671` (npm `picomatch` ReDoS) under `usr/lib/node_modules/npm/node_modules/picomatch`. CRITICAL is patched in `[0.3.0-alpha.7]`; HIGHs are documented but not gated as of `[0.3.0-alpha.8]`.
+
+## [0.3.0-alpha.5] — 2026-05-22
+
+Re-publish of `[0.3.0-alpha.4]` with one Docker publish pipeline fix. First v0.3 tag whose `build-and-push` job ran to completion (alpha.2 → alpha.4 each failed earlier in the pipeline).
+
+### Fixed
+
+- **Point `sinfonia --check` smoke at the env-var-free fixture in `tests/docker-smoke.sh`.** The smoke step was mounting `WORKFLOW.example.md` into the `sinfonia --check` invocation, but that file references `$LINEAR_API_KEY` via Liquid and the smoke runner has no credentials — `--check` failed with an unresolved-variable error. Fix repoints the mount at `tests/fixtures/WORKFLOW.smoke.md`, the self-contained smoke fixture committed in `[0.3.0-alpha.2]` alongside `tests/fixtures/BRIDGE.smoke.md` (which the bridge `--self-test` step had already been using). The smoke harness header comment is refreshed to describe the env-var-free design intent so the next person to edit `docker-smoke.sh` doesn't reintroduce the env-coupled fixture. With this fix `build-and-push` passed (1h12m); the Trivy `scan` matrix still failed on a separate, latent GHCR-auth bug fixed in `[0.3.0-alpha.6]`.
+
 ## [0.3.0-alpha.4] — 2026-05-22
 
 Re-publish of `[0.3.0-alpha.3]`. The Rust toolchain bump in alpha.3 fixed the cargo build, but the Docker publish pipeline still failed on a second, independent layer: the upstream Codex CLI install script (`https://github.com/openai/codex/releases/latest/download/install.sh`) errors with `Could not find SHA-256 digest for codex-package-x86_64-unknown-linux-musl.tar.gz in codex-package_SHA256SUMS` when invoked from inside the slim builder. The same `awk` lookup against the same file succeeds locally and resolves the expected digest cleanly — the failure is reproducible inside the `debian:bookworm-slim`-based build environment and resists remote debugging.
@@ -172,7 +212,11 @@ Initial public release.
 - The Codex app-server stdio protocol backend is stubbed; this release targets the `codex exec` CLI surface instead.
 - One project per running daemon. Multi-project deployments use one daemon per project.
 
-[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.4...HEAD
+[Unreleased]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.8...HEAD
+[0.3.0-alpha.8]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.7...v0.3.0-alpha.8
+[0.3.0-alpha.7]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.6...v0.3.0-alpha.7
+[0.3.0-alpha.6]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.5...v0.3.0-alpha.6
+[0.3.0-alpha.5]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.4...v0.3.0-alpha.5
 [0.3.0-alpha.4]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.3...v0.3.0-alpha.4
 [0.3.0-alpha.3]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.2...v0.3.0-alpha.3
 [0.3.0-alpha.2]: https://github.com/O-Side-Systems/sinfonia/compare/v0.3.0-alpha.1...v0.3.0-alpha.2
