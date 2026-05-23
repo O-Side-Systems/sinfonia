@@ -127,13 +127,17 @@ jobs:
           fi
           echo "value=$v" >> "$GITHUB_OUTPUT"
 
-      - name: Scan ${{ matrix.image }} for CRITICAL/HIGH CVEs
+      # Gate: fail the workflow on CRITICAL only. HIGH and below still appear
+      # in the uploaded SARIF (the trivy-action expands severity to ALL when
+      # format=sarif) so the Security tab keeps full visibility — but a
+      # midnight HIGH disclosure doesn't block an unrelated release.
+      - name: Scan ${{ matrix.image }} for CRITICAL CVEs (HIGH reported, non-blocking)
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ghcr.io/o-side-systems/${{ matrix.image }}:${{ steps.version.outputs.value }}
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
-          severity: CRITICAL,HIGH
+          severity: CRITICAL
           exit-code: "1"
           ignore-unfixed: true
 
