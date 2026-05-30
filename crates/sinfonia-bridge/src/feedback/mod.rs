@@ -84,7 +84,12 @@ pub async fn evaluate_ci(
     event: &str,
     payload: &Value,
 ) -> Result<Vec<CiOutcome>> {
-    let (repo, head_sha, pr_numbers) = extract_targets(event, payload);
+    let EventTargets {
+        repo,
+        head_sha,
+        pr_numbers,
+        run_id,
+    } = extract_targets(event, payload);
 
     let Some(repo) = repo else {
         debug!(target: "feedback", event, "payload missing repository.full_name");
@@ -121,7 +126,8 @@ pub async fn evaluate_ci(
 
     let mut outcomes = Vec::with_capacity(pr_numbers.len());
     for pr_number in pr_numbers {
-        let outcome = evaluate_one_pr(&ctx, &repo, &head_sha, pr_number, &summary).await?;
+        let outcome =
+            evaluate_one_pr(&ctx, &repo, &head_sha, pr_number, &summary, run_id).await?;
         outcomes.push(outcome);
     }
     Ok(outcomes)
@@ -133,7 +139,13 @@ async fn evaluate_one_pr(
     _head_sha: &str,
     pr_number: u64,
     summary: &CheckRunSummary,
+    run_id: Option<u64>,
 ) -> Result<CiOutcome> {
+    // `run_id` is `Some` only for `workflow_run` events; it keys the
+    // harness-manifest ingestion path wired up in a later task. For now
+    // it is threaded through and recorded so the extraction is exercised
+    // end to end.
+    debug!(target: "feedback", repo, pr_number, ?run_id, "evaluating PR");
     let ticket_id = match ctx.store.lookup_pr_ticket(repo, pr_number).await? {
         Some(id) => id,
         None => {
@@ -257,14 +269,29 @@ async fn evaluate_one_pr(
     }
 }
 
-/// Pull `(repo, head_sha, pr_numbers)` out of a `check_suite` or
-/// `workflow_run` payload. Both events nest the same shape under
-/// different keys.
-fn extract_targets(event: &str, payload: &Value) -> (Option<String>, Option<String>, Vec<u64>) {
+/// The targets the feedback loop pulls out of a `check_suite` or
+/// `workflow_run` payload before evaluating it.
+///
+/// `run_id` is the one field that differs by event: the GitHub Actions
+/// artifacts API is keyed by *workflow run id*, which is present on a
+/// `workflow_run` payload (`workflow_run.id`) but not on `check_suite`.
+/// It is therefore `Some` only for `workflow_run` events and gates the
+/// harness-manifest ingestion path (Proposal 0001 §4.1).
+#[derive(Debug, Default, PartialEq, Eq)]
+struct EventTargets {
+    repo: Option<String>,
+    head_sha: Option<String>,
+    pr_numbers: Vec<u64>,
+    run_id: Option<u64>,
+}
+
+/// Pull the [`EventTargets`] out of a `check_suite` or `workflow_run`
+/// payload. Both events nest the same shape under different keys.
+fn extract_targets(event: &str, payload: &Value) -> EventTargets {
     let key = match event {
         "check_suite" => "check_suite",
         "workflow_run" => "workflow_run",
-        _ => return (None, None, vec![]),
+        _ => return EventTargets::default(),
     };
     let envelope = payload.get(key);
     let head_sha = envelope
@@ -285,7 +312,18 @@ fn extract_targets(event: &str, payload: &Value) -> (Option<String>, Option<Stri
                 .collect()
         })
         .unwrap_or_default();
-    (repo, head_sha, pr_numbers)
+    // Only `workflow_run` carries a run id; `check_suite` leaves it `None`
+    // and the caller degrades to the check-name path.
+    let run_id = match event {
+        "workflow_run" => envelope.and_then(|e| e.get("id")).and_then(|v| v.as_u64()),
+        _ => None,
+    };
+    EventTargets {
+        repo,
+        head_sha,
+        pr_numbers,
+        run_id,
+    }
 }
 
 fn render_failure_summary(failed: &[String]) -> String {
@@ -401,14 +439,37 @@ mod tests {
             },
             "repository": {"full_name": "acme/widgets"},
         });
-        let (repo, sha, prs) = extract_targets("check_suite", &payload);
-        assert_eq!(repo.as_deref(), Some("acme/widgets"));
-        assert_eq!(sha.as_deref(), Some("abc123"));
-        assert_eq!(prs, vec![7, 8]);
+        let t = extract_targets("check_suite", &payload);
+        assert_eq!(t.repo.as_deref(), Some("acme/widgets"));
+        assert_eq!(t.head_sha.as_deref(), Some("abc123"));
+        assert_eq!(t.pr_numbers, vec![7, 8]);
+        // check_suite carries no run id — the manifest path stays off.
+        assert_eq!(t.run_id, None);
     }
 
     #[test]
     fn extract_targets_pulls_workflow_run_fields() {
+        let payload = json!({
+            "action": "completed",
+            "workflow_run": {
+                "id": 1820934,
+                "head_sha": "deadbeef",
+                "pull_requests": [{"number": 42}],
+            },
+            "repository": {"full_name": "acme/widgets"},
+        });
+        let t = extract_targets("workflow_run", &payload);
+        assert_eq!(t.repo.as_deref(), Some("acme/widgets"));
+        assert_eq!(t.head_sha.as_deref(), Some("deadbeef"));
+        assert_eq!(t.pr_numbers, vec![42]);
+        // workflow_run carries the run id used to fetch artifacts.
+        assert_eq!(t.run_id, Some(1820934));
+    }
+
+    #[test]
+    fn extract_targets_workflow_run_missing_id_tolerated() {
+        // A malformed workflow_run with no `id` must not panic; run_id
+        // simply stays None and the caller degrades.
         let payload = json!({
             "action": "completed",
             "workflow_run": {
@@ -417,10 +478,9 @@ mod tests {
             },
             "repository": {"full_name": "acme/widgets"},
         });
-        let (repo, sha, prs) = extract_targets("workflow_run", &payload);
-        assert_eq!(repo.as_deref(), Some("acme/widgets"));
-        assert_eq!(sha.as_deref(), Some("deadbeef"));
-        assert_eq!(prs, vec![42]);
+        let t = extract_targets("workflow_run", &payload);
+        assert_eq!(t.run_id, None);
+        assert_eq!(t.pr_numbers, vec![42]);
     }
 
     #[test]
@@ -429,8 +489,8 @@ mod tests {
             "check_suite": {"head_sha": "x"},
             "repository": {"full_name": "a/b"},
         });
-        let (_, _, prs) = extract_targets("check_suite", &payload);
-        assert!(prs.is_empty());
+        let t = extract_targets("check_suite", &payload);
+        assert!(t.pr_numbers.is_empty());
     }
 
     #[test]
