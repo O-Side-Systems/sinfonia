@@ -51,6 +51,12 @@ shellexpand = { workspace = true }
 #                     to the major used transitively by octocrab 0.39 to
 #                     avoid duplicate compilation.
 octocrab = "0.39"
+# - zip               in-memory extraction of the harness `bridge.json`
+#                     manifest from a CI run artifact (Proposal 0001). Only the
+#                     `deflate` decoder is needed; default features (which pull
+#                     bzip2/zstd/aes C deps) are disabled to keep the build lean
+#                     and shrink the attack surface on this hostile-input path.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 subtle = "2.5"
 hmac = { workspace = true }

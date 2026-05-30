@@ -590,6 +590,21 @@ mod tests {
         async fn whoami(&self) -> Result<String> {
             Ok("noop-fake".into())
         }
+        async fn list_run_artifacts(
+            &self,
+            _repo: &str,
+            _run_id: u64,
+        ) -> Result<Vec<crate::github::ArtifactMeta>> {
+            Ok(vec![])
+        }
+        async fn download_artifact(
+            &self,
+            _repo: &str,
+            _artifact_id: u64,
+            _max_bytes: u64,
+        ) -> Result<Vec<u8>> {
+            Ok(vec![])
+        }
     }
 
     fn baseline_bridge_cfg() -> &'static str {
@@ -975,6 +990,21 @@ telemetry:
         }
         async fn whoami(&self) -> Result<String> {
             Ok("scripted-fake".into())
+        }
+        async fn list_run_artifacts(
+            &self,
+            _repo: &str,
+            _run_id: u64,
+        ) -> Result<Vec<crate::github::ArtifactMeta>> {
+            Ok(vec![])
+        }
+        async fn download_artifact(
+            &self,
+            _repo: &str,
+            _artifact_id: u64,
+            _max_bytes: u64,
+        ) -> Result<Vec<u8>> {
+            Ok(vec![])
         }
     }
 
