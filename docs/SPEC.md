@@ -1284,6 +1284,13 @@ The `_v1` suffix is reserved for future schema migration. A bridge that introduc
 field-shape change MUST migrate to `sinfonia_bridge_state_v2` and leave the v1 envelope readable
 for one release cycle.
 
+`sinfonia_last_ci_failure` MAY carry, instead of a single check's log excerpt, a **structured
+multi-scenario digest** synthesized from a harness `bridge.json` manifest (§11.6.13). The digest
+remains a plain `String` under §11.6.3 — consumers MUST treat it as opaque diagnostic text with no
+shape guarantees beyond "human/agent-readable." Folding the digest into this existing field is a
+deliberate choice to avoid expanding the well-known set (§11.6.4): it requires no envelope
+migration (the shape is unchanged) and no coordinated orchestrator release.
+
 #### 11.6.3 Field Shapes
 
 Each `sinfonia_*` field has a JSON-primitive shape (see also Sinfonia's reference
@@ -1519,6 +1526,77 @@ Per-ticket overrides MAY be read from custom fields:
 Cost values MUST be written as `CustomFieldValue::String("8.23")` — never as f64 — to preserve
 precision through the Linear marker-comment / Jira customfield boundary.
 
+#### 11.6.13 Harness Manifest Ingestion (OPTIONAL)
+
+This subsection is a **Recommended-extension**, consistent with §11.6's status: a conforming bridge
+MAY ingest a structured failure manifest emitted by a conforming test harness, but is not required
+to. When it does not, the red-CI feedback is built from check-run names as described elsewhere in
+§11.6, and that behavior is the floor this extension never drops below.
+
+**Consumed shape.** A conforming harness publishes, per CI run, a `bridge.json` manifest inside a
+run artifact. The bridge consumes the following fields at `schema_version: 2` (the producer-side
+normative schema is owned by the companion harness spec; this section pins only the *consumed*
+subset):
+
+```json
+{
+  "schema_version": 2,
+  "run_url": "https://github.com/owner/name/actions/runs/1820934",
+  "artifact_bundle_name": "harness-runs-1820934",
+  "failures": [
+    {
+      "scenario": "Create tenant persists across reload",
+      "feature_file": "requirements/features/tenant/create-tenant.feature",
+      "step": "Then the tenant list shows \"Acme\"",
+      "assertion": "Expected element [data-testid='tenant-row-acme'] to be visible; was not present in DOM",
+      "artifact_urls": { "result": "...", "trace": "...", "video": "...", "a11y": "..." }
+    }
+  ]
+}
+```
+
+All other fields are ignored forward-compatibly. `scenario` is the only required `failures[]` field;
+the rest are present-or-`null`.
+
+**`workflow_run`-keyed retrieval.** The GitHub Actions *artifacts* API is keyed by *workflow run id*,
+which is present on a `workflow_run` payload (`workflow_run.id`) but not on `check_suite`. A
+conforming bridge therefore triggers ingestion on a red `workflow_run.completed` event for a mapped
+ticket: it lists the run's artifacts, selects the first whose name matches a configured glob
+(default `bridge-*`), downloads that single artifact, extracts the manifest entry (default
+`bridge.json`) **in memory**, and parses it. This is the GitHub Actions *artifacts* endpoint — a
+different surface from check-run **logs**; generic check-run log fetching is out of scope. A
+`check_suite`-only deployment (no resolvable run id) falls back to the check-name path.
+
+**Version gate.** The bridge declares the manifest versions it accepts. A version in the supported
+set is ingested; a version *newer* than the maximum supported is read best-effort by its known
+fields (manifests are additive by convention) with a `warn`; a version older than the minimum, or an
+absent/unparseable version, falls back to the check-name path with a `warn`. This mirrors the
+warn-then-degrade precedent of the cost-table freshness gate (§11.6.12).
+
+**Degradation matrix.** The current behavior is the floor; ingestion is strictly additive enrichment.
+
+| Condition                                    | Behavior                          |
+|----------------------------------------------|-----------------------------------|
+| No `workflow_run` event (only `check_suite`) | Check-name path                   |
+| No artifact matching the glob                | Check-name path                   |
+| Artifact over the size cap                   | `warn`; check-name path           |
+| `bridge.json` missing/unparseable in the zip | `warn`; check-name path           |
+| `schema_version` unsupported (too old)       | `warn`; check-name path           |
+| `schema_version` supported / newer-additive  | **Structured digest path**        |
+
+**Untrusted input.** `bridge.json` MAY originate from a fork PR's CI run. A conforming bridge MUST
+treat it as hostile: bound the artifact download size, bound per-entry decompressed size (zip-bomb
+defense), cap the parsed scenario count and the rendered digest length, parse it entirely in memory
+(no filesystem writes, no execution), and never resolve or fetch `artifact_urls` server-side — they
+are opaque reference strings passed downstream by name. The digest MUST enter prompt/comment
+rendering as a **scalar value**, never as template source (no Liquid/Jinja evaluation of
+manifest-sourced text), and control characters MUST be stripped.
+
+**Output.** The bridge folds the structured failures into the existing `sinfonia_last_ci_failure`
+string (§11.6.2) — budget-bounded, truncated at a scenario boundary with an explicit marker. No new
+well-known field is introduced (§11.6.4), so this extension needs no coordinated orchestrator
+release.
+
 ### 11.7 Custom-Field Discovery
 
 A bridge that follows §11.6 needs a per-tracker convention for "where do the `sinfonia_*` fields
@@ -1611,6 +1689,17 @@ If prompt rendering fails:
 
 - Fail the run attempt immediately.
 - Let the orchestrator treat it like any other worker failure and decide retry behavior.
+
+### 12.5 Failure Diagnostics Channel
+
+The retry/continuation prompt reads `issue.fields.sinfonia_last_ci_failure` (guarded with a
+`| default:` filter per §11.6.4). When a bridge enables harness manifest ingestion (§11.6.13), this
+field is the **primary diagnostic channel** for the retry turn: it carries the structured
+per-scenario digest (failing scenario, feature file, step, assertion, and artifact references)
+rather than a check-name list, so the agent sees *why* CI failed without re-running locally. Because
+the digest lands in this existing field, most workflow prompts gain richer feedback with no template
+change. Templates MUST continue to treat the value as opaque text and MUST NOT parse it as a nested
+structure.
 
 ## 13. Logging, Status, and Observability
 
