@@ -299,15 +299,29 @@ impl Orchestrator {
             if state.running.contains_key(&issue.id) {
                 return DispatchOutcome::Skipped;
             }
-            // For retries the issue is already claimed; for fresh dispatch we add it now.
-            if !state.claimed.contains(&issue.id) {
+            // `attempt.is_some()` means this came from the retry queue (the
+            // issue is already claimed and a backoff timer fired). A fresh
+            // poll-tick dispatch passes `None`.
+            let is_retry = attempt.is_some();
+            if state.claimed.contains(&issue.id) {
+                // The issue is already owned by the orchestrator. If this is a
+                // fresh poll-tick dispatch, a retry is pending for it — skip,
+                // and let the backoff schedule drive it. Re-dispatching here
+                // would bypass backoff and reset the attempt counter, turning a
+                // failing issue into a tight crash loop (it also clobbers the
+                // pending RetryEntry at the `retry_attempts.remove` below).
+                if !is_retry {
+                    return DispatchOutcome::Skipped;
+                }
+                // Retry path: claim already held; just confirm a slot is free.
+                if !dispatch::has_slot(&state, &issue, &cfg) {
+                    return DispatchOutcome::NoSlot;
+                }
+            } else {
                 if !dispatch::has_slot(&state, &issue, &cfg) {
                     return DispatchOutcome::NoSlot;
                 }
                 state.claimed.insert(issue.id.clone());
-            } else if !dispatch::has_slot(&state, &issue, &cfg) {
-                // Slot exhausted on retry — caller should requeue.
-                return DispatchOutcome::NoSlot;
             }
             let started_at = Utc::now();
             let workspace_path = self
@@ -539,6 +553,15 @@ impl Orchestrator {
             let next_attempt = attempt.unwrap_or(0) + 1;
             let backoff = retries::backoff_ms(next_attempt, max_backoff);
             let due_at = Utc::now() + ChronoDuration::milliseconds(backoff as i64);
+            warn!(
+                target: "orchestrator",
+                issue_identifier=%identifier,
+                issue_id=%issue_id,
+                attempt=next_attempt,
+                backoff_ms=backoff,
+                error=%error.as_deref().unwrap_or("(none)"),
+                "worker exit (abnormal); retry scheduled"
+            );
             retries::schedule(
                 &mut state,
                 &self.inner,
@@ -550,7 +573,6 @@ impl Orchestrator {
                     error,
                 },
             );
-            warn!(target: "orchestrator", issue_identifier=%identifier, issue_id=%issue_id, "worker exit (abnormal); retry scheduled");
         }
     }
 
