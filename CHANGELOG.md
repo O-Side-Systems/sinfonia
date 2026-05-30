@@ -6,9 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.3.0-alpha.9] — 2026-05-29
+
+First v0.3 alpha with a **source-code** payload change since `[0.3.0-alpha.4]` (alpha.5–8 were Docker-pipeline-only re-publishes of the alpha.4 source). Closes the harness feedback gap in the bridge: the red-CI retry turn now carries structured, scenario-level diagnostics sourced from the test harness instead of a comma-joined list of check names. Confined to `crates/sinfonia-bridge`; the orchestrator crate, the custom-field envelope (`sinfonia_bridge_state_v1`), and the well-known field set are unchanged. Ships with the producer-side `docs/HARNESS-SPEC.md` and the `docs/proposals/0001-*` design docs.
+
 ### Added
 
 - **Bridge: optional ingestion of a harness `bridge.json` manifest (Proposal 0001).** When `feedback_loop.ingest_harness_manifest` is enabled — now the default — the bridge fetches the CI run's `bridge-*` artifact on a red `workflow_run`, parses the structured per-scenario failures (`scenario` / `feature_file` / `step` / `assertion`) and artifact references, and folds them into `sinfonia_last_ci_failure` for the retry prompt. Previously the bridge's red-CI feedback was built entirely from check-run *names* plus a hardcoded placeholder, so the inner agent loop retried against "the e2e suite failed" with nothing about *why*; the structured diagnostics the harness already emits one HTTP call away were dropped at the bridge boundary. Versioned against `bridge.json schema_version 2` with warn-and-degrade on mismatch (older/absent → check-name fallback; newer-additive → forward-read known fields). Treated as untrusted input (it may originate from a fork PR): size, count, and length caps; in-memory-only parsing with a per-entry decompressed (zip-bomb) cap; `artifact_urls` never fetched server-side; manifest text bound as a scalar, never evaluated as a template. Adds `list_run_artifacts` / `download_artifact` to the bridge's GitHub client and six optional `feedback_loop` keys (glob, filename, and the size/count/digest caps — see `BRIDGE.example.md`). No custom-field envelope migration and no orchestrator change: the digest lands in the existing `sinfonia_last_ci_failure` string, so the well-known field set (SPEC §11.6.4) is unchanged. New SPEC §11.6.13 documents the consumed shape, the `workflow_run`-keyed retrieval, the version gate, and the degradation matrix; §11.6.2 and §12.5 note the field's new role as the primary retry-turn diagnostic channel. A **minor**, additive, opt-out capability within the v0.3 line; the envelope stays `sinfonia_bridge_state_v1`.
+
+### Docs
+
+- **Producer-side `docs/HARNESS-SPEC.md`** — the authoring spec for a target repo that emits the `bridge.json` contract this release consumes. The natural-language → executable-specification step (§4.1) is **OPTIONAL**, not a conformance MUST: Sinfonia's agent takes its per-issue instructions from the tracker, so the spec generator is a bootstrapping convenience (used by the BCF reference harness), not a loop requirement. Adds `docs/proposals/0001-harness-feedback-ingestion.md` and its implementation plan.
 
 ## [0.3.0-alpha.8] — 2026-05-23
 
