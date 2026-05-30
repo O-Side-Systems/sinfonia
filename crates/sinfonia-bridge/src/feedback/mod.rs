@@ -22,6 +22,7 @@ pub mod attempts;
 pub mod budget;
 pub mod categorize;
 pub mod cost;
+pub mod manifest;
 pub mod transition;
 
 use crate::github::{CheckRunSummary, GhOps};
