@@ -21,7 +21,7 @@
 
 use crate::config::GitHubSection;
 use crate::github::client::OctocrabGhOps;
-use crate::github::{CheckRunSummary, GhOps};
+use crate::github::{ArtifactMeta, CheckRunSummary, GhOps};
 use crate::{Error, Result};
 use async_trait::async_trait;
 use jsonwebtoken::EncodingKey;
@@ -267,6 +267,27 @@ impl GhOps for AppModeGhOps {
             .and_then(|v| v.as_str())
             .map(str::to_string)
             .ok_or_else(|| Error::GitHub("GET /app: missing 'slug' field".into()))
+    }
+
+    async fn list_run_artifacts(&self, repo: &str, run_id: u64) -> Result<Vec<ArtifactMeta>> {
+        let (owner, repo_name) = Self::split_repo(repo)?;
+        let crab = self.client_for(owner, repo_name).await?;
+        Self::scoped_ops(crab)
+            .list_run_artifacts(repo, run_id)
+            .await
+    }
+
+    async fn download_artifact(
+        &self,
+        repo: &str,
+        artifact_id: u64,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>> {
+        let (owner, repo_name) = Self::split_repo(repo)?;
+        let crab = self.client_for(owner, repo_name).await?;
+        Self::scoped_ops(crab)
+            .download_artifact(repo, artifact_id, max_bytes)
+            .await
     }
 }
 
