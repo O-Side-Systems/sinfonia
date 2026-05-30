@@ -148,6 +148,25 @@ feedback_loop:
       target_state: "Needs Fixes"      # no check_pattern → catches everything else
       priority: 0
 
+  # ---- Harness manifest ingestion (Proposal 0001; OPTIONAL) ----
+  # When a conforming test harness publishes a `bridge.json` failure
+  # manifest as a run artifact, the bridge can fetch it on a red
+  # `workflow_run`, parse the structured per-scenario failures
+  # (scenario / feature_file / step / assertion + artifact references),
+  # and fold them into `sinfonia_last_ci_failure` (and the
+  # `failure_log_excerpt` template variable) so the retry turn sees *why*
+  # CI failed, not just which check did. Best-effort and degrade-only:
+  # any miss (no artifact, oversize, malformed, version too old) logs a
+  # warning and falls back to the check-name behavior. The manifest is
+  # treated as untrusted input (it may come from a fork PR) with size,
+  # count, and length caps. Omit this entire block to disable ingestion.
+  ingest_harness_manifest: false                 # master switch; default false
+  harness_manifest_artifact_glob: "bridge-*"     # run artifact holding bridge.json (one `*` wildcard)
+  harness_manifest_filename: "bridge.json"        # entry name inside the artifact zip
+  max_artifact_bytes: 5_242_880                   # 5 MiB download cap (zip-bomb / exhaustion defense)
+  max_failures_parsed: 20                         # max scenarios folded into the digest
+  max_failure_digest_bytes: 8_192                 # cap on the sinfonia_last_ci_failure digest text
+
 # ---- Custom fields ----
 # Tracker-side field names the bridge reads and writes. The Linear
 # adapter stores the entire envelope in a single bot-owned comment

@@ -121,6 +121,46 @@ pub struct FeedbackLoopSection {
     /// `failure_categories:` block, that's it; otherwise this is a single
     /// synthetic default category routing to `needs_fixes_state`.
     pub failure_categories: Vec<FailureCategory>,
+    /// Harness `bridge.json` manifest ingestion (Proposal 0001). All keys
+    /// are optional; an omitted block disables ingestion and the bridge
+    /// behaves exactly as it does on the check-name path.
+    pub harness_manifest: HarnessManifestSection,
+}
+
+/// Optional harness-feedback ingestion settings (Proposal 0001 §6).
+///
+/// Defaults are safe and conservative; `ingest_harness_manifest` is the
+/// master switch and is `false` unless explicitly enabled.
+#[derive(Debug, Clone)]
+pub struct HarnessManifestSection {
+    /// Master switch. When `false`, the bridge never fetches or parses a
+    /// manifest and stays on today's check-name behavior.
+    pub ingest: bool,
+    /// Glob (a single `*` wildcard is honored) matched against run
+    /// artifact names to find the bundle holding `bridge.json`.
+    pub artifact_glob: String,
+    /// Entry name read from inside the matched artifact zip.
+    pub filename: String,
+    /// Hard cap on the downloaded artifact zip size (resource-exhaustion
+    /// control). Bytes.
+    pub max_artifact_bytes: u64,
+    /// Cap on the number of scenarios folded into the digest.
+    pub max_failures_parsed: usize,
+    /// Cap on the rendered `sinfonia_last_ci_failure` digest length. Bytes.
+    pub max_failure_digest_bytes: usize,
+}
+
+impl Default for HarnessManifestSection {
+    fn default() -> Self {
+        Self {
+            ingest: false,
+            artifact_glob: "bridge-*".to_string(),
+            filename: "bridge.json".to_string(),
+            max_artifact_bytes: 5_242_880, // 5 MiB
+            max_failures_parsed: 20,
+            max_failure_digest_bytes: 8_192, // 8 KiB
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -408,6 +448,7 @@ fn parse_feedback_loop(config: &Json) -> Result<FeedbackLoopSection> {
         .to_string();
 
     let failure_categories = parse_failure_categories(&f, &needs_fixes_state)?;
+    let harness_manifest = parse_harness_manifest(&f);
 
     Ok(FeedbackLoopSection {
         max_attempts,
@@ -420,7 +461,46 @@ fn parse_feedback_loop(config: &Json) -> Result<FeedbackLoopSection> {
         budget_exceeded_state,
         failure_comment_template,
         failure_categories,
+        harness_manifest,
     })
+}
+
+/// Parse the optional harness-manifest ingestion keys from a
+/// `feedback_loop` block. Every key falls back to
+/// [`HarnessManifestSection::default`] when absent, so an omitted block
+/// yields a fully-defaulted (and disabled) section.
+fn parse_harness_manifest(f: &Json) -> HarnessManifestSection {
+    let d = HarnessManifestSection::default();
+    HarnessManifestSection {
+        ingest: f
+            .get("ingest_harness_manifest")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(d.ingest),
+        artifact_glob: f
+            .get("harness_manifest_artifact_glob")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or(d.artifact_glob),
+        filename: f
+            .get("harness_manifest_filename")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or(d.filename),
+        max_artifact_bytes: f
+            .get("max_artifact_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(d.max_artifact_bytes),
+        max_failures_parsed: f
+            .get("max_failures_parsed")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(d.max_failures_parsed),
+        max_failure_digest_bytes: f
+            .get("max_failure_digest_bytes")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(d.max_failure_digest_bytes),
+    }
 }
 
 const DEFAULT_FAILURE_COMMENT: &str = "CI failed on attempt {{ attempt }} of {{ max_attempts }}.\n\nFailed checks:\n{{ failed_checks }}\n\nPlease address the failures and push to the same branch.\n";
@@ -1118,6 +1198,44 @@ telemetry:
     fn missing_front_matter_errors() {
         let err = parse_bridge_str("just a body").unwrap_err();
         assert!(matches!(err, Error::BridgeParseError(_)));
+    }
+
+    // -- Harness manifest ingestion (Proposal 0001 Task 6) --------------
+
+    #[test]
+    fn harness_manifest_defaults_when_omitted() {
+        // baseline() sets no harness keys; the section should be the
+        // disabled, fully-defaulted one.
+        let cfg = parse_bridge_str(baseline()).expect("baseline parses");
+        let h = &cfg.feedback_loop.harness_manifest;
+        assert!(!h.ingest, "ingestion is off by default");
+        assert_eq!(h.artifact_glob, "bridge-*");
+        assert_eq!(h.filename, "bridge.json");
+        assert_eq!(h.max_artifact_bytes, 5_242_880);
+        assert_eq!(h.max_failures_parsed, 20);
+        assert_eq!(h.max_failure_digest_bytes, 8_192);
+    }
+
+    #[test]
+    fn harness_manifest_explicit_block_parses() {
+        let yaml = baseline().replace(
+            "  blocked_state: \"Blocked - Human Review\"",
+            "  blocked_state: \"Blocked - Human Review\"\n  \
+             ingest_harness_manifest: true\n  \
+             harness_manifest_artifact_glob: \"harness-*\"\n  \
+             harness_manifest_filename: \"manifest.json\"\n  \
+             max_artifact_bytes: 1048576\n  \
+             max_failures_parsed: 5\n  \
+             max_failure_digest_bytes: 2048",
+        );
+        let cfg = parse_bridge_str(&yaml).expect("should parse");
+        let h = &cfg.feedback_loop.harness_manifest;
+        assert!(h.ingest);
+        assert_eq!(h.artifact_glob, "harness-*");
+        assert_eq!(h.filename, "manifest.json");
+        assert_eq!(h.max_artifact_bytes, 1_048_576);
+        assert_eq!(h.max_failures_parsed, 5);
+        assert_eq!(h.max_failure_digest_bytes, 2_048);
     }
 
     // -- Label alias verbatim semantics (H-4) ----------------------------

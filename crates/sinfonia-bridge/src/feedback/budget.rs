@@ -394,6 +394,7 @@ mod tests {
                     target_state: "Needs Fixes".into(),
                     priority: 0,
                 }],
+                harness_manifest: crate::config::HarnessManifestSection::default(),
             },
             custom_fields: CustomFieldsSection {
                 attempt_count: "sinfonia_attempt_count".into(),
