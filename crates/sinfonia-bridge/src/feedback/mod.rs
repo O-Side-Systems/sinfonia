@@ -142,11 +142,6 @@ async fn evaluate_one_pr(
     summary: &CheckRunSummary,
     run_id: Option<u64>,
 ) -> Result<CiOutcome> {
-    // `run_id` is `Some` only for `workflow_run` events; it keys the
-    // harness-manifest ingestion path wired up in a later task. For now
-    // it is threaded through and recorded so the extraction is exercised
-    // end to end.
-    debug!(target: "feedback", repo, pr_number, ?run_id, "evaluating PR");
     let ticket_id = match ctx.store.lookup_pr_ticket(repo, pr_number).await? {
         Some(id) => id,
         None => {
@@ -184,15 +179,40 @@ async fn evaluate_one_pr(
             .clone();
 
     let pr_url = format!("https://github.com/{repo}/pull/{pr_number}");
-    let failure_summary = render_failure_summary(&summary.failed);
-    // Phase 1 limitation: we don't fetch check-run logs. The template
-    // sees a placeholder; plan §11.6 question 6 deferred the log-size
-    // knob, and the fetcher itself is documented in `01-bridge-mvp.md`
-    // §5.4 as P1-F scope — left as a follow-up alongside the rest of
-    // the budget/telemetry work in Phase 3.
-    let failure_log_excerpt = format!(
-        "(log excerpt not yet fetched; see PR {pr_url}/checks for full logs)"
-    );
+
+    // Default (check-name) feedback content — the degradation floor. The
+    // field carries the comma-joined check names; the comment excerpt is a
+    // placeholder pointing at the PR's checks tab. (Generic check-run log
+    // fetching, the original P1-F TODO, remains out of scope — see
+    // Proposal 0001 §3.2/§7.)
+    let mut failure_summary = render_failure_summary(&summary.failed);
+    let mut failure_log_excerpt =
+        format!("(log excerpt not yet fetched; see PR {pr_url}/checks for full logs)");
+
+    // Optional enrichment (Proposal 0001): when harness-manifest ingestion
+    // is enabled and a `workflow_run` id is available, fold the structured
+    // `bridge.json` digest into BOTH the `sinfonia_last_ci_failure` field
+    // (the retry-turn diagnostic channel, §12) and the comment excerpt.
+    // Degrade-only: any miss keeps the floor above.
+    let hm = &ctx.config.feedback_loop.harness_manifest;
+    if hm.ingest {
+        if let Some(run_id) = run_id {
+            if let Some(m) =
+                manifest::try_fetch_manifest(ctx.gh.as_ref(), repo, run_id, hm).await
+            {
+                let run_ref = m.run_url.clone().unwrap_or_else(|| pr_url.clone());
+                let digest = manifest::build_failure_digest(&m, &run_ref, hm);
+                info!(
+                    target: "feedback",
+                    repo, pr_number, run_id,
+                    scenarios = m.total_failures,
+                    "harness manifest ingested; folding structured digest into sinfonia_last_ci_failure"
+                );
+                failure_summary = digest.clone();
+                failure_log_excerpt = digest;
+            }
+        }
+    }
 
     let red_ctx = RedContext {
         repo,
@@ -514,5 +534,61 @@ mod tests {
         assert!(rendered.contains("unit/lint, unit/clippy"));
         assert!(rendered.contains("https://github.com/acme/widgets/pull/42"));
         assert!(rendered.contains("ENG-7"));
+    }
+
+    #[test]
+    fn manifest_digest_is_not_evaluated_as_a_template() {
+        // A fork-controlled `assertion` containing Liquid and Markdown must
+        // render LITERALLY: the digest enters the failure comment as a
+        // scalar value, never as template source (Proposal 0001 §5).
+        use crate::config::HarnessManifestSection;
+        use manifest::{ArtifactUrls, Failure, Manifest};
+
+        let hostile = Failure {
+            scenario: "Injection attempt".into(),
+            feature_file: None,
+            step: Some("When the attacker controls the assertion".into()),
+            // Liquid expression + a Markdown link with a javascript: scheme.
+            assertion: Some("{{ 7*7 }} and [click](javascript:alert(1))".into()),
+            artifact_urls: Some(ArtifactUrls::default()),
+        };
+        let m = Manifest {
+            schema_version: 2,
+            run_url: Some("https://example/run".into()),
+            artifact_bundle_name: None,
+            failures: vec![hostile],
+            total_failures: 1,
+        };
+        let digest = manifest::build_failure_digest(
+            &m,
+            "https://example/run",
+            &HarnessManifestSection::default(),
+        );
+
+        // The digest goes into the comment as the failure_log_excerpt
+        // scalar; the template references it via {{ failure_log_excerpt }}.
+        let template = "Failure:\n{{ failure_log_excerpt }}";
+        let rendered = render_failure_comment(
+            template,
+            1,
+            5,
+            "e2e",
+            &["e2e/login".to_string()],
+            &digest,
+            "https://github.com/acme/widgets/pull/42",
+            "ENG-7",
+        );
+
+        // The Liquid is present verbatim and was NOT evaluated to 49.
+        assert!(
+            rendered.contains("{{ 7*7 }}"),
+            "Liquid must render literally; got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("49"),
+            "Liquid must not be evaluated; got: {rendered}"
+        );
+        // The Markdown link text survives verbatim (no comment-escape).
+        assert!(rendered.contains("[click](javascript:alert(1))"));
     }
 }

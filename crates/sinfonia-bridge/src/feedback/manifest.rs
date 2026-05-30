@@ -271,6 +271,117 @@ pub async fn try_fetch_manifest(
     }
 }
 
+/// Build the human/agent-readable failure digest folded into
+/// `sinfonia_last_ci_failure` (Proposal 0001 §4.5).
+///
+/// The digest is budget-bounded at `cfg.max_failure_digest_bytes`,
+/// truncating at a **scenario boundary** with an explicit
+/// `…(N more scenario(s) truncated)` marker rather than mid-string. Absent
+/// (`null`) fields are omitted, never printed as `null`. Every
+/// attacker-influenced value is passed through [`sanitize`] (control-char
+/// strip + Markdown-fence guard) and emitted **verbatim as text** — it is
+/// never re-interpreted as a Liquid template (§5).
+pub fn build_failure_digest(
+    manifest: &Manifest,
+    run_url: &str,
+    cfg: &HarnessManifestSection,
+) -> String {
+    let max_bytes = cfg.max_failure_digest_bytes;
+    // `total_failures` is the pre-truncation count; `failures` is already
+    // count-capped. The marker reports drops from either cap uniformly.
+    let total = manifest.total_failures.max(manifest.failures.len());
+
+    let header = format!("harness reported {total} failing scenario(s):\n\n");
+    let bundle = manifest
+        .artifact_bundle_name
+        .as_deref()
+        .map(|b| format!(" (bundle '{}')", sanitize(b)))
+        .unwrap_or_default();
+    let run_ref = if run_url.is_empty() {
+        "the CI run".to_string()
+    } else {
+        sanitize(run_url)
+    };
+    let footer = format!(
+        "(diagnostics from bridge.json schema_version={}; full artifacts at {}{})",
+        manifest.schema_version, run_ref, bundle
+    );
+
+    let mut out = String::new();
+    out.push_str(&header);
+
+    let mut rendered = 0usize;
+    for (idx, f) in manifest.failures.iter().enumerate() {
+        let block = render_scenario_block(idx + 1, f);
+        // Reserve room for the footer and a possible truncation marker so
+        // the byte cap holds even after both are appended. Always render
+        // at least the first scenario, even if it alone is oversized.
+        const MARKER_RESERVE: usize = 48;
+        if rendered > 0 && out.len() + block.len() + footer.len() + MARKER_RESERVE > max_bytes {
+            break;
+        }
+        out.push_str(&block);
+        out.push('\n');
+        rendered += 1;
+    }
+
+    let dropped = total.saturating_sub(rendered);
+    if dropped > 0 {
+        out.push_str(&format!("…({dropped} more scenario(s) truncated)\n\n"));
+    }
+    out.push_str(&footer);
+    out
+}
+
+/// Render one scenario's block, omitting absent fields.
+fn render_scenario_block(n: usize, f: &Failure) -> String {
+    let mut b = format!("{n}. \"{}\"\n", sanitize(&f.scenario));
+    if let Some(ff) = &f.feature_file {
+        b.push_str(&format!("   feature:   {}\n", sanitize(ff)));
+    }
+    if let Some(step) = &f.step {
+        b.push_str(&format!("   step:      {}\n", sanitize(step)));
+    }
+    if let Some(a) = &f.assertion {
+        b.push_str(&format!("   assertion: {}\n", sanitize(a)));
+    }
+    if let Some(urls) = &f.artifact_urls {
+        let names = artifact_refs(urls);
+        if !names.is_empty() {
+            b.push_str(&format!("   artifacts: {names}\n"));
+        }
+    }
+    b
+}
+
+/// Join the present artifact reference strings with ` · `, sanitized.
+/// These are opaque bundle-relative names — never fetched server-side.
+fn artifact_refs(u: &ArtifactUrls) -> String {
+    [
+        u.result.as_deref(),
+        u.trace.as_deref(),
+        u.video.as_deref(),
+        u.a11y.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(sanitize)
+    .collect::<Vec<_>>()
+    .join(" · ")
+}
+
+/// Neutralize hostile content in a manifest-sourced string: replace
+/// control characters with spaces and break any literal ``` so the digest
+/// cannot escape the Markdown fence the failure comment wraps it in
+/// (Proposal 0001 §5). The value is otherwise preserved verbatim.
+fn sanitize(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    cleaned.replace("```", "` ` `")
+}
+
 /// Read a single entry out of an in-memory zip, bounding the decompressed
 /// size at `max_decompressed`. Returns `Err(reason)` for a malformed zip,
 /// a missing entry, or an entry that exceeds the cap (zip bomb).
@@ -451,6 +562,107 @@ mod tests {
         assert!(glob_match("*-runs-*", "harness-runs-1"));
         assert!(glob_match("a*c", "abc"));
         assert!(!glob_match("a*c", "abd"));
+    }
+
+    // -- build_failure_digest -------------------------------------------
+
+    fn manifest_with(failures: Vec<Failure>, total: usize) -> Manifest {
+        Manifest {
+            schema_version: 2,
+            run_url: Some("https://github.com/acme/widgets/actions/runs/1820934".into()),
+            artifact_bundle_name: Some("harness-runs-1820934".into()),
+            failures,
+            total_failures: total,
+        }
+    }
+
+    fn failure(scenario: &str) -> Failure {
+        Failure {
+            scenario: scenario.into(),
+            feature_file: Some("requirements/features/tenant/create-tenant.feature".into()),
+            step: Some("Then the tenant list shows \"Acme\"".into()),
+            assertion: Some("Expected element to be visible; was not present in DOM".into()),
+            artifact_urls: Some(ArtifactUrls {
+                result: Some("<dir>/result.json".into()),
+                trace: Some("<dir>/trace.zip".into()),
+                video: Some("<dir>/video.webm".into()),
+                a11y: Some("<dir>/a11y.json".into()),
+            }),
+        }
+    }
+
+    fn big_cfg() -> HarnessManifestSection {
+        HarnessManifestSection {
+            max_failure_digest_bytes: 8_192,
+            ..HarnessManifestSection::default()
+        }
+    }
+
+    #[test]
+    fn digest_renders_golden_shape() {
+        let m = manifest_with(vec![failure("Create tenant persists across reload")], 1);
+        let d = build_failure_digest(&m, "https://example/run", &big_cfg());
+        assert!(d.contains("harness reported 1 failing scenario(s):"));
+        assert!(d.contains("1. \"Create tenant persists across reload\""));
+        assert!(d.contains("feature:   requirements/features/tenant/create-tenant.feature"));
+        assert!(d.contains("step:      Then the tenant list shows \"Acme\""));
+        assert!(d.contains("assertion: Expected element to be visible"));
+        assert!(d.contains("trace.zip"));
+        assert!(d.contains("schema_version=2"));
+        assert!(d.contains("bundle 'harness-runs-1820934'"));
+        assert!(d.contains("https://example/run"));
+        assert!(!d.contains("…("), "no truncation marker for a single scenario");
+    }
+
+    #[test]
+    fn digest_omits_null_fields() {
+        let f = Failure {
+            scenario: "Slug is server-validated".into(),
+            feature_file: None,
+            step: Some("When I submit slug \"ACME!\"".into()),
+            assertion: None,
+            artifact_urls: None,
+        };
+        let d = build_failure_digest(&manifest_with(vec![f], 1), "", &big_cfg());
+        assert!(d.contains("step:      When I submit slug"));
+        assert!(!d.contains("feature:"), "feature line omitted when null");
+        assert!(!d.contains("assertion:"), "assertion line omitted when null");
+        assert!(!d.contains("artifacts:"), "artifacts line omitted when null");
+        assert!(!d.contains("null"));
+    }
+
+    #[test]
+    fn digest_truncates_at_scenario_boundary_with_marker() {
+        // 30 scenarios but a tiny byte budget — only the first few fit and
+        // the marker reports the remainder.
+        let fs: Vec<Failure> = (0..30).map(|i| failure(&format!("Scenario {i}"))).collect();
+        let cfg = HarnessManifestSection {
+            max_failure_digest_bytes: 600,
+            ..HarnessManifestSection::default()
+        };
+        let d = build_failure_digest(&manifest_with(fs, 30), "https://example/run", &cfg);
+        assert!(d.contains("more scenario(s) truncated)"), "marker present: {d}");
+        // The footer always survives truncation.
+        assert!(d.contains("schema_version=2"));
+        // Truncated at a boundary: the last rendered scenario block is whole
+        // (no dangling field line right before the marker).
+        let before_marker = d.split("…(").next().unwrap();
+        assert!(before_marker.trim_end().ends_with(|c: char| c != ':'));
+    }
+
+    #[test]
+    fn digest_sanitizes_control_chars_and_fences() {
+        let f = Failure {
+            scenario: "ctl".into(),
+            feature_file: None,
+            step: Some("line1\nline2\twith\u{7}bell".into()),
+            assertion: Some("```injected fence```".into()),
+            artifact_urls: None,
+        };
+        let d = build_failure_digest(&manifest_with(vec![f], 1), "", &big_cfg());
+        assert!(!d.contains('\u{7}'), "bell char stripped");
+        assert!(!d.contains("line1\nline2"), "embedded newline neutralized");
+        assert!(!d.contains("```"), "triple backtick fence broken");
     }
 
     // -- try_fetch_manifest pipeline ------------------------------------
