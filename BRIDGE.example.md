@@ -159,8 +159,9 @@ feedback_loop:
   # any miss (no artifact, oversize, malformed, version too old) logs a
   # warning and falls back to the check-name behavior. The manifest is
   # treated as untrusted input (it may come from a fork PR) with size,
-  # count, and length caps. Omit this entire block to disable ingestion.
-  ingest_harness_manifest: false                 # master switch; default false
+  # count, and length caps. Ingestion is ON by default; set the switch to
+  # false to force the legacy check-name-only feedback.
+  ingest_harness_manifest: true                  # master switch; default true
   harness_manifest_artifact_glob: "bridge-*"     # run artifact holding bridge.json (one `*` wildcard)
   harness_manifest_filename: "bridge.json"        # entry name inside the artifact zip
   max_artifact_bytes: 5_242_880                   # 5 MiB download cap (zip-bomb / exhaustion defense)

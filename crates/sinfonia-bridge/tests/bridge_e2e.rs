@@ -53,6 +53,7 @@ use sinfonia_bridge::storage::Store;
 use sinfonia_bridge::webhook::{router, AppState};
 use sinfonia_tracker::{custom_fields, LinearTracker, TrackerKind};
 use std::collections::HashMap;
+use std::io::{Cursor, Write};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
@@ -750,6 +751,80 @@ fn check_suite_payload(repo: &str, head_sha: &str, pr_number: u64) -> Value {
     })
 }
 
+fn workflow_run_payload(repo: &str, head_sha: &str, pr_number: u64, run_id: u64) -> Value {
+    json!({
+        "action": "completed",
+        "workflow_run": {
+            "id": run_id,
+            "head_sha": head_sha,
+            "pull_requests": [{"number": pr_number}],
+        },
+        "repository": {"full_name": repo},
+    })
+}
+
+/// Build an in-memory zip carrying a single `bridge.json` entry.
+fn bridge_zip(manifest: &Value) -> Vec<u8> {
+    let bytes = serde_json::to_vec(manifest).unwrap();
+    let mut buf = Vec::new();
+    {
+        let mut w = zip::ZipWriter::new(Cursor::new(&mut buf));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        w.start_file("bridge.json", opts).unwrap();
+        w.write_all(&bytes).unwrap();
+        w.finish().unwrap();
+    }
+    buf
+}
+
+/// One `WorkflowListArtifact` JSON row (octocrab's deserializer needs every
+/// non-Option field present).
+fn artifact_meta_json(id: u64, name: &str, size: u64) -> Value {
+    json!({
+        "id": id,
+        "node_id": format!("MDg6QXJ0aWZhY3R7}}{id}"),
+        "name": name,
+        "size_in_bytes": size,
+        "url": format!("https://api.github.test/repos/_/_/actions/artifacts/{id}"),
+        "archive_download_url": format!("https://api.github.test/repos/_/_/actions/artifacts/{id}/zip"),
+        "expired": false,
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+        "expires_at": "2099-01-01T00:00:00Z",
+    })
+}
+
+/// Mount the Actions artifacts list + download endpoints for one run so the
+/// bridge can fetch and unzip a `bridge.json` (Proposal 0001).
+async fn mount_github_run_artifacts(
+    server: &MockServer,
+    run_id: u64,
+    artifact_id: u64,
+    artifact_name: &str,
+    zip_bytes: Vec<u8>,
+) {
+    let list_path = format!(
+        r"^/repos/[^/]+/[^/]+/actions/runs/{run_id}/artifacts$"
+    );
+    let size = zip_bytes.len() as u64;
+    Mock::given(method("GET"))
+        .and(path_regex(list_path))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "total_count": 1,
+            "artifacts": [artifact_meta_json(artifact_id, artifact_name, size)],
+        })))
+        .mount(server)
+        .await;
+
+    let dl_path = format!(r"^/repos/[^/]+/[^/]+/actions/artifacts/{artifact_id}/zip$");
+    Mock::given(method("GET"))
+        .and(path_regex(dl_path))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(zip_bytes))
+        .mount(server)
+        .await;
+}
+
 /// Did the GitHub mock receive a POST to `/repos/{repo}/issues/{pr}/labels`
 /// containing the given label name?
 async fn server_received_label_apply(
@@ -1410,4 +1485,121 @@ async fn scenario_9_manage_labels_false_skips_label_calls() {
             p,
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 10 — workflow_run red CI ingests the bridge.json manifest and
+// folds the structured digest into sinfonia_last_ci_failure (Proposal 0001).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn scenario_10_workflow_run_ingests_harness_manifest_digest() {
+    let gh = MockServer::start().await;
+    let linear = MockServer::start().await;
+    let linear_state = Arc::new(Mutex::new(LinearMockState::new_with_states(&[
+        "Needs Fixes",
+        "Blocked - Human Review",
+    ])));
+
+    // Red check-runs on the head SHA so the feedback loop takes the red path.
+    mount_github_rest(&gh, "head-wf-red", &["e2e/playwright"], &[]).await;
+
+    // The run's artifact bundle holds a v2 bridge.json with one failure.
+    let manifest = json!({
+        "schema_version": 2,
+        "pr_number": 77,
+        "run_url": "https://github.com/acme/widgets/actions/runs/555",
+        "artifact_bundle_name": "harness-runs-555",
+        "failures": [{
+            "scenario": "Create tenant persists across reload",
+            "feature_file": "requirements/features/tenant/create-tenant.feature",
+            "step": "Then the tenant list shows \"Acme\"",
+            "assertion": "Expected [data-testid='tenant-row-acme'] to be visible; was not present in DOM",
+            "artifact_urls": {
+                "result": "<dir>/result.json",
+                "trace": "<dir>/trace.zip",
+                "video": "<dir>/video.webm",
+                "a11y": "<dir>/a11y.json"
+            }
+        }],
+    });
+    mount_github_run_artifacts(&gh, 555, 9001, "bridge-555", bridge_zip(&manifest)).await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(LinearGraphqlMock::new(linear_state.clone()))
+        .mount(&linear)
+        .await;
+
+    // bridge_md sets no ingest key → it defaults ON (Task 7 flip).
+    let cfg = bridge_md(
+        Some("ghp_test"),
+        None,
+        None,
+        3,
+        true,
+        &format!("{}/", linear.uri()),
+        None,
+    );
+    let bridge = start_bridge(&cfg, &gh.uri(), BridgeAuthForTest::Pat("ghp_test".into())).await;
+
+    // Map PR 77 → ENG-77.
+    let (st, _) = post_webhook_signed(
+        &bridge,
+        "pull_request",
+        "deliv-pr-77",
+        &pr_opened_payload("acme/widgets", 77, "Closes ENG-77"),
+    )
+    .await;
+    assert_eq!(st.as_u16(), 202);
+
+    // Fire the red workflow_run — this is the ingestion trigger.
+    let (st, body) = post_webhook_signed(
+        &bridge,
+        "workflow_run",
+        "deliv-wf-77",
+        &workflow_run_payload("acme/widgets", "head-wf-red", 77, 555),
+    )
+    .await;
+    assert_eq!(st.as_u16(), 202, "red workflow_run should respond 202; body={body}");
+    assert_eq!(body["outcomes"][0]["kind"], "red");
+
+    // The structured digest — not a comma-joined check name — must have
+    // landed in sinfonia_last_ci_failure on the ticket.
+    let stl = linear_state.lock().unwrap();
+    let field = stl
+        .fields
+        .get("ENG-77")
+        .and_then(|f| f.get("sinfonia_last_ci_failure"))
+        .cloned();
+    drop(stl);
+    let text = match field {
+        Some(custom_fields::CustomFieldValue::String(s)) => s,
+        other => panic!("expected a string digest in sinfonia_last_ci_failure, got {other:?}"),
+    };
+    assert!(
+        text.contains("harness reported 1 failing scenario(s):"),
+        "field should carry the structured digest header; got: {text}"
+    );
+    assert!(
+        text.contains("Create tenant persists across reload"),
+        "digest should name the failing scenario; got: {text}"
+    );
+    assert!(
+        text.contains("schema_version=2"),
+        "digest should cite the manifest version; got: {text}"
+    );
+
+    // Sanity: the bridge actually hit the artifact list + download endpoints.
+    let reqs = gh.received_requests().await.unwrap_or_default();
+    assert!(
+        reqs.iter()
+            .any(|r| r.url.path() == "/repos/acme/widgets/actions/runs/555/artifacts"),
+        "expected the run-artifacts list call",
+    );
+    assert!(
+        reqs.iter()
+            .any(|r| r.url.path() == "/repos/acme/widgets/actions/artifacts/9001/zip"),
+        "expected the artifact zip download call",
+    );
 }

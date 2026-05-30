@@ -153,7 +153,12 @@ pub struct HarnessManifestSection {
 impl Default for HarnessManifestSection {
     fn default() -> Self {
         Self {
-            ingest: false,
+            // Enabled by default as of Proposal 0001 Task 7 (the adversarial
+            // fixture suite is green). Ingestion only ever *enriches* the
+            // red-CI feedback and degrades to the check-name path on any
+            // miss, so opting in by default is safe; set
+            // `ingest_harness_manifest: false` to force the legacy behavior.
+            ingest: true,
             artifact_glob: "bridge-*".to_string(),
             filename: "bridge.json".to_string(),
             max_artifact_bytes: 5_242_880, // 5 MiB
@@ -1208,7 +1213,7 @@ telemetry:
         // disabled, fully-defaulted one.
         let cfg = parse_bridge_str(baseline()).expect("baseline parses");
         let h = &cfg.feedback_loop.harness_manifest;
-        assert!(!h.ingest, "ingestion is off by default");
+        assert!(h.ingest, "ingestion is on by default (Task 7 flip)");
         assert_eq!(h.artifact_glob, "bridge-*");
         assert_eq!(h.filename, "bridge.json");
         assert_eq!(h.max_artifact_bytes, 5_242_880);
@@ -1236,6 +1241,19 @@ telemetry:
         assert_eq!(h.max_artifact_bytes, 1_048_576);
         assert_eq!(h.max_failures_parsed, 5);
         assert_eq!(h.max_failure_digest_bytes, 2_048);
+    }
+
+    #[test]
+    fn harness_manifest_explicit_false_disables() {
+        let yaml = baseline().replace(
+            "  blocked_state: \"Blocked - Human Review\"",
+            "  blocked_state: \"Blocked - Human Review\"\n  ingest_harness_manifest: false",
+        );
+        let cfg = parse_bridge_str(&yaml).expect("should parse");
+        assert!(
+            !cfg.feedback_loop.harness_manifest.ingest,
+            "explicit false opts out of ingestion"
+        );
     }
 
     // -- Label alias verbatim semantics (H-4) ----------------------------
