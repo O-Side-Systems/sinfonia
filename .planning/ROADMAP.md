@@ -19,7 +19,7 @@ decomposition discipline that prevents two stories from building the same thing.
 - [x] **Phase 1: Orchestrator Gating Verification** - Confirm in code how dependency/parent-child gating actually works before building on it (completed 2026-06-14)
 - [x] **Phase 2: Harness Manifest Ingestion Closure** - Verify and close Proposal 0001's opt-in `bridge.json` ingestion path (completed 2026-06-14)
 - [x] **Phase 3: Dependency Gating (Blocker-Merged Guardrail)** - Gate work on blocker PRs being merged to main, keyed on Linear `blocks` (completed 2026-06-14)
-- [ ] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency
+- [x] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency (completed 2026-06-14)
 - [ ] **Phase 5: Repository Context Contract** - Doc-graph contract, nearest-wins AGENTS.md, just-in-time read protocol, templates
 - [ ] **Phase 6: Decomposition Discipline & Invariant Linters** - Overlap-before-build, stale/overlap linters, decomposition consistency pass
 
@@ -71,10 +71,12 @@ decomposition discipline that prevents two stories from building the same thing.
 **Requirements**: MERGE-01, MERGE-02, MERGE-03, MERGE-04
 **Success Criteria** (what must be TRUE):
   1. PRs are opened only from a branch rebased on current `origin/main` with a green harness run.
-  2. An issue reaches `In Review` only when `gh pr view --json mergeStateStatus` reports `CLEAN`, after a bounded rebase/resolve/re-run/force-push loop on non-CLEAN.
+  2. An issue reaches `In Review` only when the PR is mergeable w.r.t. `main`, after a bounded rebase/resolve/re-run/force-push loop on non-mergeable. **Refinement (CONTEXT.md D-03):** the gate is "mergeable" (`mergeStateStatus` anything except `DIRTY`/`BEHIND`; `BLOCKED`/`UNSTABLE` are ready-for-human and transition; `UNKNOWN` re-polls), NOT literal `CLEAN` — a fresh agent PR awaiting required review is `BLOCKED`, never `CLEAN`, so gating on literal CLEAN deadlocks against the branch protection criterion 3 mandates. This refinement is recorded in HARNESS-SPEC §7.4.
   3. HARNESS-SPEC §7.4 names the merge-queue rebase-and-test requirement and a post-merge harness gate on `main`; §9 checklist is updated and an operator branch-protection/merge-queue setup note exists.
   4. `In Progress` concurrency stays at 1 and the serial-foundation / leaf-fan-out convention is documented in the concurrency config and at milestone level.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [x] 04-01-PLAN.md — In Progress prompt: pre-PR rebase gate + mergeability loop + shared Mergeability procedure + concurrency comment, with WORKFLOW.example.md parity (Wave 1)
+  - [x] 04-02-PLAN.md — HARNESS-SPEC §7.4/§9 amendment + DEPLOYMENT.md merge-queue operator section + SPEC §8 serial-foundation cross-ref (Wave 1)
 
 ### Phase 5: Repository Context Contract
 **Goal**: A reviewed, hierarchical doc-graph exists so agents read just enough context — nearest-wins `AGENTS.md` with a module-ownership map, a Repository Context Contract defining node shape and read/write protocol, and prompts that stop slurping `docs/`.
@@ -108,6 +110,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
 | 2. Harness Manifest Ingestion Closure | 2/2 | Complete   | 2026-06-14 |
 | 3. Dependency Gating (Blocker-Merged Guardrail) | 3/3 | Complete   | 2026-06-14 |
-| 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
+| 4. Merge-Conflict Handling & Merge Queue | 2/2 | Complete   | 2026-06-14 |
 | 5. Repository Context Contract | 0/TBD | Not started | - |
 | 6. Decomposition Discipline & Invariant Linters | 0/TBD | Not started | - |
