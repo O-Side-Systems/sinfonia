@@ -64,6 +64,8 @@ hooks:
 agent:
   max_concurrent_agents: 2
   max_concurrent_agents_by_state:
+    # serial-foundation convention (docs/HARNESS-SPEC.md §7.4): one foundational
+    # story at a time — each lands on `main` before the next begins.
     "In Progress": 1
   max_turns: 8
   max_retry_backoff_ms: 300000
