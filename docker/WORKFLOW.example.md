@@ -535,6 +535,11 @@ states:
          API=https://api.linear.app/graphql
          MAX_ATTEMPTS=3
          ATTEMPT=0
+         UNKNOWN_TRIES=0
+
+         # Re-derive PR_NUM here so this block is self-contained (WR-03/WR-04).
+         PR_NUM=$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number')
+         [ -n "$PR_NUM" ] || { echo "PR_NUM unset — cannot evaluate mergeability; staying In Progress."; exit 0; }
 
          while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
            MSS=$(gh pr view "$PR_NUM" \
@@ -547,14 +552,44 @@ states:
                ATTEMPT=$((ATTEMPT + 1))
                if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then break; fi
                echo "Conflict detected ($MSS) — running Mergeability procedure (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
-               # Follow the Mergeability procedure (fetch, rebase, gate, force-push)
                git fetch origin
-               git rebase origin/main
-               # Re-run the repo-discovered gate; abort if red
+               # Guard the rebase: a DIRTY/BEHIND branch means real conflicts; set -e would
+               # abort mid-rebase on failure, leaving a broken workspace.
+               if ! git rebase origin/main; then
+                 echo "Rebase hit conflicts — resolve THIS issue's files only, then:"
+                 echo "  git add <file> && git rebase --continue"
+                 echo "Re-run the repo-discovered gate once conflicts are resolved."
+                 echo "Do NOT force-push until the gate is green."
+                 break
+               fi
+               # Re-run the repo-discovered gate (the same gate the repo's CI runs).
+               # Discover it from .github/workflows/, README, or the harness's documented command.
+               # Do NOT hardcode a stack-specific command — follow the Mergeability procedure (D-01).
+               # Example: ./scripts/ci.sh   or   npm test   or   cargo test -- --test-threads=1
+               # The gate MUST be green before you push.
+               if ! GATE_CMD=$(grep -rE '^\s*(run|cmd):' .github/workflows/*.yml 2>/dev/null | grep -i 'test\|lint\|ci' | head -1 | sed 's/.*run: //'); then
+                 GATE_CMD=""
+               fi
+               if [ -n "$GATE_CMD" ]; then
+                 echo "Running repo-discovered gate: $GATE_CMD"
+                 if ! eval "$GATE_CMD"; then
+                   echo "GATE-RED: gate failed after rebase — not force-pushing. Staying In Progress."
+                   break
+                 fi
+               else
+                 echo "GATE-MANUAL: could not auto-discover gate command. Verify gate is green before proceeding."
+                 echo "Check .github/workflows/, README, or the harness's documented command (D-01)."
+                 break
+               fi
                git push --force-with-lease origin "$BRANCH"
                ;;
              UNKNOWN)
-               echo "GitHub still computing mergeStateStatus — sleeping 15s and re-polling..."
+               UNKNOWN_TRIES=$((UNKNOWN_TRIES + 1))
+               if [ "$UNKNOWN_TRIES" -ge 5 ]; then
+                 echo "mergeStateStatus stuck UNKNOWN after 5 polls — staying In Progress, re-evaluating next poll."
+                 exit 0
+               fi
+               echo "GitHub still computing mergeStateStatus — sleeping 15s and re-polling ($UNKNOWN_TRIES/5)..."
                sleep 15
                ;;
              BLOCKED|UNSTABLE|CLEAN)
@@ -562,8 +597,15 @@ states:
                break
                ;;
              *)
-               echo "Unexpected mergeStateStatus: $MSS — treating as conflict-free and proceeding."
-               break
+               # Conservative catch-all: an unexpected or null mergeStateStatus is NOT
+               # treated as conflict-free. Hold In Progress and re-poll once (WR-06).
+               UNKNOWN_TRIES=$((UNKNOWN_TRIES + 1))
+               if [ "$UNKNOWN_TRIES" -ge 5 ]; then
+                 echo "Unexpected mergeStateStatus '$MSS' persists after 5 polls — staying In Progress, re-evaluating next poll."
+                 exit 0
+               fi
+               echo "Unexpected mergeStateStatus: '$MSS' — holding In Progress, sleeping 15s and re-polling ($UNKNOWN_TRIES/5)..."
+               sleep 15
                ;;
            esac
          done
@@ -600,9 +642,9 @@ states:
       ### Mergeability procedure
 
       The single source of truth for rebasing and getting the branch conflict-free
-      against `main`. Force-push is safe here: `sinfonia/<id>` is an agent-owned
-      branch, and a linear history is what the GitHub native merge queue
-      rebase-and-tests before merging.
+      against `main`. Force-push is safe here because `sinfonia/<id>` is an
+      agent-owned branch, and the GitHub native merge queue rebases-and-tests each
+      PR against `main` before merging.
 
       ```bash
       set -e
@@ -632,7 +674,7 @@ states:
         | jq -r '.mergeStateStatus')
       # Branch based on mergeStateStatus:
       #   DIRTY or BEHIND  → conflicts remain; loop / retry the procedure
-      #   UNKNOWN          → GitHub still computing; sleep 10 and re-poll
+      #   UNKNOWN          → GitHub still computing; sleep 15 and re-poll
       #   BLOCKED          → conflict-free; required review pending (proceed — human approves In Review)
       #   UNSTABLE         → conflict-free; non-required checks failing (proceed)
       #   CLEAN            → conflict-free and all checks passing (proceed)
