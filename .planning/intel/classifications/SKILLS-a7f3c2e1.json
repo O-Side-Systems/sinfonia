@@ -1,0 +1,35 @@
+{
+  "source_path": "/Users/brettlee/work/sinfonia/docs/SKILLS.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "Skills",
+  "summary": "User-facing guide and runbook for Sinfonia's six setup skills, covering what each does, recommended order, installation, and the skill contract.",
+  "scope": [
+    "skills directory",
+    "setup-workflow",
+    "setup-bridge",
+    "setup-state-machine",
+    "setup-telemetry",
+    "setup-agent-backend",
+    "migrate-from-symphony",
+    "SKILL.md contract",
+    "Strict-Liquid invariant",
+    "skill versioning"
+  ],
+  "cross_refs": [
+    "../skills/setup-workflow/SKILL.md",
+    "../skills/setup-bridge/SKILL.md",
+    "../skills/setup-state-machine/SKILL.md",
+    "../skills/setup-telemetry/SKILL.md",
+    "../skills/setup-agent-backend/SKILL.md",
+    "../skills/migrate-from-symphony/SKILL.md",
+    "DEPLOYMENT.md",
+    "CLIENT_SETUP.md",
+    "MIGRATION-v0.2-to-v0.3.md",
+    "SPEC.md"
+  ],
+  "locked": false,
+  "precedence": null,
+  "notes": ""
+}

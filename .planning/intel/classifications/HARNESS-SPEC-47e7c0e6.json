@@ -1,0 +1,27 @@
+{
+  "source_path": "/Users/brettlee/work/sinfonia/docs/HARNESS-SPEC.md",
+  "type": "SPEC",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "Harness Authoring Specification",
+  "summary": "Specifies the producer-side test-feedback contract (artifacts, result.json, bridge.json, conventions) a target repo must satisfy to be Sinfonia-ready.",
+  "scope": [
+    "test harness",
+    "four-artifact contract",
+    "result.json schema",
+    "bridge.json manifest",
+    "agentic SDLC loop",
+    "observability feedback contract",
+    "determinism NFR",
+    "CI check naming",
+    "repository conventions",
+    "Sinfonia interface"
+  ],
+  "cross_refs": [
+    "docs/SPEC.md",
+    "docs/proposals/0001-harness-feedback-ingestion.md"
+  ],
+  "locked": false,
+  "precedence": null,
+  "notes": ""
+}

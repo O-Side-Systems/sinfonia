@@ -1,0 +1,26 @@
+{
+  "source_path": "/Users/brettlee/work/sinfonia/docs/JIRA-SCREEN-SCHEME.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "Binding sinfonia_* custom fields to Jira screens",
+  "summary": "Admin runbook for manually binding the bridge's seven sinfonia_* Jira custom fields to screens so they appear in the Jira UI.",
+  "scope": [
+    "Jira screen scheme binding",
+    "sinfonia_* custom fields",
+    "Jira Cloud admin setup",
+    "Jira Server / Data Center admin setup",
+    "bridge custom-field discovery"
+  ],
+  "cross_refs": [
+    "docs/SPEC.md",
+    "SPEC.md",
+    "BRIDGE.example.md",
+    "../BRIDGE.example.md",
+    "docs/DEPLOYMENT.md",
+    "DEPLOYMENT.md"
+  ],
+  "locked": false,
+  "precedence": null,
+  "notes": ""
+}

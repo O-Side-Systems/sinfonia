@@ -1,0 +1,28 @@
+{
+  "source_path": "/Users/brettlee/work/sinfonia/.planning/intel/ingest-sources/harness-improvement-analysis.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "Sinfonia Harness & Workflow — Improvement Analysis",
+  "summary": "Analysis and pre-implementation recommendations for improving HARNESS-SPEC.md and WORKFLOW.example.md across orchestrator, merge, and decomposition layers.",
+  "scope": [
+    "HARNESS-SPEC.md",
+    "WORKFLOW.example.md",
+    "orchestrator dependency gating",
+    "Linear blocks relations",
+    "merge queue / merge conflicts",
+    "spec decomposition",
+    "repository context graph",
+    "AGENTS.md doc-graph",
+    "GitHub / Sinfonia greenfield workflow"
+  ],
+  "cross_refs": [
+    "HARNESS-SPEC.md",
+    "WORKFLOW.example.md",
+    "src/orchestrator/",
+    ".sinfonia/plans/"
+  ],
+  "locked": false,
+  "precedence": null,
+  "notes": "Explicitly labeled 'Status: Analysis / recommendation, pre-implementation'. Prose-heavy rationale with references; no ADR Decision/Consequences sections, no PRD user stories/acceptance criteria, no SPEC endpoint/schema contracts. Classified DOC (design rationale / context only)."
+}

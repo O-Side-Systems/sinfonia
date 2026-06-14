@@ -1,0 +1,33 @@
+{
+  "source_path": "/Users/brettlee/work/sinfonia/docs/MIGRATION-v0.2-to-v0.3.md",
+  "type": "DOC",
+  "confidence": "high",
+  "manifest_override": false,
+  "title": "Migrating from Sinfonia v0.2 to v0.3",
+  "summary": "Upgrade guide walking v0.2 operators through required, optional, and breaking changes when moving to v0.3.",
+  "scope": [
+    "sinfonia daemon",
+    "sinfonia-bridge",
+    "Docker images",
+    "docker-compose topology",
+    "state-machine pattern",
+    "OpenTelemetry",
+    "OpenCode backend",
+    "WORKFLOW.md",
+    "BRIDGE.md",
+    "setup skills"
+  ],
+  "cross_refs": [
+    "../skills/setup-state-machine/SKILL.md",
+    "../BRIDGE.example.md",
+    "DEPLOYMENT.md",
+    "CLIENT_SETUP.md",
+    "../examples/telemetry/",
+    "../CONTRIBUTING.md",
+    "SKILLS.md",
+    "../CHANGELOG.md"
+  ],
+  "locked": false,
+  "precedence": null,
+  "notes": ""
+}
