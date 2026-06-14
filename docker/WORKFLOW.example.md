@@ -466,8 +466,43 @@ states:
          complete the implementation.
       2. Run the project's tests + linters. Iterate until green.
       3. Commit cleanly. Reference `{{ issue.identifier }}` in the message.
-      4. Push: `git push -u origin "sinfonia/{{ issue.identifier | downcase }}"`.
-      5. Open a PR (or update the existing one). Verify the URL afterwards.
+
+      4. **Pre-PR gate (MERGE-01): follow the Mergeability procedure before pushing.**
+         Fetch `origin/main`, rebase, resolve any conflicts (this issue's files only),
+         re-run the repo-discovered gate. The gate MUST be green before you push.
+
+         If the gate is still red after rebasing (conflicts unresolvable OR gate fails):
+
+         ```bash
+         set -e
+         BRANCH="sinfonia/{{ issue.identifier | downcase }}"
+         MARKER="sinfonia-bot: pre-pr-gate-red"
+         AUTH="Authorization: $LINEAR_API_KEY"
+         CT="Content-Type: application/json"
+         API=https://api.linear.app/graphql
+
+         EXISTING_MARKERS=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+           -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50) { nodes { body } } } }\"}" \
+           | jq -r '.data.issue.comments.nodes[].body' 2>/dev/null || true)
+         if ! printf '%s' "$EXISTING_MARKERS" | grep -qF "$MARKER"; then
+           ISSUE_UUID=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+             -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { id } }\"}" \
+             | jq -er '.data.issue.id')
+           COMMENT_BODY="${MARKER}\\n\\nPre-PR gate is red after rebasing on \`origin/main\`. The branch has not been pushed and no PR has been opened. Conflicts or gate failures must be resolved before pushing. Re-evaluating next poll."
+           curl -sS -H "$AUTH" -H "$CT" "$API" \
+             -d "{\"query\":\"mutation { commentCreate(input: { issueId: \\\"$ISSUE_UUID\\\", body: \\\"$COMMENT_BODY\\\" }) { success } }\"}"
+         fi
+         echo "GATE-RED: pre-PR gate failed — no push, no PR opened. Staying In Progress."
+         exit 0
+         ```
+
+         > ⛔ **If the pre-PR gate is red, you are DONE for this turn.** Do NOT push the
+         > branch. Do NOT open a PR. Do NOT transition the issue. The comment above
+         > (if needed) was posted. End your turn — the orchestrator will re-dispatch.
+
+      5. Push: `git push -u origin "sinfonia/{{ issue.identifier | downcase }}"`.
+
+      6. Open a PR (or update the existing one). Verify the URL afterwards.
 
          ```bash
          set -e
@@ -482,9 +517,81 @@ states:
          fi
          echo "PR: $PR_URL"
          [ -n "$PR_URL" ] || { echo "PR CREATE FAILED"; exit 1; }
+         PR_NUM=$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number')
          ```
 
-      6. Transition the Linear issue to **In Review** using the same
+      7. **Mergeability loop (MERGE-02): gate the In Review transition.**
+         Poll `mergeStateStatus` and loop up to 3 times using the Mergeability
+         procedure on `DIRTY`/`BEHIND`; re-poll on `UNKNOWN`; proceed on
+         `BLOCKED`/`UNSTABLE`/`CLEAN`.
+
+         ```bash
+         set -e
+         BRANCH="sinfonia/{{ issue.identifier | downcase }}"
+         AUTH="Authorization: $LINEAR_API_KEY"
+         CT="Content-Type: application/json"
+         API=https://api.linear.app/graphql
+         MAX_ATTEMPTS=3
+         ATTEMPT=0
+
+         while [ "$ATTEMPT" -lt "$MAX_ATTEMPTS" ]; do
+           MSS=$(gh pr view "$PR_NUM" \
+             --json state,mergeable,mergeStateStatus,reviewDecision \
+             | jq -r '.mergeStateStatus')
+           echo "mergeStateStatus (attempt $((ATTEMPT+1))/$MAX_ATTEMPTS): $MSS"
+
+           case "$MSS" in
+             DIRTY|BEHIND)
+               ATTEMPT=$((ATTEMPT + 1))
+               if [ "$ATTEMPT" -ge "$MAX_ATTEMPTS" ]; then break; fi
+               echo "Conflict detected ($MSS) — running Mergeability procedure (attempt $ATTEMPT/$MAX_ATTEMPTS)..."
+               # Follow the Mergeability procedure (fetch, rebase, gate, force-push)
+               git fetch origin
+               git rebase origin/main
+               # Re-run the repo-discovered gate; abort if red
+               git push --force-with-lease origin "$BRANCH"
+               ;;
+             UNKNOWN)
+               echo "GitHub still computing mergeStateStatus — sleeping 15s and re-polling..."
+               sleep 15
+               ;;
+             BLOCKED|UNSTABLE|CLEAN)
+               echo "Conflict-free ($MSS) — proceeding to In Review transition."
+               break
+               ;;
+             *)
+               echo "Unexpected mergeStateStatus: $MSS — treating as conflict-free and proceeding."
+               break
+               ;;
+           esac
+         done
+
+         # Check if exhausted without becoming conflict-free
+         MSS_FINAL=$(gh pr view "$PR_NUM" \
+           --json mergeStateStatus | jq -r '.mergeStateStatus')
+         if [ "$MSS_FINAL" = "DIRTY" ] || [ "$MSS_FINAL" = "BEHIND" ]; then
+           MARKER="sinfonia-bot: mergeability-loop-exhausted"
+           EXISTING_MARKERS=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+             -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50) { nodes { body } } } }\"}" \
+             | jq -r '.data.issue.comments.nodes[].body' 2>/dev/null || true)
+           if ! printf '%s' "$EXISTING_MARKERS" | grep -qF "$MARKER"; then
+             ISSUE_UUID=$(curl -sS -H "$AUTH" -H "$CT" "$API" \
+               -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { id } }\"}" \
+               | jq -er '.data.issue.id')
+             COMMENT_BODY="${MARKER}\\n\\nMergeability loop exhausted after ${MAX_ATTEMPTS} attempts. The PR is still \`${MSS_FINAL}\` against \`main\`. The issue stays In Progress — re-evaluating next poll once \`main\` stabilizes."
+             curl -sS -H "$AUTH" -H "$CT" "$API" \
+               -d "{\"query\":\"mutation { commentCreate(input: { issueId: \\\"$ISSUE_UUID\\\", body: \\\"$COMMENT_BODY\\\" }) { success } }\"}"
+           fi
+           echo "LOOP-EXHAUSTED: still $MSS_FINAL after $MAX_ATTEMPTS attempts — no transition. Staying In Progress."
+           exit 0
+         fi
+         ```
+
+         > ⛔ **If the loop is exhausted (still `DIRTY`/`BEHIND` after 3 attempts), you are DONE
+         > for this turn.** Do NOT transition the issue to In Review. The comment above (if
+         > needed) was posted. End your turn — the orchestrator will re-dispatch next poll.
+
+      8. Transition the Linear issue to **In Review** using the same
          verify-then-claim pattern as the Todo prompt (swap `"In Progress"` for
          `"In Review"`). Do not claim success unless `OK:` prints. Then stop.
 
