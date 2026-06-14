@@ -19,7 +19,7 @@ decomposition discipline that prevents two stories from building the same thing.
 - [x] **Phase 1: Orchestrator Gating Verification** - Confirm in code how dependency/parent-child gating actually works before building on it (completed 2026-06-14)
 - [x] **Phase 2: Harness Manifest Ingestion Closure** - Verify and close Proposal 0001's opt-in `bridge.json` ingestion path (completed 2026-06-14)
 - [x] **Phase 3: Dependency Gating (Blocker-Merged Guardrail)** - Gate work on blocker PRs being merged to main, keyed on Linear `blocks` (completed 2026-06-14)
-- [ ] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency
+- [x] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency (completed 2026-06-14)
 - [ ] **Phase 5: Repository Context Contract** - Doc-graph contract, nearest-wins AGENTS.md, just-in-time read protocol, templates
 - [ ] **Phase 6: Decomposition Discipline & Invariant Linters** - Overlap-before-build, stale/overlap linters, decomposition consistency pass
 
@@ -110,6 +110,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
 | 2. Harness Manifest Ingestion Closure | 2/2 | Complete   | 2026-06-14 |
 | 3. Dependency Gating (Blocker-Merged Guardrail) | 3/3 | Complete   | 2026-06-14 |
-| 4. Merge-Conflict Handling & Merge Queue | 2/2 | Gaps Found | -          |
+| 4. Merge-Conflict Handling & Merge Queue | 4/4 | Complete   | 2026-06-14 |
 | 5. Repository Context Contract | 0/TBD | Not started | - |
 | 6. Decomposition Discipline & Invariant Linters | 0/TBD | Not started | - |
