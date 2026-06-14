@@ -106,6 +106,64 @@ states:
       OWNER=$(gh repo view --json owner -q .owner.login)
       REPO=$(gh repo view --json name  -q .name)
 
+      # --- BLOCK-01: Blocker-merged guardrail ---
+      BLOCKERS_JSON=$(curl -sS \
+        -H "Authorization: $LINEAR_API_KEY" \
+        -H "Content-Type: application/json" \
+        https://api.linear.app/graphql \
+        -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { inverseRelations(first: 50) { nodes { type issue { identifier state { name } } } } } }\"}")
+      BLOCKERS=$(echo "$BLOCKERS_JSON" \
+        | jq -r '.data.issue.inverseRelations.nodes[] | select(.type == "blocks") | [.issue.identifier, (.issue.state.name // "")] | @tsv' 2>/dev/null || true)
+
+      if [ -n "$BLOCKERS" ]; then
+        UNMERGED=""
+        while IFS=$'\t' read -r BLOCKER_ID BLOCKER_STATE; do
+          [ -z "$BLOCKER_ID" ] && continue
+          # Skip self/cyclic blocks
+          if [ "$BLOCKER_ID" = "{{ issue.identifier }}" ]; then continue; fi
+          # Validate identifier shape before interpolating into shell args
+          if ! echo "$BLOCKER_ID" | grep -qE '^[A-Z]+-[0-9]+$'; then continue; fi
+          BLOCKER_BRANCH="sinfonia/$(echo "$BLOCKER_ID" | tr '[:upper:]' '[:lower:]')"
+          MERGED_COUNT=$(gh pr list \
+            --repo "$OWNER/$REPO" \
+            --head "$BLOCKER_BRANCH" \
+            --base main \
+            --state merged \
+            --json number \
+            -q 'length' 2>/dev/null || echo "0")
+          if [ "$MERGED_COUNT" = "0" ]; then
+            UNMERGED="${UNMERGED:+$UNMERGED, }$BLOCKER_ID"
+          fi
+        done <<< "$BLOCKERS"
+
+        if [ -n "$UNMERGED" ]; then
+          MARKER="sinfonia-bot: blocked-by-unmerged"
+          LATEST_BODY=$(curl -sS \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            https://api.linear.app/graphql \
+            -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50, orderBy: createdAt) { nodes { body } } } }\"}" \
+            | jq -r '.data.issue.comments.nodes[-1].body // ""' 2>/dev/null || true)
+          if ! echo "$LATEST_BODY" | grep -qF "$MARKER"; then
+            ISSUE_UUID=$(curl -sS \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -H "Content-Type: application/json" \
+              https://api.linear.app/graphql \
+              -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { id } }\"}" \
+              | jq -er '.data.issue.id')
+            COMMENT_BODY="${MARKER}\\n\\nThis issue cannot start: the following blockers have not been merged to \`main\`: ${UNMERGED}\\n\\nRe-evaluating next poll. No code changes were made."
+            curl -sS \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -H "Content-Type: application/json" \
+              https://api.linear.app/graphql \
+              -d "{\"query\":\"mutation { commentCreate(input: { issueId: \\\"$ISSUE_UUID\\\", body: \\\"$COMMENT_BODY\\\" }) { success } }\"}"
+          fi
+          echo "BLOCKED: unmerged blockers: $UNMERGED — exiting without code changes."
+          exit 0
+        fi
+      fi
+      # --- END BLOCK-01 ---
+
       echo "=== git state on $BRANCH ==="
       git log --oneline main..HEAD 2>/dev/null | head -20 || echo "(no commits yet)"
       git status -s
@@ -197,24 +255,6 @@ states:
       5. **No PR exists**: this is a genuinely fresh start. Proceed to the
          "Fresh work" section below.
 
-      {% comment %} Backed by dispatch gate: crates/sinfonia/src/orchestrator/dispatch.rs:36-48
-         Parent is dispatch-eligible only once every child reaches a terminal state.
-         The gate enforces terminal STATE (not PR-merge-to-main); the "confirm PR merged"
-         steps below are an additional agent-side check stricter than the gate. {% endcomment %}
-      {% if issue.children.size > 0 %}
-      ## This issue is a PARENT — verify integration of all sub-issues first
-
-      The orchestrator only dispatched this parent because every child issue
-      reached a terminal state. Before doing your own work, confirm the
-      children's contributions are actually integrated:
-
-      {% for c in issue.children %}- `{{ c.identifier }}` ({{ c.state }}) — branch `sinfonia/{{ c.identifier | downcase }}`
-      {% endfor %}
-      Steps (for each child above):
-      - Confirm its PR is merged to `main` (or note which aren't and STOP — report back).
-      - Pull `main`, run the full test suite, ensure children's work composes cleanly.
-      - Only then continue with the parent-level work below.
-      {% endif %}
       ## Fresh work (only when STEP 1 said "no PR exists")
 
       1. Sketch a short plan in `.sinfonia/plans/{{ issue.identifier | downcase }}.md`
@@ -286,6 +326,64 @@ states:
       # Derive owner/repo from the workspace's git remote so this prompt is portable.
       OWNER=$(gh repo view --json owner -q .owner.login)
       REPO=$(gh repo view --json name  -q .name)
+
+      # --- BLOCK-01: Blocker-merged guardrail ---
+      BLOCKERS_JSON=$(curl -sS \
+        -H "Authorization: $LINEAR_API_KEY" \
+        -H "Content-Type: application/json" \
+        https://api.linear.app/graphql \
+        -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { inverseRelations(first: 50) { nodes { type issue { identifier state { name } } } } } }\"}")
+      BLOCKERS=$(echo "$BLOCKERS_JSON" \
+        | jq -r '.data.issue.inverseRelations.nodes[] | select(.type == "blocks") | [.issue.identifier, (.issue.state.name // "")] | @tsv' 2>/dev/null || true)
+
+      if [ -n "$BLOCKERS" ]; then
+        UNMERGED=""
+        while IFS=$'\t' read -r BLOCKER_ID BLOCKER_STATE; do
+          [ -z "$BLOCKER_ID" ] && continue
+          # Skip self/cyclic blocks
+          if [ "$BLOCKER_ID" = "{{ issue.identifier }}" ]; then continue; fi
+          # Validate identifier shape before interpolating into shell args
+          if ! echo "$BLOCKER_ID" | grep -qE '^[A-Z]+-[0-9]+$'; then continue; fi
+          BLOCKER_BRANCH="sinfonia/$(echo "$BLOCKER_ID" | tr '[:upper:]' '[:lower:]')"
+          MERGED_COUNT=$(gh pr list \
+            --repo "$OWNER/$REPO" \
+            --head "$BLOCKER_BRANCH" \
+            --base main \
+            --state merged \
+            --json number \
+            -q 'length' 2>/dev/null || echo "0")
+          if [ "$MERGED_COUNT" = "0" ]; then
+            UNMERGED="${UNMERGED:+$UNMERGED, }$BLOCKER_ID"
+          fi
+        done <<< "$BLOCKERS"
+
+        if [ -n "$UNMERGED" ]; then
+          MARKER="sinfonia-bot: blocked-by-unmerged"
+          LATEST_BODY=$(curl -sS \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            https://api.linear.app/graphql \
+            -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50, orderBy: createdAt) { nodes { body } } } }\"}" \
+            | jq -r '.data.issue.comments.nodes[-1].body // ""' 2>/dev/null || true)
+          if ! echo "$LATEST_BODY" | grep -qF "$MARKER"; then
+            ISSUE_UUID=$(curl -sS \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -H "Content-Type: application/json" \
+              https://api.linear.app/graphql \
+              -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { id } }\"}" \
+              | jq -er '.data.issue.id')
+            COMMENT_BODY="${MARKER}\\n\\nThis issue cannot start: the following blockers have not been merged to \`main\`: ${UNMERGED}\\n\\nRe-evaluating next poll. No code changes were made."
+            curl -sS \
+              -H "Authorization: $LINEAR_API_KEY" \
+              -H "Content-Type: application/json" \
+              https://api.linear.app/graphql \
+              -d "{\"query\":\"mutation { commentCreate(input: { issueId: \\\"$ISSUE_UUID\\\", body: \\\"$COMMENT_BODY\\\" }) { success } }\"}"
+          fi
+          echo "BLOCKED: unmerged blockers: $UNMERGED — exiting without code changes."
+          exit 0
+        fi
+      fi
+      # --- END BLOCK-01 ---
 
       echo "=== git state on $BRANCH ==="
       git log --oneline main..HEAD 2>/dev/null | head -20 || echo "(no commits yet)"
