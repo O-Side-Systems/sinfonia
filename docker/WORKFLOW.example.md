@@ -211,6 +211,8 @@ states:
       set -e
       ```
 
+      > ⛔ **If the STEP 0 output above contains `BLOCKED: unmerged blockers`, you are DONE for this turn.** Do NOT continue to STEP 1 or any later step. Make NO code changes, do NOT open or modify a PR, and do NOT transition the issue. The blocker comment (if needed) was already posted by the guardrail. End your turn now — the orchestrator will re-dispatch on the next poll once blockers merge.
+
       ## STEP 1 — Decide work mode from what STEP 0 showed
 
       **If `reviewDecision == "CHANGES_REQUESTED"` OR `mergeable ==
@@ -426,6 +428,8 @@ states:
         | jq -r '.data.issue.comments.nodes[] | "[\(.createdAt) \(.user.name // "unknown")]\n\(.body)\n---"'
       set -e
       ```
+
+      > ⛔ **If the STEP 0 output above contains `BLOCKED: unmerged blockers`, you are DONE for this turn.** Do NOT continue to STEP 1 or any later step. Make NO code changes, do NOT open or modify a PR, and do NOT transition the issue. The blocker comment (if needed) was already posted by the guardrail. End your turn now — the orchestrator will re-dispatch on the next poll once blockers merge.
 
       ## STEP 1 — If STEP 0 surfaced any of these, handle them FIRST
 
