@@ -337,6 +337,10 @@ check name and the configured pattern MUST agree.
   can satisfy checks and address comments but MUST NOT be able to self-merge.
 - **CI gates:** the harness gate (and any invariant linters) MUST block merge on
   failure.
+- **Context graph:** The repo MUST maintain a hierarchical `AGENTS.md` doc-graph
+  conforming to `docs/CONTEXT-CONTRACT.md`. The root `AGENTS.md` is the agent
+  entry point; all node edits ride in the code PR under CODEOWNERS. See
+  [`docs/CONTEXT-CONTRACT.md`](docs/CONTEXT-CONTRACT.md) for the full contract.
 
 ### 7.4 Merge gating (REQUIRED)
 
@@ -435,6 +439,8 @@ A repo is **Sinfonia-ready** when:
 - [ ] For agent workflows, the agent prompt applies the mergeable-w.r.t.-`main`
       gate — looping only on `DIRTY`/`BEHIND` and treating `BLOCKED`/`UNSTABLE`
       as ready-for-human. (§7.4)
+- [ ] A root `AGENTS.md` exists and conforms to `docs/CONTEXT-CONTRACT.md`;
+      CODEOWNERS gates all `**/AGENTS.md` edits. (§7.3)
 - [ ] *(RECOMMENDED)* architectural-invariant gating (§5.5) and the observability
       feedback contract (§6).
 - [ ] *(OPTIONAL)* a natural-language → executable-specification step for
