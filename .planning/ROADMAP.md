@@ -17,7 +17,7 @@ decomposition discipline that prevents two stories from building the same thing.
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
 - [x] **Phase 1: Orchestrator Gating Verification** - Confirm in code how dependency/parent-child gating actually works before building on it (completed 2026-06-14)
-- [ ] **Phase 2: Harness Manifest Ingestion Closure** - Verify and close Proposal 0001's opt-in `bridge.json` ingestion path
+- [x] **Phase 2: Harness Manifest Ingestion Closure** - Verify and close Proposal 0001's opt-in `bridge.json` ingestion path (completed 2026-06-14)
 - [ ] **Phase 3: Dependency Gating (Blocker-Merged Guardrail)** - Gate work on blocker PRs being merged to main, keyed on Linear `blocks`
 - [ ] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency
 - [ ] **Phase 5: Repository Context Contract** - Doc-graph contract, nearest-wins AGENTS.md, just-in-time read protocol, templates
@@ -49,7 +49,7 @@ decomposition discipline that prevents two stories from building the same thing.
   4. The `feedback_loop` config surface exists in `BRIDGE.md` with safe defaults; absent/`false` master switch reproduces today's behavior with no `WORKFLOW.md` change.
 **Plans**: 2 plans
   - [x] 02-01-PLAN.md — Gap-closing tests: golden-snapshot exact field rendering + no-disk-write proof (Wave 1)
-  - [ ] 02-02-PLAN.md — Closure docs: BRIDGE.example.md note, Proposal 0001 status flips, 02-CLOSURE.md evidence map (Wave 2)
+  - [x] 02-02-PLAN.md — Closure docs: BRIDGE.example.md note, Proposal 0001 status flips, 02-CLOSURE.md evidence map (Wave 2)
 
 ### Phase 3: Dependency Gating (Blocker-Merged Guardrail)
 **Goal**: Agents refuse to start work whose blockers have not actually merged to `main`, closing the §8.2 gap where `In Progress` issues ignore blockers and a terminal-but-unmerged blocker lets work proceed.
@@ -103,7 +103,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
-| 2. Harness Manifest Ingestion Closure | 1/2 | In Progress|  |
+| 2. Harness Manifest Ingestion Closure | 2/2 | Complete   | 2026-06-14 |
 | 3. Dependency Gating (Blocker-Merged Guardrail) | 0/TBD | Not started | - |
 | 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
 | 5. Repository Context Contract | 0/TBD | Not started | - |
