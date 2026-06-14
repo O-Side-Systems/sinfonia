@@ -16,7 +16,7 @@ decomposition discipline that prevents two stories from building the same thing.
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
 
-- [ ] **Phase 1: Orchestrator Gating Verification** - Confirm in code how dependency/parent-child gating actually works before building on it
+- [x] **Phase 1: Orchestrator Gating Verification** - Confirm in code how dependency/parent-child gating actually works before building on it (completed 2026-06-14)
 - [ ] **Phase 2: Harness Manifest Ingestion Closure** - Verify and close Proposal 0001's opt-in `bridge.json` ingestion path
 - [ ] **Phase 3: Dependency Gating (Blocker-Merged Guardrail)** - Gate work on blocker PRs being merged to main, keyed on Linear `blocks`
 - [ ] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency
@@ -36,7 +36,7 @@ decomposition discipline that prevents two stories from building the same thing.
   4. The current behavior (blocker rule applies only to `Todo`; `In Progress` ignores blockers; gate opens on terminal state, not PR-merge) is confirmed as the baseline the next phases amend.
 **Plans**: 2 plans
   - [x] 01-01-PLAN.md — Blocker-gate pinning tests + docker workflow code-ref annotation (Wave 1)
-  - [ ] 01-02-PLAN.md — 01-VERIFICATION.md findings doc + durable 0002 gating-ground-truth ADR (Wave 2)
+  - [x] 01-02-PLAN.md — 01-VERIFICATION.md findings doc + durable 0002 gating-ground-truth ADR (Wave 2)
 
 ### Phase 2: Harness Manifest Ingestion Closure
 **Goal**: The opt-in `bridge.json` ingestion path (Proposal 0001, already reflected in SPEC §11.6.13/§12.5) is verified end-to-end against its contract, defaults are flipped where fixtures are green, and the adversarial surface is closed.
@@ -100,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Orchestrator Gating Verification | 1/2 | In Progress|  |
+| 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
 | 2. Harness Manifest Ingestion Closure | 0/TBD | Not started | - |
 | 3. Dependency Gating (Blocker-Merged Guardrail) | 0/TBD | Not started | - |
 | 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
