@@ -733,6 +733,9 @@ An issue is dispatch-eligible only if all are true:
     These two layers are complementary, not redundant.
   - **Note (v0.4 Phase 3):** Parent-child dispatch gating (`children`) was removed. Dependency
     gating now keys solely on Linear `blocks` relations.
+  - **Note (v0.4 Phase 4):** Serial-foundation concurrency —
+    `max_concurrent_agents_by_state: "In Progress": 1` enforces foundational stories to run
+    and land on `main` serially before the next begins; see `docs/HARNESS-SPEC.md` §7.4.
 
 Sorting order (stable intent):
 
