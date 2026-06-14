@@ -197,6 +197,10 @@ states:
       5. **No PR exists**: this is a genuinely fresh start. Proceed to the
          "Fresh work" section below.
 
+      {% comment %} Backed by dispatch gate: crates/sinfonia/src/orchestrator/dispatch.rs:36-48
+         Parent is dispatch-eligible only once every child reaches a terminal state.
+         The gate enforces terminal STATE (not PR-merge-to-main); the "confirm PR merged"
+         steps below are an additional agent-side check stricter than the gate. {% endcomment %}
       {% if issue.children.size > 0 %}
       ## This issue is a PARENT — verify integration of all sub-issues first
 
