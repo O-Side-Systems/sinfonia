@@ -60,7 +60,10 @@ decomposition discipline that prevents two stories from building the same thing.
   2. An issue with an unmerged blocker exits without code changes and leaves a Linear comment.
   3. The blocker-merged guardrail keys only on Linear `blocks` relations, consistent with the Phase 1 invariant.
   4. The §8.2 amendment (gate on PR-merge, not merely terminal state) is documented as a scoped delta to the current contract.
-**Plans**: TBD
+**Plans**: 3 plans
+  - [ ] 03-01-PLAN.md — Remove parent-child dispatch gate (Rust) + inverse pinning test (Wave 1)
+  - [ ] 03-02-PLAN.md — STEP 0 blocker-merged guardrail in both prompts + marker regression test (Wave 1)
+  - [ ] 03-03-PLAN.md — SPEC §8.2 amendment + ADR 0002 RESOLVED (Wave 2)
 
 ### Phase 4: Merge-Conflict Handling & Merge Queue
 **Goal**: Agent PRs land cleanly under the ratified GitHub native merge queue + serial-foundation model — branches are rebased on current `main` with a green harness before PR creation, mergeability is enforced before `In Review`, and a post-merge gate runs on `main`.
@@ -104,7 +107,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
 | 2. Harness Manifest Ingestion Closure | 2/2 | Complete   | 2026-06-14 |
-| 3. Dependency Gating (Blocker-Merged Guardrail) | 0/TBD | Not started | - |
+| 3. Dependency Gating (Blocker-Merged Guardrail) | 0/3 | Planned | - |
 | 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
 | 5. Repository Context Contract | 0/TBD | Not started | - |
 | 6. Decomposition Discipline & Invariant Linters | 0/TBD | Not started | - |
