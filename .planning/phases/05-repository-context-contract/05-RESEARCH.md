@@ -14,7 +14,7 @@
 - **D-01:** The Repository Context Contract lives in a standalone `docs/CONTEXT-CONTRACT.md`. It specifies node shape + front-matter (`title, version, status, owners, last_verified_sha, derived_from`, "See also"), nearest-wins AGENTS.md semantics, one-concern/one-screen sizing, read protocol, and write protocol (node diffs ride the code PR under CODEOWNERS, version bump, no autonomous mutation). Rationale: DEC-004 — "separate the sensor (HARNESS-SPEC) from the map (Context Contract)."
 - **D-02:** `docs/HARNESS-SPEC.md` §7 gets a one-line REQUIRED/RECOMMENDED convention entry referencing `docs/CONTEXT-CONTRACT.md`, plus a conformance-checklist line (§9). HARNESS-SPEC does NOT contain the contract body.
 - **D-03:** Root `AGENTS.md` is the single agent entry point for the doc-graph. `README.md` stays human-facing. The stale `CLAUDE.md` reference in the prompts is dropped (not re-created).
-- **D-04:** Every state prompt's "Orient" step is rewritten to the JIT protocol: start at root `AGENTS.md` → follow only links matching the issue's acceptance criteria → grep/glob for the rest → never blanket-read `docs/`. Applies to all state prompts in both `docker/WORKFLOW.md` and `docker/WORKFLOW.example.md` (Todo, In Progress, and the fallback "What to do" at line 499/737).
+- **D-04:** Every state prompt's "Orient" step is rewritten to the JIT protocol: start at root `AGENTS.md` → follow only links matching the issue's acceptance criteria → grep/glob for the rest → never blanket-read `docs/`. Applies to all state prompts in both `docker/WORKFLOW.md` and `docker/WORKFLOW.example.md` (Todo, In Progress, In Review, and the fallback "What to do" at line 499/737).
 - **D-05:** Full dogfood — author real `AGENTS.md` nodes for: root + each crate (`crates/sinfonia`, `crates/sinfonia-bridge`, `crates/sinfonia-tracker`) + key top-level dirs (`docker/`, `docs/`). Each node renders <1 screen and validates against the contract.
 - **D-06:** Templates ship for downstream repos: `templates/AGENTS.md` (with module-ownership table) + `templates/CODEOWNERS`.
 - **D-07:** Node granularity = per-crate + key top-level dirs. `AGENTS.md` placed at each node's directory root.
@@ -53,7 +53,7 @@ Phase 5 is a pure documentation and prompt-authoring phase — no code to compil
 
 The AGENTS.md format is an established open standard (agents.md), supported by 30+ tools. Its nearest-wins semantics are consistent across OpenAI Codex, Claude Code, and GitHub Copilot: the closest AGENTS.md to the file being edited takes precedence; deeper-nested files override root-level guidance. This is already proven — the OpenAI main repo ships 88 AGENTS.md files hierarchically. The standard itself has no required front-matter fields (it is plain Markdown), which means Phase 5's contract is introducing a *project-level* front-matter convention on top of the open standard. The chosen fields (`title, version, status, owners, last_verified_sha, derived_from`) align with the Wyrd provenance pattern documented in the harness-improvement-analysis, and `last_verified_sha` is the hook the Phase-6 stale linter will consume.
 
-The JIT read protocol for the state prompts is a targeted replacement: only the fallback "What to do" section at `docker/WORKFLOW.md:499` and `docker/WORKFLOW.example.md:737` carries a blanket `docs/` slurp. The Todo and In Progress prompts have no explicit orient step — they jump directly into STEP 0 scripting — so the JIT protocol goes into the fallback only (or is added as a named orientation preamble to all state prompts). The write protocol is already enforced by the existing CODEOWNERS `* @osidesys @leebrett` catch-all; Phase 5 adds per-path CODEOWNERS lines for `AGENTS.md` files and the new node paths to make it explicit.
+The JIT read protocol for the state prompts is applied per the controlling locked decision D-04: the blanket `docs/` slurp at the fallback "What to do" section (`docker/WORKFLOW.md:499` / `docker/WORKFLOW.example.md:737`) is rewritten to the full JIT protocol, AND a one-sentence JIT orient preamble is added to every other state prompt (Todo, In Progress) so each prompt positively directs the agent to the protocol. ("In Review" is named in D-04 but is intentionally not an active state and ships no prompt to edit — see Open Question 1 RESOLVED below.) The write protocol is already enforced by the existing CODEOWNERS `* @osidesys @leebrett` catch-all; Phase 5 adds per-path CODEOWNERS lines for `AGENTS.md` files and the new node paths to make it explicit.
 
 **Primary recommendation:** Author the six dogfood nodes first (they validate the contract in practice), then derive the `docs/CONTEXT-CONTRACT.md` spec from what those nodes actually contain. This prevents the contract from being purely theoretical and ensures it stays <1 screen and actually fits in the target format before being locked down.
 
@@ -285,7 +285,7 @@ Note: `**/AGENTS.md` will match any AGENTS.md anywhere in the tree — this is t
 
 ## Pattern 6: JIT Read Protocol in State Prompts
 
-**What:** Replace the blanket-slurp `Orient:` step with a precise three-step JIT protocol.
+**What:** Replace the blanket-slurp `Orient:` step with a precise three-step JIT protocol, and add a one-sentence JIT orient preamble to every other state prompt (D-04).
 
 **Current state (blanket slurp — two locations):**
 - `docker/WORKFLOW.md:499` (fallback prompt "What to do" step 1)
@@ -296,9 +296,9 @@ Both currently read:
 1. Orient: `README.md`, `CLAUDE.md`, `docs/`.
 ```
 
-The Todo and In Progress prompts in both files do NOT have an explicit orient step — they go directly to STEP 0 scripting. The JIT protocol is therefore needed in two places:
-1. The fallback "What to do" section (replace the slurp line)
-2. Optionally: as a named preamble in the Todo and In Progress prompts (the harness-action-plan §1.6 says "top of `Todo` and `In Progress` prompts (orientation section)")
+The Todo and In Progress prompts in both files do NOT have an explicit orient step — they go directly to STEP 0 scripting. Per the controlling locked decision D-04, the JIT protocol is therefore applied in two ways:
+1. The fallback "What to do" section: replace the slurp line with the full lettered JIT protocol.
+2. The Todo and In Progress prompts: add a one-sentence JIT orient preamble (a positive direction to use the protocol) immediately after the prompt's intro line, before STEP 0. ("In Review" is named in D-04 but is intentionally not an active state — see Open Question 1 RESOLVED — so it ships no prompt to edit.)
 
 **Replacement wording (Claude's discretion on exact text, but this is the contract-mandated substance):**
 
@@ -315,9 +315,16 @@ The Todo and In Progress prompts in both files do NOT have an explicit orient st
    in an AGENTS.md node specifically directs you there.
 ```
 
+**One-sentence preamble for Todo / In Progress (D-04):**
+```
+**Orient:** start at the repo-root `AGENTS.md` and follow only the links
+relevant to this issue's acceptance criteria; grep/glob for anything else —
+do not bulk-read `docs/`.
+```
+
 **Why the "CLAUDE.md" reference must be dropped (D-03):** There is no `CLAUDE.md` at the repo root today. The prompts currently instruct agents to read a non-existent file. Phase 5 removes this stale reference. The root `AGENTS.md` replaces it as the single agent entry point. [VERIFIED by: `find /Users/brettlee/work/sinfonia -maxdepth 1 -name "CLAUDE.md"` returns nothing]
 
-**Non-disruption constraint:** The In Progress prompt is ~210 lines and contains complex STEP 0 scripting. The JIT orient step must be inserted as a self-contained paragraph *before* STEP 0, not woven into the bash script. Precedence is: existing STEP 0 scripting is unchanged; JIT orient is added as an orientation preamble that the agent reads before running STEP 0.
+**Non-disruption constraint:** The In Progress prompt is ~210 lines and contains complex STEP 0 scripting. The JIT orient preamble must be inserted as a self-contained sentence *before* STEP 0, not woven into the bash script. Precedence is: existing STEP 0 scripting is unchanged; JIT orient is added as an orientation preamble that the agent reads before running STEP 0.
 
 ---
 
@@ -548,7 +555,7 @@ Not applicable — this is a greenfield documentation phase. No data migrations,
 | CTXGRAPH-03 | HARNESS-SPEC §7.3 has Context Contract convention entry | smoke | `grep -c 'CONTEXT-CONTRACT' docs/HARNESS-SPEC.md` (expect >= 1) | Wave 0 amends §7.3 |
 | CTXGRAPH-03 | HARNESS-SPEC §9 checklist has context-graph line | smoke | `grep -c 'CONTEXT-CONTRACT\|AGENTS.md' docs/HARNESS-SPEC.md` (expect >= 2) | Wave 0 amends §9 |
 | CTXGRAPH-02 | No blanket `docs/` read instruction remains in WORKFLOW files | smoke | `grep -n "Orient.*docs/" docker/WORKFLOW.md docker/WORKFLOW.example.md` (expect 0 hits) | Wave 0 replaces |
-| CTXGRAPH-02 | JIT orient step present in fallback prompt | smoke | `grep -c "AGENTS.md" docker/WORKFLOW.md docker/WORKFLOW.example.md` (expect >= 1 each) | Wave 0 amends |
+| CTXGRAPH-02 | JIT orient step present in every state prompt | smoke | `grep -c "AGENTS.md" docker/WORKFLOW.md docker/WORKFLOW.example.md` (expect >= 1 per state prompt) | Wave 0 amends |
 | CTXGRAPH-02 | No `CLAUDE.md` reference in orient step | smoke | `grep -n "CLAUDE.md" docker/WORKFLOW.md docker/WORKFLOW.example.md` (expect 0 hits) | Wave 0 replaces |
 
 ### Sampling Rate
@@ -610,23 +617,21 @@ Phase 5 introduces no code, no external inputs, no authentication, and no data f
 | A1 | Phase 6 stale linter will compare `last_verified_sha` against `main` HEAD ancestry | Pattern 1 (Front-Matter Schema), Pattern 4 (Write Protocol) | If Phase 6 uses a different stale-detection mechanism, `last_verified_sha` field may be renamed or reshared; low risk since Phase 5 owns the field definition |
 | A2 | Phase 6 stale linter will accept a short SHA (7 chars) present in `main` ancestry as valid | Pitfall 5 | If Phase 6 requires a full 40-char SHA, the manual process for setting `last_verified_sha` needs to change |
 | A3 | `status: deprecated` is a valid field value that the Phase-6 linter will use to skip stale-detection on deprecated nodes | Pattern 1 | If Phase 6 ignores the `status` field, deprecated nodes will generate false-positive stale alerts |
-| A4 | The Todo and In Progress prompts in both WORKFLOW files do NOT currently have an explicit orient step (confirmed by grep — only fallback at lines 499/737 has "Orient: README.md, CLAUDE.md, docs/") | Pattern 6 (JIT Protocol) | If a mid-prompt orient instruction was missed by grep, the phase edit is incomplete |
+| A4 | The Todo and In Progress prompts in both WORKFLOW files do NOT currently have an explicit orient step (confirmed by grep — only fallback at lines 499/737 has "Orient: README.md, CLAUDE.md, docs/") | Pattern 6 (JIT Protocol) | If a mid-prompt orient instruction was missed by grep, the phase edit is incomplete. Note: D-04 still requires adding a JIT orient *preamble* to Todo/In Progress even though they have no slurp to remove. |
 
 **If this table is empty:** All claims in this research were verified or cited — no user confirmation needed. (Four assumptions logged above — all low-risk and self-contained within this phase.)
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the JIT orient step also be added to the Todo and In Progress prompts, or only to the fallback?**
    - What we know: sinfonia-harness-action-plan.md §1.6 says "top of `Todo` and `In Progress` prompts (orientation section, replacing the bare 'Orient: README.md, CLAUDE.md, docs/')." But grepping both WORKFLOW files shows the bare orient line appears ONLY in the fallback (lines 499/737) — the Todo and In Progress prompts have no orient step at all.
-   - What's unclear: Does §1.6 intend to add a NEW orient section to Todo/In Progress, or was it describing the fallback location?
-   - Recommendation: Add the JIT orient preamble to the fallback ONLY (replacing the current slurp), which satisfies CTXGRAPH-02's acceptance criteria ("prompts no longer instruct a blanket `docs/` read"). Optionally add a single-sentence preamble to the Todo/In Progress prompts: "**Orient:** start at root `AGENTS.md` and follow only links relevant to this issue's acceptance criteria." The planner should determine if this is a separate task or bundled with the fallback edit.
+   - **RESOLVED:** Per the controlling locked decision **D-04**, the JIT orient protocol is added to **ALL** state prompts (Todo, In Progress, In Review, and the fallback) in both WORKFLOW files — not the fallback only. D-04 overrides the earlier fallback-only recommendation. Concretely: the fallback "What to do" Orient step is rewritten to the full lettered JIT protocol; the Todo and In Progress prompts each gain a one-sentence JIT orient preamble (positively directing the agent to the protocol) inserted before STEP 0. "In Review" is named in D-04 but is intentionally *not* an active state in either WORKFLOW file (it is the human review gate and ships no agent prompt), so there is no In Review prompt to edit — honoring D-04 means covering every state prompt that actually exists: Todo, In Progress, and the fallback. Plan 05-04 implements this across both files.
 
 2. **What is the "right altitude" for the root AGENTS.md to function as an index without leaking implementation?**
    - What we know: harness-improvement-analysis.md says "specific enough to guide, flexible enough to leave heuristics to the model." The module-ownership table is the primary content.
-   - What's unclear: How specific should path-globs be in the table? `crates/sinfonia/src/orchestrator/` vs. `crates/sinfonia/`?
-   - Recommendation: Use crate-level globs at the root (`crates/sinfonia/`) and sub-module globs in the per-crate AGENTS.md. This preserves the hierarchical resolution semantics — coarse at root, fine-grained at the area node.
+   - **RESOLVED:** Use **crate-level path-globs** (e.g. `crates/sinfonia/`) in the root node's module-ownership table, with finer-grained **sub-module globs** (e.g. `crates/sinfonia/src/orchestrator/`) only inside each per-crate node. This preserves the hierarchical nearest-wins resolution semantics — coarse at root, fine-grained at the area node — and matches Plan 05-02 Task 2 (root node carries crate-level globs; per-crate nodes carry sub-module tables).
 
 ---
 
