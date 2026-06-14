@@ -606,7 +606,7 @@ custom fields (Jira) ARE the durable state.
 ## Merge queue & branch protection
 
 For Sinfonia agent PRs to land cleanly under the GitHub native merge queue
-model (DEC-001), the target repo requires specific branch protection and CI
+integration model, the target repo requires specific branch protection and CI
 configuration. No Sinfonia code changes are needed — this is configuration
 in the target repo and GitHub settings.
 
@@ -618,8 +618,12 @@ Enable the following settings on the `main` branch:
 |---------|-------|
 | Require a pull request before merging | Enabled |
 | Require status checks to pass | Enabled — include the harness gate check name (§7.2) |
-| Require linear history | Enabled |
 | Require merge queue | Enabled |
+
+> **Linear history note:** GitHub's UI treats the linear-history branch protection
+> toggle as mutually exclusive with a merge queue. No separate toggle is needed —
+> the merge queue's "Rebase and merge" method (see
+> [Merge queue settings](#merge-queue-settings) below) already produces linear history.
 
 ### Merge queue settings
 

@@ -345,7 +345,7 @@ Green CI is necessary but not sufficient to merge; the CODEOWNERS human gate
 something — see the determinism NFR (§5.4) and load-bearing scenario tagging
 (§5.5).
 
-**Merge queue (DEC-001).** The target repo SHOULD enable a GitHub native merge
+**Merge queue.** The target repo SHOULD enable a GitHub native merge
 queue configured to rebase-and-test each PR against the latest `main` before
 merging. This ensures that a PR that was green when submitted is still green once
 integrated with concurrent work. Method: "Rebase and merge"; all required status
@@ -356,7 +356,7 @@ merge (a CI workflow triggered on `push` to `main`). A green-at-PR-time change
 that breaks once integrated with concurrent work is caught by this gate before the
 next agent dispatch sees a broken base. Gate failure MUST alert operators.
 
-**Mergeable-not-CLEAN gate refinement (D-03).** For agent workflows the
+**Mergeable-not-CLEAN gate refinement.** For agent workflows the
 pre-`In Review` gate is "mergeable w.r.t. `main`" — specifically,
 `mergeStateStatus` is anything *except* `DIRTY` or `BEHIND`. `BLOCKED` (awaiting
 required-review approval) and `UNSTABLE` (non-required checks failing) count as
@@ -370,13 +370,13 @@ never `CLEAN` — gating literally on `CLEAN` deadlocks the agent against the ve
 branch-protection this section mandates. The gate is "no merge conflict against
 `main`"; human approval is not the agent's gate.
 
-**Serial-foundation / leaf-fan-out convention (D-10).** Foundational or
+**Serial-foundation / leaf-fan-out convention.** Foundational or
 cross-cutting stories in a milestone run serially: one story must land on `main`
 before the next begins. Only leaf stories (no shared-surface dependencies within
 the milestone) may fan out in parallel. This prevents merge-conflict cascades on
 shared code and is enforced at the dispatch layer by
 `agent.max_concurrent_agents_by_state: "In Progress": 1` in `WORKFLOW.md`. Leaf
-stories are identified during decomposition (Theme D) and may raise this limit
+stories are identified during milestone decomposition and may raise this limit
 when the milestone graph confirms non-overlapping surface.
 
 ---
@@ -430,10 +430,11 @@ A repo is **Sinfonia-ready** when:
       pattern. (§7.2)
 - [ ] `sinfonia/<id>` branches, a `Resolves <ID>` PR-body line, bridge-owned
       `sinfonia:*` labels, and a CODEOWNERS human-merge gate are in place. (§7.3)
-- [ ] A GitHub native merge queue is configured for rebase-and-test; a post-merge
-      harness gate runs on `main` (push trigger); and for agent workflows the
-      `DIRTY`/`BEHIND`-only mergeability loop and `BLOCKED`/`UNSTABLE`-ready-for-human
-      gate are applied in the agent prompt. (§7.4)
+- [ ] A GitHub native merge queue is configured for rebase-and-test, and a
+      post-merge harness gate runs on `main` (push trigger). (§7.4)
+- [ ] For agent workflows, the agent prompt applies the mergeable-w.r.t.-`main`
+      gate — looping only on `DIRTY`/`BEHIND` and treating `BLOCKED`/`UNSTABLE`
+      as ready-for-human. (§7.4)
 - [ ] *(RECOMMENDED)* architectural-invariant gating (§5.5) and the observability
       feedback contract (§6).
 - [ ] *(OPTIONAL)* a natural-language → executable-specification step for
