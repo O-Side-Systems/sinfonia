@@ -94,7 +94,7 @@ inverse relations where relation type is `blocks`."
 ## 3. The Dependency-Gating Invariant
 
 The following invariant text is carried verbatim in both this ADR and in
-`.planning/phases/01-orchestrator-gating-verification/01-VERIFICATION.md`.
+`.planning/phases/01-orchestrator-gating-verification/01-GROUND-TRUTH.md`.
 
 > **Dependency-gating invariant (BLOCK-02).** Orchestrator dependency gating SHOULD key only on
 > Linear `blocks` relations (not hierarchy, "related", or prose). Today, two gates exist in
@@ -187,7 +187,7 @@ The following blocker-rule behavior is confirmed by executable pinning tests add
 | **BLOCK-02** (`REQUIREMENTS.md:85-96`) | The requirement this proposal partially satisfies (verification half); SPEC/HARNESS-SPEC amendment lands in Phase 3 |
 | **DEC-003** (`PROJECT.md`) — dependency-gating-on-blocks | The decision this phase verifies against; left intact in this phase |
 | **CON-candidate-eligibility** (`PROJECT.md`) | Current contract: "blocker rule applies only to `Todo`; `In Progress` ignores blockers; gate opens on terminal state, not PR-merge" — confirmed matching code |
-| `.planning/phases/01-orchestrator-gating-verification/01-VERIFICATION.md` | Phase 1 findings doc (disk-only; same invariant + §8.2 ground truth as this ADR) |
+| `.planning/phases/01-orchestrator-gating-verification/01-GROUND-TRUTH.md` | Phase 1 findings doc (disk-only; same invariant + §8.2 ground truth as this ADR) |
 | `docs/proposals/0001-harness-feedback-ingestion.md` | Numbering and format precedent for this ADR |
 | `crates/sinfonia/src/orchestrator/dispatch.rs:6-69` | Primary source: `is_dispatch_eligible` predicate |
 | `crates/sinfonia-tracker/src/linear.rs:527-538` | `blocked_by` derivation from `blocks` inverse relations |
