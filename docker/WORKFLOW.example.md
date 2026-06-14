@@ -54,6 +54,10 @@ hooks:
   # Runs before every attempt — must be idempotent (retries re-run it).
   before_run: |
     branch="sinfonia/$(basename "$PWD" | tr '[:upper:]' '[:lower:]')"
+    # Heal a half-finished rebase from a prior turn (a conflict path may have
+    # ended the turn mid-rebase); otherwise `git switch` below refuses and the
+    # workspace wedges. No-op when no rebase is in progress.
+    git rebase --abort 2>/dev/null || true
     git fetch --all --quiet
     git switch -c "$branch" 2>/dev/null || git switch "$branch"
 
