@@ -47,7 +47,9 @@ decomposition discipline that prevents two stories from building the same thing.
   2. The version gate behaves per the matrix: supported → ingest, newer → warn+forward-read, older/absent/unparseable → warn+check-name fallback; every non-additive degradation row falls back to today's path.
   3. Adversarial fixtures pass: size cap (5 MiB), zip-bomb decompressed cap, `max_failures_parsed`=20, `max_failure_digest_bytes`=8 KiB, in-memory parse, no disk write, no server-side `artifact_urls` resolution, scalar injection, control chars stripped.
   4. The `feedback_loop` config surface exists in `BRIDGE.md` with safe defaults; absent/`false` master switch reproduces today's behavior with no `WORKFLOW.md` change.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 02-01-PLAN.md — Gap-closing tests: golden-snapshot exact field rendering + no-disk-write proof (Wave 1)
+  - [ ] 02-02-PLAN.md — Closure docs: BRIDGE.example.md note, Proposal 0001 status flips, 02-CLOSURE.md evidence map (Wave 2)
 
 ### Phase 3: Dependency Gating (Blocker-Merged Guardrail)
 **Goal**: Agents refuse to start work whose blockers have not actually merged to `main`, closing the §8.2 gap where `In Progress` issues ignore blockers and a terminal-but-unmerged blocker lets work proceed.
@@ -101,7 +103,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
-| 2. Harness Manifest Ingestion Closure | 0/TBD | Not started | - |
+| 2. Harness Manifest Ingestion Closure | 0/2 | Planned | - |
 | 3. Dependency Gating (Blocker-Merged Guardrail) | 0/TBD | Not started | - |
 | 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
 | 5. Repository Context Contract | 0/TBD | Not started | - |
