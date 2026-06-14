@@ -124,6 +124,7 @@ states:
           # Validate identifier shape before interpolating into shell args
           if ! echo "$BLOCKER_ID" | grep -qE '^[A-Z]+-[0-9]+$'; then continue; fi
           BLOCKER_BRANCH="sinfonia/$(echo "$BLOCKER_ID" | tr '[:upper:]' '[:lower:]')"
+          # NOTE: assumes the sinfonia/<id> branch convention; a blocker PR on another branch reads as unmerged (fails closed).
           MERGED_COUNT=$(gh pr list \
             --repo "$OWNER/$REPO" \
             --head "$BLOCKER_BRANCH" \
@@ -138,13 +139,13 @@ states:
 
         if [ -n "$UNMERGED" ]; then
           MARKER="sinfonia-bot: blocked-by-unmerged"
-          LATEST_BODY=$(curl -sS \
+          EXISTING_MARKERS=$(curl -sS \
             -H "Authorization: $LINEAR_API_KEY" \
             -H "Content-Type: application/json" \
             https://api.linear.app/graphql \
-            -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50, orderBy: createdAt) { nodes { body } } } }\"}" \
-            | jq -r '.data.issue.comments.nodes[-1].body // ""' 2>/dev/null || true)
-          if ! echo "$LATEST_BODY" | grep -qF "$MARKER"; then
+            -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50) { nodes { body } } } }\"}" \
+            | jq -r '.data.issue.comments.nodes[].body' 2>/dev/null || true)
+          if ! printf '%s' "$EXISTING_MARKERS" | grep -qF "$MARKER"; then
             ISSUE_UUID=$(curl -sS \
               -H "Authorization: $LINEAR_API_KEY" \
               -H "Content-Type: application/json" \
@@ -347,6 +348,7 @@ states:
           # Validate identifier shape before interpolating into shell args
           if ! echo "$BLOCKER_ID" | grep -qE '^[A-Z]+-[0-9]+$'; then continue; fi
           BLOCKER_BRANCH="sinfonia/$(echo "$BLOCKER_ID" | tr '[:upper:]' '[:lower:]')"
+          # NOTE: assumes the sinfonia/<id> branch convention; a blocker PR on another branch reads as unmerged (fails closed).
           MERGED_COUNT=$(gh pr list \
             --repo "$OWNER/$REPO" \
             --head "$BLOCKER_BRANCH" \
@@ -361,13 +363,13 @@ states:
 
         if [ -n "$UNMERGED" ]; then
           MARKER="sinfonia-bot: blocked-by-unmerged"
-          LATEST_BODY=$(curl -sS \
+          EXISTING_MARKERS=$(curl -sS \
             -H "Authorization: $LINEAR_API_KEY" \
             -H "Content-Type: application/json" \
             https://api.linear.app/graphql \
-            -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50, orderBy: createdAt) { nodes { body } } } }\"}" \
-            | jq -r '.data.issue.comments.nodes[-1].body // ""' 2>/dev/null || true)
-          if ! echo "$LATEST_BODY" | grep -qF "$MARKER"; then
+            -d "{\"query\":\"{ issue(id:\\\"{{ issue.identifier }}\\\") { comments(first: 50) { nodes { body } } } }\"}" \
+            | jq -r '.data.issue.comments.nodes[].body' 2>/dev/null || true)
+          if ! printf '%s' "$EXISTING_MARKERS" | grep -qF "$MARKER"; then
             ISSUE_UUID=$(curl -sS \
               -H "Authorization: $LINEAR_API_KEY" \
               -H "Content-Type: application/json" \
