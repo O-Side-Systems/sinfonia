@@ -421,6 +421,50 @@ https://github.com/acme/widgets/actions/runs/1820934 (bundle 'harness-runs-18209
 }
 
 // ---------------------------------------------------------------------------
+// No-disk-write proof — HARNESS-05 "in-memory parse only" (GAP-1 / C-3).
+//
+// Drives the full try_fetch_manifest path (download → unzip → parse) and
+// asserts that no files appear in the system temp dir during ingestion.
+// This is a belt-and-suspenders regression guard: the property is
+// structurally true today (manifest.rs uses only Cursor<Vec<u8>>; no
+// std::fs import), but this test will catch any future accidental
+// introduction of a tempfile or std::fs::write call.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ingestion_writes_no_files_to_disk() {
+    let cfg = cfg_with(5_242_880, 20, 8_192);
+    let zip = make_zip(&[("bridge.json", &v2_manifest_bytes(1))]);
+    let gh = CountingGh::new(
+        vec![art(42, "bridge-noDisk", zip.len() as u64)],
+        HashMap::from([(42u64, zip)]),
+    );
+
+    // Snapshot temp dir entry count BEFORE ingestion.
+    let tmp = std::env::temp_dir();
+    let count_entries = || {
+        std::fs::read_dir(&tmp)
+            .map(|rd| rd.filter_map(|e| e.ok()).count())
+            .unwrap_or(0)
+    };
+    let before = count_entries();
+
+    // Drive the full in-memory ingest path.
+    let result = try_fetch_manifest(&gh, "acme/widgets", 42, &cfg).await;
+    assert!(
+        result.is_some(),
+        "valid v2 zip must parse to Some(Manifest)"
+    );
+
+    // Assert no new temp files were created during ingestion.
+    let after = count_entries();
+    assert_eq!(
+        before, after,
+        "manifest ingestion must not write temp files (HARNESS-05 in-memory invariant)"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // A fork-PR-shaped manifest (the real producer shape) ingests cleanly and
 // the digest is well-formed.
 // ---------------------------------------------------------------------------
