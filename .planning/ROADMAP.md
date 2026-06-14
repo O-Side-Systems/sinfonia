@@ -34,7 +34,9 @@ decomposition discipline that prevents two stories from building the same thing.
   2. The `{% if issue.children %}` parent-child gating claim in WORKFLOW.example.md is confirmed against code and either backed by a code reference or removed.
   3. A written invariant states dependency gating keys only on Linear `blocks` relations (not hierarchy/related/prose), captured for SPEC §8.2 amendment.
   4. The current behavior (blocker rule applies only to `Todo`; `In Progress` ignores blockers; gate opens on terminal state, not PR-merge) is confirmed as the baseline the next phases amend.
-**Plans**: TBD
+**Plans**: 2 plans
+  - [ ] 01-01-PLAN.md — Blocker-gate pinning tests + docker workflow code-ref annotation (Wave 1)
+  - [ ] 01-02-PLAN.md — 01-VERIFICATION.md findings doc + durable 0002 gating-ground-truth ADR (Wave 2)
 
 ### Phase 2: Harness Manifest Ingestion Closure
 **Goal**: The opt-in `bridge.json` ingestion path (Proposal 0001, already reflected in SPEC §11.6.13/§12.5) is verified end-to-end against its contract, defaults are flipped where fixtures are green, and the adversarial surface is closed.
@@ -98,7 +100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Orchestrator Gating Verification | 0/TBD | Not started | - |
+| 1. Orchestrator Gating Verification | 0/2 | Not started | - |
 | 2. Harness Manifest Ingestion Closure | 0/TBD | Not started | - |
 | 3. Dependency Gating (Blocker-Merged Guardrail) | 0/TBD | Not started | - |
 | 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
