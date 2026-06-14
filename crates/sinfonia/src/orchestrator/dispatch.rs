@@ -168,6 +168,45 @@ mod tests {
         i
     }
 
+    fn blocked_by(id: &str, blocker_states: &[&str]) -> Issue {
+        let mut i = iss(id, Some(1), 100);
+        i.blocked_by = blocker_states
+            .iter()
+            .enumerate()
+            .map(|(idx, st)| crate::domain::BlockerRef {
+                id: Some(format!("{id}-b{idx}")),
+                identifier: Some(format!("BLK-{}", idx + 1)),
+                state: Some((*st).into()),
+            })
+            .collect();
+        i
+    }
+
+    #[test]
+    fn todo_with_open_blocker_is_not_eligible() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        // Issue is Todo (default from iss); blocker is In Progress (non-terminal).
+        let issue = blocked_by("T1", &["In Progress"]);
+        assert!(!is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn in_progress_ignores_blockers() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        // Same blocker, but the issue is In Progress — blocker gate is Todo-only.
+        let mut issue = blocked_by("T2", &["In Progress"]);
+        issue.state = "In Progress".into();
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn todo_with_terminal_blocker_is_eligible() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        // Todo + blocker in terminal state → gate opens.
+        let issue = blocked_by("T3", &["Done"]);
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
     #[test]
     fn parent_with_open_child_is_not_eligible() {
         let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
