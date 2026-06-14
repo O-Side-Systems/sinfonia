@@ -578,32 +578,6 @@ fn normalize_jira(r: &Json, terminal_states: &[String]) -> Result<Issue> {
         })
         .unwrap_or_default();
 
-    // Sub-tasks (classic Jira hierarchy) — returned by default on the issue.
-    // Team-managed projects with arbitrary Epic→Story hierarchies are NOT
-    // covered here; a separate JQL by `parent` would be needed for those.
-    let children = fields
-        .get("subtasks")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|c| crate::types::ChildRef {
-                    id: c.get("id").and_then(|v| v.as_str()).map(str::to_string),
-                    identifier: c
-                        .get("key")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string),
-                    state: c
-                        .get("fields")
-                        .and_then(|f| f.get("status"))
-                        .and_then(|s| s.get("name"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
     let created_at = parse_ts(fields.get("created"));
     let updated_at = parse_ts(fields.get("updated"));
 
@@ -620,7 +594,7 @@ fn normalize_jira(r: &Json, terminal_states: &[String]) -> Result<Issue> {
         url,
         labels,
         blocked_by,
-        children,
+        children: vec![], // D-05: children no longer fetched; field kept empty (struct cleanup deferred)
         created_at,
         updated_at,
         fields: Default::default(),
