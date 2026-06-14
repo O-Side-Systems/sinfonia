@@ -161,6 +161,9 @@ feedback_loop:
   # treated as untrusted input (it may come from a fork PR) with size,
   # count, and length caps. Ingestion is ON by default; set the switch to
   # false to force the legacy check-name-only feedback.
+  # When absent or set to false, the bridge falls back to the check-name path
+  # exactly as in versions prior to Proposal 0001 — no change to WORKFLOW.md
+  # is required.
   ingest_harness_manifest: true                  # master switch; default true
   harness_manifest_artifact_glob: "bridge-*"     # run artifact holding bridge.json (one `*` wildcard)
   harness_manifest_filename: "bridge.json"        # entry name inside the artifact zip
