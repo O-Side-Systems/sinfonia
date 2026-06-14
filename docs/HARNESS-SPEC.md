@@ -345,6 +345,40 @@ Green CI is necessary but not sufficient to merge; the CODEOWNERS human gate
 something — see the determinism NFR (§5.4) and load-bearing scenario tagging
 (§5.5).
 
+**Merge queue (DEC-001).** The target repo SHOULD enable a GitHub native merge
+queue configured to rebase-and-test each PR against the latest `main` before
+merging. This ensures that a PR that was green when submitted is still green once
+integrated with concurrent work. Method: "Rebase and merge"; all required status
+checks (including the harness gate) must pass after the rebase.
+
+**Post-merge harness gate.** The harness gate MUST also run on `main` after every
+merge (a CI workflow triggered on `push` to `main`). A green-at-PR-time change
+that breaks once integrated with concurrent work is caught by this gate before the
+next agent dispatch sees a broken base. Gate failure MUST alert operators.
+
+**Mergeable-not-CLEAN gate refinement (D-03).** For agent workflows the
+pre-`In Review` gate is "mergeable w.r.t. `main`" — specifically,
+`mergeStateStatus` is anything *except* `DIRTY` or `BEHIND`. `BLOCKED` (awaiting
+required-review approval) and `UNSTABLE` (non-required checks failing) count as
+conflict-free and SHOULD trigger the `In Review` transition; required-review
+approval is the human gate that happens *in* the `In Review` state. Only `DIRTY`
+or `BEHIND` keep the mergeability loop running; `UNKNOWN` (GitHub still computing)
+triggers a re-poll. **Explicit note:** this refines a literal "only when
+`mergeStateStatus == CLEAN`" reading (including the MERGE-02 success-criterion
+literal-CLEAN wording). A fresh agent PR awaiting required review is `BLOCKED`,
+never `CLEAN` — gating literally on `CLEAN` deadlocks the agent against the very
+branch-protection this section mandates. The gate is "no merge conflict against
+`main`"; human approval is not the agent's gate.
+
+**Serial-foundation / leaf-fan-out convention (D-10).** Foundational or
+cross-cutting stories in a milestone run serially: one story must land on `main`
+before the next begins. Only leaf stories (no shared-surface dependencies within
+the milestone) may fan out in parallel. This prevents merge-conflict cascades on
+shared code and is enforced at the dispatch layer by
+`agent.max_concurrent_agents_by_state: "In Progress": 1` in `WORKFLOW.md`. Leaf
+stories are identified during decomposition (Theme D) and may raise this limit
+when the milestone graph confirms non-overlapping surface.
+
 ---
 
 ## 8. Portability — Worked Examples
@@ -396,6 +430,10 @@ A repo is **Sinfonia-ready** when:
       pattern. (§7.2)
 - [ ] `sinfonia/<id>` branches, a `Resolves <ID>` PR-body line, bridge-owned
       `sinfonia:*` labels, and a CODEOWNERS human-merge gate are in place. (§7.3)
+- [ ] A GitHub native merge queue is configured for rebase-and-test; a post-merge
+      harness gate runs on `main` (push trigger); and for agent workflows the
+      `DIRTY`/`BEHIND`-only mergeability loop and `BLOCKED`/`UNSTABLE`-ready-for-human
+      gate are applied in the agent prompt. (§7.4)
 - [ ] *(RECOMMENDED)* architectural-invariant gating (§5.5) and the observability
       feedback contract (§6).
 - [ ] *(OPTIONAL)* a natural-language → executable-specification step for
