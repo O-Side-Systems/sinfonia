@@ -536,6 +536,7 @@ states:
          MAX_ATTEMPTS=3
          ATTEMPT=0
          UNKNOWN_TRIES=0
+         WEIRD_TRIES=0
 
          # Re-derive PR_NUM here so this block is self-contained (WR-03/WR-04).
          PR_NUM=$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number')
@@ -558,28 +559,23 @@ states:
                if ! git rebase origin/main; then
                  echo "Rebase hit conflicts — resolve THIS issue's files only, then:"
                  echo "  git add <file> && git rebase --continue"
-                 echo "Re-run the repo-discovered gate once conflicts are resolved."
-                 echo "Do NOT force-push until the gate is green."
-                 break
+                 echo "Re-run the repo gate; only force-push if it is green. Staying In Progress."
+                 exit 0   # done for this turn — resolve conflicts, re-enter next poll
                fi
-               # Re-run the repo-discovered gate (the same gate the repo's CI runs).
-               # Discover it from .github/workflows/, README, or the harness's documented command.
-               # Do NOT hardcode a stack-specific command — follow the Mergeability procedure (D-01).
-               # Example: ./scripts/ci.sh   or   npm test   or   cargo test -- --test-threads=1
-               # The gate MUST be green before you push.
-               if ! GATE_CMD=$(grep -rE '^\s*(run|cmd):' .github/workflows/*.yml 2>/dev/null | grep -i 'test\|lint\|ci' | head -1 | sed 's/.*run: //'); then
-                 GATE_CMD=""
-               fi
-               if [ -n "$GATE_CMD" ]; then
-                 echo "Running repo-discovered gate: $GATE_CMD"
-                 if ! eval "$GATE_CMD"; then
-                   echo "GATE-RED: gate failed after rebase — not force-pushing. Staying In Progress."
-                   break
-                 fi
-               else
-                 echo "GATE-MANUAL: could not auto-discover gate command. Verify gate is green before proceeding."
-                 echo "Check .github/workflows/, README, or the harness's documented command (D-01)."
-                 break
+               # Gate BEFORE push, using the SAME procedure as the Mergeability procedure below.
+               # Re-run the repo's own gate — the command its CI runs. Discover it from
+               # .github/workflows/, README, or the harness's documented command. Do NOT
+               # hardcode a stack-specific command, and do NOT eval a scraped YAML line
+               # (run: | blocks and named jobs make that both wrong and unsafe).
+               #   Examples: ./scripts/ci.sh | npm test | cargo test -- --test-threads=1
+               # Run the gate now, then set GATE_OK=1 ONLY if it exited green. Safe by
+               # default: if the gate is red or not yet run, GATE_OK stays empty and the
+               # push below is skipped.
+               GATE_OK=
+               # <run the repo gate here; on green: GATE_OK=1>
+               if [ "$GATE_OK" != "1" ]; then
+                 echo "GATE not green (or not yet run) — NOT force-pushing. Staying In Progress."
+                 exit 0   # done for this turn — do not transition with an unverified branch
                fi
                git push --force-with-lease origin "$BRANCH"
                ;;
@@ -599,12 +595,14 @@ states:
              *)
                # Conservative catch-all: an unexpected or null mergeStateStatus is NOT
                # treated as conflict-free. Hold In Progress and re-poll once (WR-06).
-               UNKNOWN_TRIES=$((UNKNOWN_TRIES + 1))
-               if [ "$UNKNOWN_TRIES" -ge 5 ]; then
+               # Uses its own counter (WEIRD_TRIES) so its /5 budget is independent of
+               # the genuine-UNKNOWN polls above.
+               WEIRD_TRIES=$((WEIRD_TRIES + 1))
+               if [ "$WEIRD_TRIES" -ge 5 ]; then
                  echo "Unexpected mergeStateStatus '$MSS' persists after 5 polls — staying In Progress, re-evaluating next poll."
                  exit 0
                fi
-               echo "Unexpected mergeStateStatus: '$MSS' — holding In Progress, sleeping 15s and re-polling ($UNKNOWN_TRIES/5)..."
+               echo "Unexpected mergeStateStatus: '$MSS' — holding In Progress, sleeping 15s and re-polling ($WEIRD_TRIES/5)..."
                sleep 15
                ;;
            esac
@@ -650,25 +648,44 @@ states:
       set -e
       BRANCH="sinfonia/{{ issue.identifier | downcase }}"
 
+      # 0. Self-derive PR_NUM — callers from Todo STEP 1 or MERGE-01 may not have one
+      #    yet. Steps 5+ (re-poll) are skipped when no PR exists.
+      PR_NUM=$(gh pr list --head "$BRANCH" --state all --json number -q '.[0].number')
+
       # 1. Fetch latest main
       git fetch origin
 
-      # 2. Rebase onto origin/main — resolve any conflicts
+      # 2. Rebase onto origin/main — resolve any conflicts.
       #    Resolve ONLY conflicts in files touched by this issue.
       #    Do NOT touch unrelated code, do NOT open a new PR.
-      git rebase origin/main
-      # (If conflicts arise, resolve them, then: git add <file> && git rebase --continue)
+      #    Guard the rebase: set -e would otherwise abort mid-rebase on a conflict,
+      #    leaving a half-applied rebase and an un-pushed branch.
+      if ! git rebase origin/main; then
+        echo "Rebase hit conflicts — resolve THIS issue's files only, then:"
+        echo "  git add <file> && git rebase --continue"
+        echo "Re-run the repo gate; only force-push if it is green. Staying In Progress."
+        exit 0   # done for this turn — resolve conflicts, re-enter next poll
+      fi
 
-      # 3. Re-run the repo-discovered gate (the same gate the repo's CI runs).
+      # 3. Gate BEFORE push. Re-run the repo's own gate — the command its CI runs.
       #    Discover it from the CI config (e.g. .github/workflows/), README, or the
-      #    harness's documented command. Do NOT hardcode a stack-specific command.
-      #    Example: ./scripts/ci.sh   or   npm test   or   cargo test -- --test-threads=1
-      #    The gate MUST be green before you push.
+      #    harness's documented command. Do NOT hardcode a stack-specific command,
+      #    and do NOT eval a scraped YAML line.
+      #    Examples: ./scripts/ci.sh | npm test | cargo test -- --test-threads=1
+      #    Run the gate now, then set GATE_OK=1 ONLY if it exited green. Safe by
+      #    default: if the gate is red or not yet run, the push below is skipped.
+      GATE_OK=
+      # <run the repo gate here; on green: GATE_OK=1>
+      if [ "$GATE_OK" != "1" ]; then
+        echo "GATE not green (or not yet run) — NOT force-pushing. Staying In Progress."
+        exit 0
+      fi
 
       # 4. Push (force-with-lease aborts safely if upstream moved unexpectedly)
       git push --force-with-lease origin "$BRANCH"
 
-      # 5. Re-poll merge state
+      # 5. Re-poll merge state (only meaningful once a PR exists)
+      [ -n "$PR_NUM" ] || { echo "No PR yet — re-poll after the PR is created."; exit 0; }
       MSS=$(gh pr view "$PR_NUM" \
         --json state,mergeable,mergeStateStatus,reviewDecision \
         | jq -r '.mergeStateStatus')
