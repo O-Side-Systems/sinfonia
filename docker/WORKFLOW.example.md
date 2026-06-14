@@ -229,11 +229,12 @@ states:
       1. **Merge conflicts** (`mergeStateStatus` is `DIRTY` / `BEHIND` /
          `BLOCKED` with conflicts noted, or `mergeable == "CONFLICTING"`):
          your job is to resolve them.
-         - `git fetch origin && git rebase origin/main` (or merge — match the
-           project's convention). Resolve conflicts. `git push --force-with-lease`.
+         - Follow the **Mergeability procedure** below. Resolve conflicts
+           touching only this issue's files. `git push --force-with-lease`.
          - Comment on the PR summarizing what you resolved (`gh pr comment $PR_NUM --body "..."`).
-         - Re-check `mergeStateStatus`. If clean, transition the issue to
-           **In Review** (use the verify-then-claim pattern in step 4 below).
+         - Re-check `mergeStateStatus`. If conflict-free (`BLOCKED`, `UNSTABLE`,
+           or `CLEAN`), transition the issue to **In Review** (use the
+           verify-then-claim pattern in step 4 below).
          - Do NOT touch unrelated code or open a new PR.
 
       2. **Unresolved review threads or conversation comments asking for changes**:
@@ -441,8 +442,9 @@ states:
       In Review or anywhere else until the requested changes are actually in
       code and pushed. Don't substitute a state transition for real work.
 
-      - **Merge conflicts** → rebase/merge `origin/main`, resolve, force-push,
-        comment on the PR summarizing the resolution.
+      - **Merge conflicts** → follow the **Mergeability procedure** below.
+        Resolve conflicts in this issue's files only; comment on the PR summarizing
+        the resolution. Do NOT touch unrelated code or open a new PR.
       - **Unresolved review threads** → address each comment in code, push,
         reply to each thread explaining what you did.
       - **Failing CI** → read the failing check, fix, push.
@@ -485,6 +487,48 @@ states:
       6. Transition the Linear issue to **In Review** using the same
          verify-then-claim pattern as the Todo prompt (swap `"In Progress"` for
          `"In Review"`). Do not claim success unless `OK:` prints. Then stop.
+
+      ### Mergeability procedure
+
+      The single source of truth for rebasing and getting the branch conflict-free
+      against `main`. Force-push is safe here: `sinfonia/<id>` is an agent-owned
+      branch, and a linear history is what the GitHub native merge queue
+      rebase-and-tests before merging.
+
+      ```bash
+      set -e
+      BRANCH="sinfonia/{{ issue.identifier | downcase }}"
+
+      # 1. Fetch latest main
+      git fetch origin
+
+      # 2. Rebase onto origin/main — resolve any conflicts
+      #    Resolve ONLY conflicts in files touched by this issue.
+      #    Do NOT touch unrelated code, do NOT open a new PR.
+      git rebase origin/main
+      # (If conflicts arise, resolve them, then: git add <file> && git rebase --continue)
+
+      # 3. Re-run the repo-discovered gate (the same gate the repo's CI runs).
+      #    Discover it from the CI config (e.g. .github/workflows/), README, or the
+      #    harness's documented command. Do NOT hardcode a stack-specific command.
+      #    Example: ./scripts/ci.sh   or   npm test   or   cargo test -- --test-threads=1
+      #    The gate MUST be green before you push.
+
+      # 4. Push (force-with-lease aborts safely if upstream moved unexpectedly)
+      git push --force-with-lease origin "$BRANCH"
+
+      # 5. Re-poll merge state
+      MSS=$(gh pr view "$PR_NUM" \
+        --json state,mergeable,mergeStateStatus,reviewDecision \
+        | jq -r '.mergeStateStatus')
+      # Branch based on mergeStateStatus:
+      #   DIRTY or BEHIND  → conflicts remain; loop / retry the procedure
+      #   UNKNOWN          → GitHub still computing; sleep 10 and re-poll
+      #   BLOCKED          → conflict-free; required review pending (proceed — human approves In Review)
+      #   UNSTABLE         → conflict-free; non-required checks failing (proceed)
+      #   CLEAN            → conflict-free and all checks passing (proceed)
+      echo "mergeStateStatus after rebase: $MSS"
+      ```
 
       ## Don't
 
