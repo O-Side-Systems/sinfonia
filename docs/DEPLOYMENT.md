@@ -620,10 +620,10 @@ Enable the following settings on the `main` branch:
 | Require status checks to pass | Enabled — include the harness gate check name (§7.2) |
 | Require merge queue | Enabled |
 
-> **Linear history:** do not also enable "Require linear history" — GitHub's UI
-> treats it as mutually exclusive with a merge queue. Linear history is already
-> produced by the merge queue's "Rebase and merge" method (see
-> [Merge queue settings](#merge-queue-settings) below); no separate toggle is needed.
+> **Linear history note:** GitHub's UI treats the linear-history branch protection
+> toggle as mutually exclusive with a merge queue. No separate toggle is needed —
+> the merge queue's "Rebase and merge" method (see
+> [Merge queue settings](#merge-queue-settings) below) already produces linear history.
 
 ### Merge queue settings
 
