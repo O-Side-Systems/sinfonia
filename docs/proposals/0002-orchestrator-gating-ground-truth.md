@@ -173,7 +173,7 @@ Phase 3 completed work items:
 2. Resolved the hierarchy gate: removed from code and documented as removed in §8.2.
 3. Cross-reference from `docs/HARNESS-SPEC.md §7.3` once §8.2 is amended.
 
-**`docs/SPEC.md §8.2` is NOT amended in this proposal.** The amendment lands in Phase 3.
+**`docs/SPEC.md §8.2` was amended in Phase 3** to document the two-layer gate (coarse orchestrator pre-filter + authoritative STEP 0 PR-merged-to-`main` gate) and record the hierarchy gate removal (see §8.2 "Candidate Selection Rules").
 
 ### Criterion #4 baseline (confirmed by Wave 1 tests)
 
@@ -191,12 +191,12 @@ The following blocker-rule behavior is confirmed by executable pinning tests add
 
 | Reference | Relevance |
 |-----------|-----------|
-| **BLOCK-02** (`REQUIREMENTS.md:85-96`) | The requirement this proposal partially satisfies (verification half); SPEC/HARNESS-SPEC amendment lands in Phase 3 |
+| **BLOCK-02** (`REQUIREMENTS.md:85-96`) | The requirement this proposal partially satisfies (verification half); SPEC/HARNESS-SPEC amendment completed in Phase 3 |
 | **DEC-003** (`PROJECT.md`) — dependency-gating-on-blocks | The decision this phase verifies against; left intact in this phase |
 | **CON-candidate-eligibility** (`PROJECT.md`) | Current contract: "blocker rule applies only to `Todo`; `In Progress` ignores blockers; gate opens on terminal state, not PR-merge" — confirmed matching code |
 | `.planning/phases/01-orchestrator-gating-verification/01-GROUND-TRUTH.md` | Phase 1 findings doc (disk-only; same invariant + §8.2 ground truth as this ADR) |
 | `docs/proposals/0001-harness-feedback-ingestion.md` | Numbering and format precedent for this ADR |
 | `crates/sinfonia/src/orchestrator/dispatch.rs:6-69` | Primary source: `is_dispatch_eligible` predicate |
 | `crates/sinfonia-tracker/src/linear.rs:527-538` | `blocked_by` derivation from `blocks` inverse relations |
-| `crates/sinfonia-tracker/src/linear.rs:48` | `children` fetch (to be removed if hierarchy gate is dropped) |
-| `crates/sinfonia-tracker/src/jira.rs:584,623` | Jira `children` population (same scope as linear.rs:48 if removed) |
+| `crates/sinfonia-tracker/src/linear.rs:48` | `children` fetch (removed in Phase 3 with hierarchy gate) |
+| `crates/sinfonia-tracker/src/jira.rs:584,623` | Jira `children` population (removed in Phase 3 with hierarchy gate) |
