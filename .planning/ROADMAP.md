@@ -18,7 +18,7 @@ decomposition discipline that prevents two stories from building the same thing.
 
 - [x] **Phase 1: Orchestrator Gating Verification** - Confirm in code how dependency/parent-child gating actually works before building on it (completed 2026-06-14)
 - [x] **Phase 2: Harness Manifest Ingestion Closure** - Verify and close Proposal 0001's opt-in `bridge.json` ingestion path (completed 2026-06-14)
-- [ ] **Phase 3: Dependency Gating (Blocker-Merged Guardrail)** - Gate work on blocker PRs being merged to main, keyed on Linear `blocks`
+- [x] **Phase 3: Dependency Gating (Blocker-Merged Guardrail)** - Gate work on blocker PRs being merged to main, keyed on Linear `blocks` (completed 2026-06-14)
 - [ ] **Phase 4: Merge-Conflict Handling & Merge Queue** - Pre-PR rebase, mergeability loop, merge queue + post-merge gate, conflict concurrency
 - [ ] **Phase 5: Repository Context Contract** - Doc-graph contract, nearest-wins AGENTS.md, just-in-time read protocol, templates
 - [ ] **Phase 6: Decomposition Discipline & Invariant Linters** - Overlap-before-build, stale/overlap linters, decomposition consistency pass
@@ -63,7 +63,7 @@ decomposition discipline that prevents two stories from building the same thing.
 **Plans**: 3 plans
   - [x] 03-01-PLAN.md — Remove parent-child dispatch gate (Rust) + inverse pinning test (Wave 1)
   - [x] 03-02-PLAN.md — STEP 0 blocker-merged guardrail in both prompts + marker regression test (Wave 1)
-  - [ ] 03-03-PLAN.md — SPEC §8.2 amendment + ADR 0002 RESOLVED (Wave 2)
+  - [x] 03-03-PLAN.md — SPEC §8.2 amendment + ADR 0002 RESOLVED (Wave 2)
 
 ### Phase 4: Merge-Conflict Handling & Merge Queue
 **Goal**: Agent PRs land cleanly under the ratified GitHub native merge queue + serial-foundation model — branches are rebased on current `main` with a green harness before PR creation, mergeability is enforced before `In Review`, and a post-merge gate runs on `main`.
@@ -107,7 +107,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6
 |-------|----------------|--------|-----------|
 | 1. Orchestrator Gating Verification | 2/2 | Complete   | 2026-06-14 |
 | 2. Harness Manifest Ingestion Closure | 2/2 | Complete   | 2026-06-14 |
-| 3. Dependency Gating (Blocker-Merged Guardrail) | 2/3 | In Progress|  |
+| 3. Dependency Gating (Blocker-Merged Guardrail) | 3/3 | Complete   | 2026-06-14 |
 | 4. Merge-Conflict Handling & Merge Queue | 0/TBD | Not started | - |
 | 5. Repository Context Contract | 0/TBD | Not started | - |
 | 6. Decomposition Discipline & Invariant Linters | 0/TBD | Not started | - |
