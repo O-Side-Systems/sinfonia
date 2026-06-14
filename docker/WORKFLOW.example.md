@@ -94,6 +94,10 @@ states:
     prompt: |
       You are picking up Linear issue **{{ issue.identifier }} — {{ issue.title }}**.
 
+      **Orient:** start at the repo-root `AGENTS.md` and follow only the links
+      relevant to this issue's acceptance criteria; grep/glob for anything else —
+      never bulk-read `docs/`.
+
       ## Issue description
 
       {{ issue.description }}
@@ -322,6 +326,10 @@ states:
     turn_timeout_ms: 5400000    # 90 min
     prompt: |
       Resume work on **{{ issue.identifier }} — {{ issue.title }}**.
+
+      **Orient:** start at the repo-root `AGENTS.md` and follow only the links
+      relevant to this issue's acceptance criteria; grep/glob for anything else —
+      never bulk-read `docs/`.
 
       ## STEP 0 — Detect prior work (run this every time)
 
@@ -734,7 +742,15 @@ workspace before starting fresh.
 
 ## What to do
 
-1. Orient: `README.md`, `CLAUDE.md`, `docs/`.
+1. Orient (just-in-time — follow this order exactly):
+   a. Read root `AGENTS.md`.
+   b. In its module-ownership table, find rows whose path-globs match files
+      this issue's acceptance criteria mention or imply.
+   c. Read ONLY the `AGENTS.md` nodes linked from those matching rows.
+   d. For anything not yet found: `grep -r '<term>' crates/` or
+      `git ls-files | grep '<pattern>'`.
+   Do NOT open `docs/` wholesale. Do NOT read `README.md` unless a node
+   links to it for a specific reason.
 2. Make focused changes — minimal diffs.
 3. Run tests + linters.
 4. Commit on `sinfonia/{{ issue.identifier | downcase }}` and push.
