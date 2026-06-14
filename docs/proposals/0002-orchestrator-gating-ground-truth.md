@@ -1,6 +1,6 @@
 # Proposal 0002 — Orchestrator Gating Ground Truth
 
-- **Status:** Draft / Proposed
+- **Status:** Accepted / Implemented (v0.4 Phase 3)
 - **Author:** (orchestrator working group)
 - **Date:** 2026-06-13
 - **Affects:** `crates/sinfonia/src/orchestrator`, `crates/sinfonia-tracker`, `docs/SPEC.md §8.2`, `docs/HARNESS-SPEC.md §7.3`
@@ -19,13 +19,17 @@ dispatch. Two gates exist inside a single predicate, `is_dispatch_eligible`
    `inverseRelations` of type `"blocks"`. Applies to `Todo` issues only. Opens when every blocker
    reaches a terminal state (today: state membership, not PR-merge-to-main).
 
-2. **Parent-child hierarchy gate (CONFIRMED DEVIATION):** keys on `issue.children`
+2. **Parent-child hierarchy gate (CONFIRMED DEVIATION — RESOLVED):** keys on `issue.children`
    (`dispatch.rs:36-48`), blocking a parent in any active state until every child is terminal.
-   This is a live, production-active gate that the intended blocks-only invariant says should not
-   exist. Flagged for the Phase 3 keep/remove decision.
+   This was a live, production-active gate that the intended blocks-only invariant says should not
+   exist. **RESOLVED (Phase 3): REMOVED.** The gate (`dispatch.rs:36-48`), its fetch
+   (`linear.rs:48`, `jira.rs:584-605`), and the `{% if issue.children %}` template blocks were
+   removed in v0.4 Phase 3. Dependency gating now keys solely on Linear `blocks` relations. The
+   `children` field on `Issue` is kept empty (struct cleanup deferred).
 
-**This proposal does not amend `docs/SPEC.md`, `docs/HARNESS-SPEC.md`, or DEC-003.** Those
-amendments land in Phase 3 once the keep/remove decision for the hierarchy gate is ratified.
+**`docs/SPEC.md` §8.2 was amended in Phase 3** to document the two-layer gate (coarse
+orchestrator pre-filter + authoritative STEP 0 PR-merged-to-`main` gate) and record the
+hierarchy gate removal.
 
 ---
 
@@ -104,16 +108,17 @@ The following invariant text is carried verbatim in both this ADR and in
 >    `inverseRelations` of `type == "blocks"` (`linear.rs:527-555`). Applies to `Todo` issues
 >    only; opens when every blocker reaches a terminal *state*. **Confirmed delta vs intent:**
 >    `Done` SHOULD be set by PR-merge-to-`main`, but the gate opens on terminal state, not merge.
->    (Amendment deferred to Phase 3.)
-> 2. **Parent-child hierarchy gate (CONFIRMED DEVIATION):** keys on `children`
+>    **RESOLVED (Phase 3):** SPEC §8.2 amended to two-layer gate (coarse orchestrator pre-filter
+>    + authoritative STEP 0 PR-merged-to-`main` gate for both `Todo` and `In Progress`).
+> 2. **Parent-child hierarchy gate (CONFIRMED DEVIATION — RESOLVED):** keys on `children`
 >    (`dispatch.rs:36-48`), blocking a parent in any active state until every child is terminal.
->    This is a second, live dependency gate keyed on hierarchy — which the blocks-only invariant
->    says should not exist. **Flagged for the keep/remove decision in Phase 3.** Removing it
->    requires touching BOTH the predicate (`dispatch.rs:36-48`) AND the fetch
->    (`linear.rs:48`, `jira.rs:584-606`).
+>    This was a second, live dependency gate keyed on hierarchy — which the blocks-only invariant
+>    says should not exist. **RESOLVED (Phase 3): REMOVED.** The predicate (`dispatch.rs:36-48`),
+>    children fetch (`linear.rs:48`, `jira.rs:584-605`), and template blocks (WORKFLOW.md,
+>    WORKFLOW.example.md) were removed. The `children` field on `Issue` is kept empty (struct
+>    cleanup deferred).
 >
-> This phase records the evidence and scoped delta. It does not decide keep-vs-remove and does
-> not amend DEC-003 or SPEC §8.2.
+> Phase 1 records the evidence and scoped delta. Phase 3 implements the resolution.
 
 ---
 
@@ -143,7 +148,10 @@ on Linear `blocks` relations. The hierarchy gate keys on `children` — which is
    (`children(first: 100)` from `ISSUE_FRAGMENT`)
 3. Remove the Jira children population: `crates/sinfonia-tracker/src/jira.rs:584,623`
 
-**No keep/remove recommendation is made in this proposal.** That decision is deferred to Phase 3.
+**RESOLVED (Phase 3): REMOVED.** The predicate (`dispatch.rs:36-48`), children fetch
+(`linear.rs:48`), Jira parity (`jira.rs:584,623`), and template blocks (WORKFLOW.md,
+WORKFLOW.example.md) were removed. The `children` field on `Issue` is kept empty (struct cleanup
+deferred). See Phase 3 implementation (plan 03-01, 03-02).
 
 ---
 
@@ -152,18 +160,17 @@ on Linear `blocks` relations. The hierarchy gate keys on `children` — which is
 `docs/SPEC.md` §8.2 "Candidate Selection Rules" (lines 717–734) matches the code on the blocker
 rule but diverges on two points:
 
-| Aspect | SPEC §8.2 today | Code today | Phase 3 amendment |
-|--------|-----------------|------------|-------------------|
-| Blocker rule scope | `Todo` only (matches) | `Todo` only (`dispatch.rs:50-57`) | unchanged direction |
-| Blocker "non-terminal" | terminal *state* | terminal *state* (`dispatch.rs:63`) | **change to PR-merge-to-`main`** (DEC-003: `Done` SHOULD be set by merge) |
-| Parent-child hierarchy gate | **NOT documented** | LIVE (`dispatch.rs:36-48`) | **resolve** — §8.2 must either document or drop the gate (keep/remove decision) |
+| Aspect | SPEC §8.2 (Phase 1 baseline) | Code (Phase 1 baseline) | Phase 3 amendment | Status |
+|--------|------------------------------|-------------------------|-------------------|--------|
+| Blocker rule scope | `Todo` only (matches) | `Todo` only (`dispatch.rs:50-57`) | Coarse pre-filter: `Todo` only; authoritative gate: both `Todo` and `In Progress` (STEP 0) | **DONE** |
+| Blocker "non-terminal" | terminal *state* | terminal *state* (`dispatch.rs:63`) | **PR-merge-to-`main`** as authoritative gate; terminal-state check stays as coarse pre-filter | **DONE** |
+| Parent-child hierarchy gate | **NOT documented** | LIVE (`dispatch.rs:36-48`) | **DONE: removed** — `dispatch.rs:36-48`, `linear.rs:48`, `jira.rs:584-605,623`, and WORKFLOW template blocks removed; `children` field kept empty | **DONE** |
 
-**§8.2 is silent on the parent-child gate** — a documentation gap this proposal surfaces.
+**§8.2 was amended in Phase 3** to document the two-layer gate and record the hierarchy gate removal.
 
-Phase 3 work items:
-1. Amend §8.2: gate-on-PR-merge-to-main (replaces gate-on-terminal-state for the blocker rule).
-2. Resolve the hierarchy gate: §8.2 + code must be consistent (either both document it or both
-   omit it).
+Phase 3 completed work items:
+1. Amended §8.2: two-layer gate (coarse orchestrator pre-filter + authoritative STEP 0 PR-merge-to-`main` gate).
+2. Resolved the hierarchy gate: removed from code and documented as removed in §8.2.
 3. Cross-reference from `docs/HARNESS-SPEC.md §7.3` once §8.2 is amended.
 
 **`docs/SPEC.md §8.2` is NOT amended in this proposal.** The amendment lands in Phase 3.
