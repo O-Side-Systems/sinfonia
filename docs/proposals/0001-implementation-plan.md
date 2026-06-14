@@ -1,6 +1,6 @@
 # Implementation Plan — Proposal 0001 (Harness Feedback Ingestion)
 
-- **Status:** Draft / Ready for review
+- **Status:** Accepted (Closed — Phase 2, v0.4 milestone, 2026-06-13)
 - **Companion:** [`0001-harness-feedback-ingestion.md`](./0001-harness-feedback-ingestion.md)
 - **Scope constraint:** Changes are confined to **`sinfonia`**. The producer
   (BCF, or any conforming harness) is **not modified** — this plan consumes the

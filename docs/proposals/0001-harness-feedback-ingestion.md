@@ -1,11 +1,21 @@
 # Proposal 0001 — Harness Feedback Ingestion
 
-- **Status:** Draft / Proposed
+- **Status:** Accepted (Closed — Phase 2, v0.4 milestone, 2026-06-13)
 - **Author:** (harness-sync working group)
 - **Date:** 2026-05-29
 - **Affects:** `crates/sinfonia-bridge` (primary), `docs/SPEC.md` §11.6 / §12, `BRIDGE.example.md`
 - **Spec sections touched:** §11.6.2 (envelope), §11.6.3 (field shapes), §11.6.5–§11.6.6 (webhook/response), §12 (prompt assembly)
 - **Tracking milestone:** v0.3 bridge extension, post-`alpha.8`
+
+> **Closure note (Phase 2, 2026-06-13):** All tasks (1–8) landed in
+> `crates/sinfonia-bridge`. The implementation is fully verified end-to-end:
+> `feedback/manifest.rs` owns the fetch + parse + digest pipeline;
+> `HarnessManifestSection::default()` sets `ingest: true`;
+> `tests/manifest_security.rs` closes the adversarial surface (12 tests, including
+> `golden_snapshot_exact_field_rendering` and `ingestion_writes_no_files_to_disk`);
+> `tests/bridge_e2e.rs` scenario_10 proves the end-to-end ingestion path.
+> The full requirement→evidence map is in
+> `.planning/phases/02-harness-manifest-ingestion-closure/02-CLOSURE.md`.
 
 > This is the first of a planned pair. Proposal 0001 (this document) closes the
 > feedback gap in Sinfonia's bridge. A companion effort extracts the producer
