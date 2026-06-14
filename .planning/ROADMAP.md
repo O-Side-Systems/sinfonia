@@ -87,7 +87,11 @@ decomposition discipline that prevents two stories from building the same thing.
   2. `templates/AGENTS.md` (with module-ownership table) and `templates/CODEOWNERS` ship and render as <1-screen nodes; a sample node validates against the contract.
   3. §7 lists the Context Contract as a REQUIRED/RECOMMENDED convention with a conformance checklist line.
   4. Every state prompt uses the just-in-time read protocol (start at root `AGENTS.md`, follow only acceptance-matching links, grep/glob for the rest) and no longer instructs a blanket `docs/` read.
-**Plans**: TBD
+**Plans**: 4 plans
+  - [ ] 05-01-PLAN.md — Author docs/CONTEXT-CONTRACT.md (node shape, front-matter schema, read/write protocol, conformance checklist) (Wave 1)
+  - [ ] 05-02-PLAN.md — Dogfood 6 AGENTS.md nodes (root + 3 crates + docker + docs) + extend .github/CODEOWNERS (Wave 2)
+  - [ ] 05-03-PLAN.md — Ship templates/AGENTS.md + templates/CODEOWNERS downstream starters (Wave 2)
+  - [ ] 05-04-PLAN.md — HARNESS-SPEC §7.3/§9 amendment + JIT orient protocol in both WORKFLOW files (Wave 3)
 **UI hint**: yes
 
 ### Phase 6: Decomposition Discipline & Invariant Linters
