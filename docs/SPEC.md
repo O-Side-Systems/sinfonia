@@ -724,8 +724,15 @@ An issue is dispatch-eligible only if all are true:
 - It is not already in `claimed`.
 - Global concurrency slots are available.
 - Per-state concurrency slots are available.
-- Blocker rule for `Todo` state passes:
-  - If the issue state is `Todo`, do not dispatch when any blocker is non-terminal.
+- Dependency gating uses two complementary layers:
+  - **Coarse pre-filter (orchestrator, `Todo` only):** do not dispatch when any blocker is
+    non-terminal. Cheap schedule-time check; a non-terminal blocker is definitely not merged.
+  - **Authoritative gate (workflow STEP 0, both `Todo` and `In Progress`):** verify each
+    blocker's PR is merged to `main` (not merely terminal state) before beginning work. If
+    any blocker is unmerged, post an idempotent Linear comment and stop without code changes.
+    These two layers are complementary, not redundant.
+  - **Note (v0.4 Phase 3):** Parent-child dispatch gating (`children`) was removed. Dependency
+    gating now keys solely on Linear `blocks` relations.
 
 Sorting order (stable intent):
 
@@ -2438,8 +2445,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 ### 17.4 Orchestrator Dispatch, Reconciliation, and Retry
 
 - Dispatch sort order is priority then oldest creation time
-- `Todo` issue with non-terminal blockers is not eligible
-- `Todo` issue with terminal blockers is eligible
+- `Todo` issue with non-terminal blockers is not eligible (coarse orchestrator pre-filter)
+- Issue with all blockers merged to `main` is eligible (authoritative STEP 0 gate; applies to both `Todo` and `In Progress`)
 - Active-state issue refresh updates running entry state
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace
