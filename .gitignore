@@ -28,6 +28,10 @@ Cargo.lock.bak
 /symphony-workspaces/
 /sinfonia-workspaces/
 
+# AI project folders
+/.planning
+/.claude
+
 # Coverage / profiling
 /coverage/
 *.profraw
