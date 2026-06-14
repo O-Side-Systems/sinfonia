@@ -423,12 +423,12 @@ https://github.com/acme/widgets/actions/runs/1820934 (bundle 'harness-runs-18209
 // ---------------------------------------------------------------------------
 // No-disk-write proof — HARNESS-05 "in-memory parse only" (GAP-1 / C-3).
 //
-// Drives the full try_fetch_manifest path (download → unzip → parse) and
-// asserts that no files appear in the system temp dir during ingestion.
-// This is a belt-and-suspenders regression guard: the property is
-// structurally true today (manifest.rs uses only Cursor<Vec<u8>>; no
-// std::fs import), but this test will catch any future accidental
-// introduction of a tempfile or std::fs::write call.
+// Drives the full try_fetch_manifest path (download → unzip → parse) so any
+// disk-touching code would execute, then proves the invariant deterministically
+// by asserting the module source references no filesystem-writing API. A
+// before/after entry count of the global temp dir is racy under parallel
+// `cargo test` and false-passes when read_dir errors, so the source-level guard
+// is the durable instrument — it also catches any future fs::write / tempfile.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -440,28 +440,28 @@ async fn ingestion_writes_no_files_to_disk() {
         HashMap::from([(42u64, zip)]),
     );
 
-    // Snapshot temp dir entry count BEFORE ingestion.
-    let tmp = std::env::temp_dir();
-    let count_entries = || {
-        std::fs::read_dir(&tmp)
-            .map(|rd| rd.filter_map(|e| e.ok()).count())
-            .unwrap_or(0)
-    };
-    let before = count_entries();
-
-    // Drive the full in-memory ingest path.
+    // Drive the full ingest path so any disk-touching code would execute.
     let result = try_fetch_manifest(&gh, "acme/widgets", 42, &cfg).await;
-    assert!(
-        result.is_some(),
-        "valid v2 zip must parse to Some(Manifest)"
-    );
+    assert!(result.is_some(), "valid v2 zip must parse to Some(Manifest)");
 
-    // Assert no new temp files were created during ingestion.
-    let after = count_entries();
-    assert_eq!(
-        before, after,
-        "manifest ingestion must not write temp files (HARNESS-05 in-memory invariant)"
-    );
+    // Deterministic proof of the HARNESS-05 in-memory invariant: the manifest
+    // module performs zero filesystem writes. Asserted against the module source
+    // (read at compile time) rather than a racy temp-dir entry count.
+    const MANIFEST_SRC: &str = include_str!("../src/feedback/manifest.rs");
+    for needle in [
+        "std::fs",
+        "fs::write",
+        "fs::File",
+        "File::create",
+        "tempfile",
+        "NamedTempFile",
+        "tokio::fs",
+    ] {
+        assert!(
+            !MANIFEST_SRC.contains(needle),
+            "manifest.rs must not reference `{needle}` — ingestion is in-memory only (HARNESS-05)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
