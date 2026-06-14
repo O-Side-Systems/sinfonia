@@ -642,9 +642,9 @@ states:
       ### Mergeability procedure
 
       The single source of truth for rebasing and getting the branch conflict-free
-      against `main`. Force-push is safe here: `sinfonia/<id>` is an agent-owned
-      branch, and a linear history is what the GitHub native merge queue
-      rebase-and-tests before merging.
+      against `main`. Force-push is safe here because `sinfonia/<id>` is an
+      agent-owned branch, and the GitHub native merge queue rebases-and-tests each
+      PR against `main` before merging.
 
       ```bash
       set -e
@@ -674,7 +674,7 @@ states:
         | jq -r '.mergeStateStatus')
       # Branch based on mergeStateStatus:
       #   DIRTY or BEHIND  → conflicts remain; loop / retry the procedure
-      #   UNKNOWN          → GitHub still computing; sleep 10 and re-poll
+      #   UNKNOWN          → GitHub still computing; sleep 15 and re-poll
       #   BLOCKED          → conflict-free; required review pending (proceed — human approves In Review)
       #   UNSTABLE         → conflict-free; non-required checks failing (proceed)
       #   CLEAN            → conflict-free and all checks passing (proceed)
