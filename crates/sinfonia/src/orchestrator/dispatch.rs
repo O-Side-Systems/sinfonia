@@ -26,6 +26,14 @@ pub fn is_dispatch_eligible(issue: &Issue, cfg: &ServiceConfig) -> bool {
         return false;
     }
 
+    // Dispatch eligibility allowlist (Proposal 0004 §4.3) — entry-boundary gate.
+    // Empty allowlist permits everything (today's behavior), so this is
+    // default-safe. When configured, an externally-filed ticket that lacks the
+    // required label is not dispatched to the agent.
+    if !cfg.dispatch_allowlist.permits(&issue.labels) {
+        return false;
+    }
+
     let terminal_lc: Vec<String> = cfg
         .tracker
         .terminal_states
@@ -194,6 +202,52 @@ mod tests {
         }];
         // Hierarchy gate removed (D-05) — parent is now eligible.
         assert!(is_dispatch_eligible(&parent, &cfg));
+    }
+
+    fn cfg_with_allowlist(require_labels: &[&str]) -> crate::config::ServiceConfig {
+        let labels_yaml = require_labels
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let wf = format!(
+            "---\ntracker:\n  kind: linear\n  api_key: testkey\n  project_slug: p\n  active_states: [\"Todo\", \"In Progress\"]\n  terminal_states: [\"Done\"]\nagent:\n  dispatch_allowlist:\n    require_labels: [{labels_yaml}]\n---\nbody"
+        );
+        let def = crate::config::parse_workflow_str(&wf).unwrap();
+        crate::config::ServiceConfig::from_workflow(&def).unwrap()
+    }
+
+    #[test]
+    fn allowlist_blocks_issue_without_required_label() {
+        let cfg = cfg_with_allowlist(&["sinfonia-approved"]);
+        let issue = iss("A1", Some(1), 100); // no labels
+        assert!(!is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn allowlist_permits_issue_with_required_label() {
+        let cfg = cfg_with_allowlist(&["sinfonia-approved"]);
+        let mut issue = iss("A2", Some(1), 100);
+        // Issue labels are normalized to lowercase by the tracker; match is
+        // case-insensitive regardless.
+        issue.labels = vec!["sinfonia-approved".into()];
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn empty_allowlist_permits_everything() {
+        // Default cfg (no allowlist) — an unlabeled issue is eligible.
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let issue = iss("A3", Some(1), 100);
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn allowlist_match_is_case_insensitive() {
+        let cfg = cfg_with_allowlist(&["Sinfonia-Approved"]);
+        let mut issue = iss("A4", Some(1), 100);
+        issue.labels = vec!["sinfonia-approved".into()];
+        assert!(is_dispatch_eligible(&issue, &cfg));
     }
 
     #[test]

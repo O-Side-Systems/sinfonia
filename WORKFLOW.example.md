@@ -45,6 +45,15 @@ agent:
   max_concurrent_agents_by_state:
     "In Progress": 2
 
+  # ---- Dispatch eligibility allowlist (optional; Proposal 0004 §4.3) ----
+  # An entry-boundary gate that mirrors the CODEOWNERS merge gate at the other
+  # end: when set, only issues carrying at least one of these labels are
+  # dispatched to the agent, so an externally-filed ticket can't auto-drive it.
+  # Match is case-insensitive; omit or leave empty for today's "dispatch any
+  # active issue" behavior. Recommended when untrusted users can file tickets.
+  # dispatch_allowlist:
+  #   require_labels: ["sinfonia-approved"]
+
   # ---- Default LLM backend ----
   # Used for any state without a `states:` override below.
   # Provider options: openai | anthropic | google | ollama | claude_code | codex | opencode

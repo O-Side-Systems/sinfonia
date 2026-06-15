@@ -194,6 +194,7 @@ impl Orchestrator {
 
     /// Spec §16.1: startup terminal workspace cleanup + first tick + main poll loop.
     pub async fn run(&self) -> Result<()> {
+        self.warn_permissive_posture();
         if let Err(e) = self.startup_terminal_cleanup().await {
             warn!(target: "orchestrator", error=%e, "startup terminal cleanup failed");
         }
@@ -206,6 +207,46 @@ impl Orchestrator {
                 _ = sleep => self.tick().await,
                 _ = self.inner.refresh.notified() => self.tick().await,
             }
+        }
+    }
+
+    /// Make a permissive agent posture visible at startup (Proposal 0004 §4.2).
+    /// CLI backends are commonly run with their own permission systems disabled
+    /// (e.g. `--dangerously-skip-permissions` for Claude Code, `codex exec`),
+    /// which is what unattended autonomous operation needs — but it means the
+    /// agent can run arbitrary commands with no per-action approval. Surfacing
+    /// it in the log (rather than burying it in a default command string) is the
+    /// §4.2 control; the operational mitigation is to run Sinfonia inside an
+    /// isolated environment (container/VM, scoped credentials, restricted
+    /// egress) — see `SECURITY.md`.
+    fn warn_permissive_posture(&self) {
+        let cfg = self.config();
+        // Collect the effective command line for the default lane plus every
+        // configured state override, de-duplicated.
+        let mut commands: Vec<String> = vec![cfg.llm.command.clone()];
+        for state in cfg.tracker.active_states.iter() {
+            commands.push(cfg.effective_llm_for_state(state).command);
+        }
+        commands.sort();
+        commands.dedup();
+        let permissive: Vec<&String> = commands
+            .iter()
+            .filter(|c| {
+                let lc = c.to_lowercase();
+                lc.contains("--dangerously-skip-permissions")
+                    || lc.contains("dangerously_skip_permissions")
+                    || lc.contains("codex exec")
+            })
+            .collect();
+        if !permissive.is_empty() {
+            warn!(
+                target: "orchestrator",
+                commands = ?permissive,
+                "agent runs with per-action approval disabled (autonomous mode). \
+                 This grants the agent unrestricted shell in its workspace and the \
+                 daemon's environment. Run Sinfonia in an isolated container/VM with \
+                 scoped credentials and restricted egress — see SECURITY.md."
+            );
         }
     }
 

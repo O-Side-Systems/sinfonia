@@ -126,6 +126,7 @@ mod tests {
                 max_retry_backoff_ms: 1000,
                 max_concurrent_agents_by_state: Default::default(),
             },
+            dispatch_allowlist: Default::default(),
             llm: LlmConfig {
                 provider: AgentProvider::Anthropic,
                 model: "m".into(),

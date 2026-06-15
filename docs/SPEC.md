@@ -2083,6 +2083,12 @@ Operational safety requirements:
 - Workspace isolation and path validation are important baseline controls, but they are not a
   substitute for whatever approval and sandbox policy an implementation chooses.
 
+> **Reference implementation:** Sinfonia documents its posture in `SECURITY.md` ("Trust posture &
+> hardening") and Proposal 0004. It runs a high-trust default (arbitrary `shell` tool; CLI backends
+> with per-action approval disabled for unattended operation) and relies on environmental isolation
+> (container/VM, scoped credentials, restricted egress) as the load-bearing boundary, with an opt-in
+> `agent.dispatch_allowlist` entry gate.
+
 ### 15.2 Filesystem Safety Requirements
 
 Mandatory:
@@ -2141,6 +2147,12 @@ Possible hardening measures include:
 
 The correct controls are deployment-specific, but implementations SHOULD document them clearly and
 treat harness hardening as part of the core safety model rather than an optional afterthought.
+
+> **Reference implementation:** Sinfonia exposes a `shell` tool and CLI subprocess backends. Its
+> documented posture and the available hardening knobs (`agent.dispatch_allowlist`, symlink-resolving
+> file-tool confinement, the startup permissive-posture warning, and the container/VM isolation
+> recipe) are in `SECURITY.md` and Proposal 0004. Because the agent needs autonomous shell to
+> function, the load-bearing control is environmental isolation, not an in-binary sandbox.
 
 ## 16. Reference Algorithms (Language-Agnostic)
 

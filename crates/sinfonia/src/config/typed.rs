@@ -39,6 +39,36 @@ pub struct AgentConfig {
     pub max_concurrent_agents_by_state: HashMap<String, u32>,
 }
 
+/// Dispatch eligibility allowlist (Proposal 0004 §4.3). An entry-boundary gate
+/// that mirrors the CODEOWNERS exit gate: a ticket only reaches the agent when
+/// it satisfies the allowlist, so an externally-filed issue cannot auto-drive
+/// the agent. Empty = no filter (today's behavior), so this is default-safe.
+///
+/// Parsed from `agent.dispatch_allowlist` in `WORKFLOW.md`. Label matching is
+/// case-insensitive (issue labels are already normalized to lowercase, §11.3).
+///
+/// `allowed_authors` is intentionally NOT implemented yet: the normalized
+/// `Issue` model carries no author field, so gating on it needs a tracker-fetch
+/// change first. Documented as a follow-up rather than half-wired.
+#[derive(Debug, Clone, Default)]
+pub struct DispatchAllowlist {
+    /// When non-empty, the issue MUST carry at least one of these labels
+    /// (compared case-insensitively) to be dispatch-eligible.
+    pub require_labels: Vec<String>,
+}
+
+impl DispatchAllowlist {
+    /// True when `labels` satisfies the allowlist. Empty allowlist ⇒ always true.
+    pub fn permits(&self, labels: &[String]) -> bool {
+        if self.require_labels.is_empty() {
+            return true;
+        }
+        self.require_labels.iter().any(|req| {
+            labels.iter().any(|l| l.eq_ignore_ascii_case(req))
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentProvider {
     /// Direct LLM API → built-in tool loop.
@@ -198,6 +228,8 @@ pub struct ServiceConfig {
     pub workspace: WorkspaceConfig,
     pub hooks: HooksConfig,
     pub agent: AgentConfig,
+    /// Dispatch eligibility allowlist (Proposal 0004 §4.3). Empty = no filter.
+    pub dispatch_allowlist: DispatchAllowlist,
     pub llm: LlmConfig,
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
@@ -221,6 +253,7 @@ impl ServiceConfig {
         let workspace = parse_workspace(&def.config, &workflow_dir);
         let hooks = parse_hooks(&def.config)?;
         let agent = parse_agent(&def.config)?;
+        let dispatch_allowlist = parse_dispatch_allowlist(&def.config);
         let llm = parse_llm(&def.config, &tracker.kind)?;
         let server = parse_server(&def.config)?;
         let telemetry = parse_telemetry(&def.config)?;
@@ -232,6 +265,7 @@ impl ServiceConfig {
             workspace,
             hooks,
             agent,
+            dispatch_allowlist,
             llm,
             server,
             telemetry,
@@ -516,6 +550,21 @@ fn parse_agent(config: &Json) -> Result<AgentConfig> {
         max_retry_backoff_ms,
         max_concurrent_agents_by_state: per_state,
     })
+}
+
+fn parse_dispatch_allowlist(config: &Json) -> DispatchAllowlist {
+    let require_labels = config
+        .get("agent")
+        .and_then(|a| a.get("dispatch_allowlist"))
+        .and_then(|d| d.get("require_labels"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    DispatchAllowlist { require_labels }
 }
 
 fn parse_llm(config: &Json, _tracker_kind: &TrackerKind) -> Result<LlmConfig> {
