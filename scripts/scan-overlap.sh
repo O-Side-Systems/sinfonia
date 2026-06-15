@@ -39,8 +39,21 @@ if [ -n "${GH_OVERLAP_FIXTURE:-}" ]; then
   fi
   PR_JSON=$(cat "${GH_OVERLAP_FIXTURE}")
 else
-  PR_JSON=$(gh pr list --state open --limit 200 \
-    --json number,headRefName,files 2>/dev/null || echo "[]")
+  # Live gh path. Distinguish "gh succeeded, zero PRs" from "gh failed".
+  # A gh failure (auth/network/rate-limit/API outage/missing GH_TOKEN) MUST
+  # fail loud — never treat it as "no overlap" (CR-01). Only an empty array
+  # returned by a *successful* gh call is a valid "no open PRs" result.
+  # The GH_OVERLAP_FIXTURE branch above never calls gh, so the offline
+  # fixture test path is unaffected.
+  GH_ERR_LOG=$(mktemp -t scan-overlap-gh-err.XXXXXX)
+  if ! PR_JSON=$(gh pr list --state open --limit 200 \
+       --json number,headRefName,files 2>"${GH_ERR_LOG}"); then
+    echo "ERROR: gh pr list failed (auth/network/rate-limit/API outage?):" >&2
+    cat "${GH_ERR_LOG}" >&2          # IN-02: surface gh stderr for diagnosis
+    rm -f "${GH_ERR_LOG}"
+    exit 2
+  fi
+  rm -f "${GH_ERR_LOG}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -124,20 +137,36 @@ done < <(echo "$SINFONIA_PRS" | jq -c '.[]')
 OVERLAP_FOUND=0
 
 if [ -s "${OVERLAP_TMP}" ]; then
-  # Sort by module name (field 1), then pr (field 2); deduplicate
+  # Sort by module name (field 1), then pr (field 2); deduplicate so each
+  # (module, pr) pair appears at most once.
+  #
+  # WR-04: group by module and report the FULL distinct PR list per
+  # overlapping module — not just a first-anchor pair. With 3+ PRs touching
+  # the same module this now reports e.g. "PR #2, PR #3 both modify ... (also
+  # PR #1)" by listing every PR rather than only PR#N-and-PR#1 pairs.
   sort -u "${OVERLAP_TMP}" | \
     awk -F'\t' '
       {
         module = $1
         pr     = $2
-        if (module in seen_pr && seen_pr[module] != pr) {
-          print "OVERLAP: PR #" pr " and PR #" seen_pr[module] " both modify '"'"'" module "'"'"'"
-          overlap = 1
+        # Accumulate the distinct, sorted-input PR list per module.
+        if (module in prs) {
+          prs[module] = prs[module] ", PR #" pr
+          count[module]++
         } else {
-          seen_pr[module] = pr
+          prs[module] = "PR #" pr
+          count[module] = 1
         }
       }
-      END { exit (overlap ? 1 : 0) }
+      END {
+        for (m in count) {
+          if (count[m] > 1) {
+            print "OVERLAP: " prs[m] " all modify '"'"'" m "'"'"'"
+            overlap = 1
+          }
+        }
+        exit (overlap ? 1 : 0)
+      }
     ' && OVERLAP_FOUND=0 || OVERLAP_FOUND=$?
 fi
 
