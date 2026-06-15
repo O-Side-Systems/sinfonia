@@ -1,6 +1,6 @@
 # Proposal 0005 — Sinfonia-Native Merge Coordinator
 
-- **Status:** Proposed (Design — open questions resolved in §8; ready for phased implementation per §9)
+- **Status:** Proposed (Design resolved §8; **Phase 1 of §9 implemented** in v0.4 — GhOps primitives + landing-queue store, flag-gated/unused; Phases 2–4 pending)
 - **Author:** (harness working group)
 - **Date:** 2026-06-15
 - **Affects:** `crates/sinfonia/src/orchestrator` (merge/landing lifecycle),
@@ -282,12 +282,16 @@ additive and ships dark.
 
 Each phase is independently shippable, flag-gated off, and verifiable.
 
-1. **GhOps primitives (no behavior change).** Add the three §8.7 methods to the `GhOps` trait + the
-   `OctocrabGhOps` impl, with unit/wiremock coverage for the 405/409 precondition paths. Nothing
-   calls them yet. *(Decision-independent foundation — safe to land first.)*
-2. **Landing-queue store.** Add the `landing_queue` table + `Store` methods (`enqueue`, `next`,
-   `advance`, `dequeue`, `reconcile_rows`). Migration is additive (the store already
-   `CREATE TABLE IF NOT EXISTS`).
+1. **GhOps primitives (no behavior change).** ✅ **DONE (v0.4).** Added `get_pull_request`,
+   `update_pr_branch`, `merge_pr` to `GhOps` as **default-`not supported`** methods (so the 5 test
+   fakes + `AppModeGhOps` compile unchanged), overridden in `OctocrabGhOps` via raw REST calls. Status
+   routing reads the typed `GitHubError::status_code` (405→`NotMergeable`, 409→`ShaMismatch`,
+   422+`expected_head_sha`→`Stale`), not the Display string. 5 wiremock tests cover the happy +
+   precondition paths. Nothing calls them yet.
+2. **Landing-queue store.** ✅ **DONE (v0.4).** Added the `landing_queue` table (additive migration)
+   with `Store::{enqueue_landing, get_landing, advance_landing, dequeue_landing, list_landings}` and a
+   `LandingStatus` enum. `enqueue` is idempotent (won't reset an in-flight row); `list_landings` is
+   FIFO for the §8.4 boot sweep. 3 tests incl. restart-persistence.
 3. **Coordinator state machine, behind `merge_coordinator.enabled`.** Wire the enqueue trigger
    (green + `pull_request_review approved`), the `update-branch → await CI → merge` loop reusing the
    webhook CI path, and the §8.5 park-on-failure via the existing transition path. Boot-time
