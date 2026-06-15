@@ -125,7 +125,9 @@ else
 fi
 
 # ---- Assertion (4): emitter makes no gh/curl calls (files-only, offline constraint) ----
-if grep -nE '\bgh \b|\bcurl\b|git push' "$EMITTER" >/dev/null 2>&1; then
+# Exclude comment lines (starting with optional whitespace + #) to avoid false positives
+# where comments describe the constraint but do not invoke it.
+if grep -E '^\s*[^#].*(\bgh |\bcurl\b|git push)' "$EMITTER" >/dev/null 2>&1; then
   fail "emitter $EMITTER contains forbidden tracker-mutation commands (gh/curl/git push)"
 else
   pass "emitter $EMITTER has no gh/curl/git push calls (files-only constraint satisfied)"
