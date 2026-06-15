@@ -1,0 +1,20 @@
+[
+  {
+    "id": "LIN-10",
+    "description": "Implement CI-to-issue feedback bridge core: ingest bridge.json, parse structured failure strings, and update sinfonia_bridge_state_v1.",
+    "modules": ["crates/sinfonia-bridge/src/"],
+    "foundation": true
+  },
+  {
+    "id": "LIN-11",
+    "description": "Add GitHub webhook client to bridge: handle pull_request and check_suite.completed events, map PR to issue via Resolves line.",
+    "modules": ["crates/sinfonia-bridge/src/"],
+    "foundation": false
+  },
+  {
+    "id": "LIN-12",
+    "description": "Extend Linear tracker adapter: implement pagination for blocked_by queries using inverse blocks relations.",
+    "modules": ["crates/sinfonia-tracker/src/"],
+    "foundation": false
+  }
+]
