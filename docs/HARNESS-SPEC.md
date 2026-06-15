@@ -121,6 +121,12 @@ When a harness *does* provide this step:
     default and rationale.
 - On re-run against an existing input it MUST NOT silently overwrite a
   human-reviewed spec; it SHOULD write to a side location for diff inspection.
+- When decomposing into stories, it SHOULD also run a **decomposition consistency
+  pass** emitting an overlap/contradict report (`OVERLAP-REPORT.md`) identifying
+  stories that share owned modules, and a blocks-relation dependency graph
+  (`blocks-graph.json`) describing serial-foundation → parallel-fan-out ordering.
+  Applying the blocks graph to the tracker is a separate, explicit step — this
+  pass emits files only (consistent with the MUST NOT write to tracker above).
 
 The spec *language* is unconstrained. Gherkin is one choice; a table of
 input/expected pairs, a notebook of assertions, or a typed scenario DSL are
