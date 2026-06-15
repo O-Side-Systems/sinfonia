@@ -362,7 +362,7 @@ check name and the configured pattern MUST agree.
 - **Context graph:** The repo MUST maintain a hierarchical `AGENTS.md` doc-graph
   conforming to `docs/CONTEXT-CONTRACT.md`. The root `AGENTS.md` is the agent
   entry point; all node edits ride in the code PR under CODEOWNERS. See
-  [`docs/CONTEXT-CONTRACT.md`](docs/CONTEXT-CONTRACT.md) for the full contract.
+  [`docs/CONTEXT-CONTRACT.md`](CONTEXT-CONTRACT.md) for the full contract.
 
 ### 7.4 Merge gating (REQUIRED)
 
