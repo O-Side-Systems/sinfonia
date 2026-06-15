@@ -1,0 +1,47 @@
+name: invariant-linters
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+      - "scripts/lint-stale-nodes.sh"
+      - "scripts/scan-overlap.sh"
+      - "scripts/lint-pr-overlap.sh"
+      - ".github/workflows/invariant-linters.yml"
+  push:
+    branches: [main]
+    paths:
+      - "AGENTS.md"
+      - "**/AGENTS.md"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  stale-node-linter:
+    name: stale-node linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # REQUIRED: git merge-base needs full history for stale detection
+      - name: lint-stale-nodes
+        run: |
+          chmod +x scripts/lint-stale-nodes.sh
+          scripts/lint-stale-nodes.sh
+
+  overlap-linter:
+    name: overlap linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Consistent with stale-node-linter; avoids shallow-clone surprises
+      - name: lint-pr-overlap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/scan-overlap.sh scripts/lint-pr-overlap.sh
+          scripts/lint-pr-overlap.sh
