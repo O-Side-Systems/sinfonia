@@ -2710,7 +2710,7 @@ dependencies = [
 
 [[package]]
 name = "sinfonia"
-version = "0.3.0-alpha.9"
+version = "0.4.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "sinfonia-bridge"
-version = "0.3.0-alpha.9"
+version = "0.4.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2793,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "sinfonia-tracker"
-version = "0.3.0-alpha.9"
+version = "0.4.0-alpha.1"
 dependencies = [
  "async-trait",
  "chrono",
