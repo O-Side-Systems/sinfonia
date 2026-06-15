@@ -6,8 +6,6 @@ on:
       - "AGENTS.md"
       - "**/AGENTS.md"
       - "scripts/lint-stale-nodes.sh"
-      - "scripts/scan-overlap.sh"
-      - "scripts/lint-pr-overlap.sh"
       - ".github/workflows/invariant-linters.yml"
   push:
     branches: [main]
@@ -19,6 +17,11 @@ permissions:
   contents: read
   pull-requests: read
 
+# NOTE (CR-03): the overlap linter lives in its own workflow
+# (.github/workflows/overlap-linter.yml) with NO paths filter, because it
+# inspects OTHER open PRs (not the current diff) and must run on every PR.
+# A paths filter here would let two overlapping feature PRs that don't touch
+# AGENTS.md bypass the overlap gate entirely.
 jobs:
   stale-node-linter:
     name: stale-node linter
@@ -31,17 +34,3 @@ jobs:
         run: |
           chmod +x scripts/lint-stale-nodes.sh
           scripts/lint-stale-nodes.sh
-
-  overlap-linter:
-    name: overlap linter
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Consistent with stale-node-linter; avoids shallow-clone surprises
-      - name: lint-pr-overlap
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          chmod +x scripts/scan-overlap.sh scripts/lint-pr-overlap.sh
-          scripts/lint-pr-overlap.sh

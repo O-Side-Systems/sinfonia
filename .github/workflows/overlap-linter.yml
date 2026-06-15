@@ -1,0 +1,29 @@
+name: overlap-linter
+
+# CR-03: the overlap gate inspects OTHER open sinfonia/* PRs (not the current
+# diff), so it must run on EVERY pull request regardless of which files the
+# current PR touches. It therefore has NO `paths:` filter — a path filter
+# (as previously shared with the stale-node job) would let two overlapping
+# feature PRs that don't edit AGENTS.md both bypass the gate, since a
+# non-running required check reports as passing/neutral (fail-open).
+on:
+  pull_request: {}   # no paths filter — must run on every PR
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  overlap-linter:
+    name: overlap linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Consistent with stale-node-linter; avoids shallow-clone surprises
+      - name: lint-pr-overlap
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/scan-overlap.sh scripts/lint-pr-overlap.sh
+          scripts/lint-pr-overlap.sh

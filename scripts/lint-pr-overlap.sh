@@ -15,15 +15,28 @@
 # Exit codes:
 #   0 — no PR overlap detected
 #   1 — overlap detected (CI should fail)
+#   2 — scan error (e.g. gh failure); CI must fail loud, not pass
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 echo "=== overlap linter: scanning open sinfonia/* PRs ==="
-if ! scripts/scan-overlap.sh; then
+# Capture scan-overlap.sh's exit code explicitly so we distinguish:
+#   1 — overlap detected (resolution: add a 'blocks' relation)
+#   2 — scan error (e.g. gh failure; CR-01). Must surface as a hard CI
+#       failure, NOT be reinterpreted as "overlap detected".
+set +e
+scripts/scan-overlap.sh
+SCAN_RC=$?
+set -e
+
+if [ "$SCAN_RC" -eq 1 ]; then
   echo "FAIL: PR overlap detected — see scan output above" >&2
   echo "Resolution: add a 'blocks' relation so foundation lands before leaves." >&2
   exit 1
+elif [ "$SCAN_RC" -ne 0 ]; then
+  echo "FAIL: overlap scan errored (exit ${SCAN_RC}) — see output above; gate cannot verify" >&2
+  exit "$SCAN_RC"
 fi
 echo "ok: no PR overlap detected"
