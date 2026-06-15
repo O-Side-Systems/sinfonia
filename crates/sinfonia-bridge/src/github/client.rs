@@ -83,6 +83,9 @@ pub struct PrLanding {
     pub base_ref: String,
     /// True once the PR has been merged (detects out-of-band / human merges).
     pub merged: bool,
+    /// REST `state`: `open` / `closed`. A `closed` PR with `merged == false`
+    /// is an abandoned PR the coordinator should dequeue (Proposal 0005 §8.4).
+    pub state: String,
     /// GitHub's `mergeable_state`: the REST lowercase of `mergeStateStatus`
     /// (`clean` / `blocked` / `behind` / `dirty` / `unstable` / `draft` /
     /// `unknown`). The coordinator acts on `behind` (update-branch) and parks
@@ -506,6 +509,11 @@ impl GhOps for OctocrabGhOps {
             .unwrap_or_default()
             .to_string();
         let merged = v.get("merged").and_then(|b| b.as_bool()).unwrap_or(false);
+        let state = v
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("open")
+            .to_string();
         // `mergeable_state` is the REST lowercase of GraphQL `mergeStateStatus`.
         let mergeable_state = v
             .get("mergeable_state")
@@ -517,6 +525,7 @@ impl GhOps for OctocrabGhOps {
             head_sha,
             base_ref,
             merged,
+            state,
             mergeable_state,
             mergeable,
         })
@@ -693,6 +702,7 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "number": 42,
                 "merged": false,
+                "state": "open",
                 "mergeable": true,
                 "mergeable_state": "behind",
                 "head": { "sha": "deadbeef" },
@@ -705,6 +715,7 @@ mod tests {
         assert_eq!(pr.head_sha, "deadbeef");
         assert_eq!(pr.base_ref, "main");
         assert!(!pr.merged);
+        assert_eq!(pr.state, "open");
         assert_eq!(pr.mergeable_state, "behind");
         assert_eq!(pr.mergeable, Some(true));
     }

@@ -1,6 +1,6 @@
 # Proposal 0005 — Sinfonia-Native Merge Coordinator
 
-- **Status:** Proposed (Design resolved §8; **Phase 1 of §9 implemented** in v0.4 — GhOps primitives + landing-queue store, flag-gated/unused; Phases 2–4 pending)
+- **Status:** Proposed (Design resolved §8; **Phases 1–4 of §9 implemented** in v0.4 — GhOps primitives, landing-queue store, coordinator state machine + webhook/boot wiring, and docs; all flag-gated behind `merge_coordinator.enabled`, default off)
 - **Author:** (harness working group)
 - **Date:** 2026-06-15
 - **Affects:** `crates/sinfonia/src/orchestrator` (merge/landing lifecycle),
@@ -292,13 +292,22 @@ Each phase is independently shippable, flag-gated off, and verifiable.
    with `Store::{enqueue_landing, get_landing, advance_landing, dequeue_landing, list_landings}` and a
    `LandingStatus` enum. `enqueue` is idempotent (won't reset an in-flight row); `list_landings` is
    FIFO for the §8.4 boot sweep. 3 tests incl. restart-persistence.
-3. **Coordinator state machine, behind `merge_coordinator.enabled`.** Wire the enqueue trigger
-   (green + `pull_request_review approved`), the `update-branch → await CI → merge` loop reusing the
-   webhook CI path, and the §8.5 park-on-failure via the existing transition path. Boot-time
-   reconciliation (§8.4) before the webhook server binds.
-4. **Docs + spec notes.** `BRIDGE.example.md` keys; a §8.2 landing-lifecycle note (additive); the
-   HARNESS-SPEC §7.4 note recording the coordinator as an accepted native-queue substitute for
-   sub-Enterprise repos.
+3. **Coordinator state machine, behind `merge_coordinator.enabled`.** ✅ **DONE (v0.4).** New
+   `crates/sinfonia-bridge/src/merge/` module. Enqueue trigger is the `pull_request_review`
+   *submitted/approved* webhook (the landing-queue row's existence **is** the human-approved
+   marker — the coordinator never self-approves); the green-CI feedback branch re-drives the queue
+   head after each `update-branch`. The state machine is event-driven and **serialized**
+   (`head_of_queue` + `kick` — one landing per repo at a time): `update-branch` on `BEHIND`, merge
+   (compare-and-set on head SHA) when green + mergeable, park on `DIRTY` / exhausted
+   `max_update_cycles` / closed PR via the existing needs-fixes transition + dequeue. Red CI
+   relinquishes the landing (the red path owns the transition). Boot reconciliation (§8.4) runs
+   before the webhook server binds — a `state == closed`/`merged` PR is dequeued (double-merge
+   becomes structurally impossible); a moved head re-arms `awaiting_ci`. 16 unit tests + 3 config
+   tests; `PrLanding` gained a `state` field for the closed-PR sweep. Errors in the coordinator are
+   logged, never failing the CI/approval webhook.
+4. **Docs + spec notes.** ✅ **DONE (v0.4).** `BRIDGE.example.md` `merge_coordinator` keys; an
+   additive SPEC §8.2 landing-lifecycle note; the HARNESS-SPEC §7.4 note + conformance-checklist
+   line recording the coordinator as an accepted native-queue substitute for sub-Enterprise repos.
 
 **Trust-boundary invariant to preserve throughout:** every new capability lands in
 `crates/sinfonia-bridge`; `crates/sinfonia` gains no GitHub dependency. A test/CI grep guard

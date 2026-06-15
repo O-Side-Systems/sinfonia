@@ -377,6 +377,18 @@ merging. This ensures that a PR that was green when submitted is still green onc
 integrated with concurrent work. Method: "Rebase and merge"; all required status
 checks (including the harness gate) must pass after the rebase.
 
+**Accepted substitute (Proposal 0005).** GitHub's native merge queue is
+Enterprise-Cloud-only for private repositories, so repos below that tier cannot
+satisfy the merge-queue recommendation with native tooling. Sinfonia's **merge
+coordinator** (`feedback_loop.merge_coordinator` in `BRIDGE.md`, default off) is an
+accepted, tier-independent substitute: the bridge serially drives each approved +
+green PR through `update-branch → re-test → merge` against the latest `main`,
+giving the same "green against the `main` it will land on" guarantee. It reuses the
+"Rebase and merge" method by default and composes with the serial-foundation
+convention below. Repos that *are* on Enterprise SHOULD still prefer the native
+queue; the coordinator is the equivalent for everyone else. The post-merge harness
+gate below remains REQUIRED underneath either choice.
+
 **Post-merge harness gate.** The harness gate MUST also run on `main` after every
 merge (a CI workflow triggered on `push` to `main`). A green-at-PR-time change
 that breaks once integrated with concurrent work is caught by this gate before the
@@ -456,8 +468,9 @@ A repo is **Sinfonia-ready** when:
       pattern. (§7.2)
 - [ ] `sinfonia/<id>` branches, a `Resolves <ID>` PR-body line, bridge-owned
       `sinfonia:*` labels, and a CODEOWNERS human-merge gate are in place. (§7.3)
-- [ ] A GitHub native merge queue is configured for rebase-and-test, and a
-      post-merge harness gate runs on `main` (push trigger). (§7.4)
+- [ ] A GitHub native merge queue is configured for rebase-and-test — or, below
+      Enterprise tier, Sinfonia's merge coordinator is enabled as the accepted
+      substitute — and a post-merge harness gate runs on `main` (push trigger). (§7.4)
 - [ ] For agent workflows, the agent prompt applies the mergeable-w.r.t.-`main`
       gate — looping only on `DIRTY`/`BEHIND` and treating `BLOCKED`/`UNSTABLE`
       as ready-for-human. (§7.4)

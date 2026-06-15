@@ -78,6 +78,21 @@ pub struct EvaluateContext<'a> {
     pub labels: &'a LabelManager,
 }
 
+impl<'a> EvaluateContext<'a> {
+    /// Borrow these same dependencies as a merge-coordinator [`Ctx`]
+    /// (Proposal 0005). Lets the green/red feedback branches hand the
+    /// coordinator its context without re-plumbing `AppState`.
+    fn merge_ctx(&self) -> crate::merge::Ctx<'_> {
+        crate::merge::Ctx {
+            config: self.config,
+            store: self.store,
+            tracker: self.tracker,
+            gh: self.gh,
+            labels: self.labels,
+        }
+    }
+}
+
 /// Entry point. Returns the per-PR outcomes (most events touch a
 /// single PR, but check_suite/workflow_run can list multiple).
 pub async fn evaluate_ci(
@@ -152,6 +167,15 @@ async fn evaluate_one_pr(
 
     if summary.all_passed() {
         transition::apply_green(ctx.labels, repo, pr_number).await?;
+        // Merge coordinator (Proposal 0005): if this PR is an approved,
+        // in-flight landing, a green head may now be mergeable (or the
+        // update-branch re-test just completed). No-op unless enabled + queued;
+        // failures here must not fail the CI webhook, so they are logged only.
+        if ctx.config.feedback_loop.merge_coordinator.enabled {
+            if let Err(e) = crate::merge::on_ci_green(&ctx.merge_ctx(), repo, pr_number).await {
+                warn!(target: "feedback", error = %e, repo, pr_number, "merge coordinator on_ci_green failed (continuing)");
+            }
+        }
         return Ok(CiOutcome::Green);
     }
 
@@ -224,7 +248,7 @@ async fn evaluate_one_pr(
         failure_log_excerpt: &failure_log_excerpt,
     };
 
-    match decision {
+    let outcome = match decision {
         AttemptDecision::Continue { next } => {
             let rendered = render_failure_comment(
                 &ctx.config.feedback_loop.failure_comment_template,
@@ -259,12 +283,12 @@ async fn evaluate_one_pr(
                 max = max_attempts,
                 "red below cap"
             );
-            Ok(CiOutcome::Red {
+            CiOutcome::Red {
                 category: category.name.clone(),
                 next_attempt: next,
                 max_attempts,
                 target_state: category.target_state.clone(),
-            })
+            }
         }
         AttemptDecision::CapHit { stayed_at, max } => {
             let rendered = render_cap_hit_comment(
@@ -285,9 +309,20 @@ async fn evaluate_one_pr(
                 &rendered,
             )
             .await?;
-            Ok(CiOutcome::CapHit { stayed_at, max })
+            CiOutcome::CapHit { stayed_at, max }
+        }
+    };
+
+    // Merge coordinator (Proposal 0005): red CI means the agent loop owns the
+    // fix now, so relinquish any in-flight landing for this PR. No-op unless
+    // enabled + queued; failures are logged, never propagated.
+    if ctx.config.feedback_loop.merge_coordinator.enabled {
+        if let Err(e) = crate::merge::on_ci_red(&ctx.merge_ctx(), repo, pr_number).await {
+            warn!(target: "feedback", error = %e, repo, pr_number, "merge coordinator on_ci_red failed (continuing)");
         }
     }
+
+    Ok(outcome)
 }
 
 /// The targets the feedback loop pulls out of a `check_suite` or

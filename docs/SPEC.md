@@ -736,6 +736,15 @@ An issue is dispatch-eligible only if all are true:
   - **Note (v0.4 Phase 4):** Serial-foundation concurrency —
     `max_concurrent_agents_by_state: "In Progress": 1` enforces foundational stories to run
     and land on `main` serially before the next begins; see `docs/HARNESS-SPEC.md` §7.4.
+  - **Note (landing lifecycle, additive — Proposal 0005):** Dispatch eligibility gates *starting*
+    work; *landing* may optionally be coordinated by the bridge's merge coordinator
+    (`feedback_loop.merge_coordinator`, default off). When enabled, an approved + green PR is
+    enqueued and serially driven `update-branch → re-test → merge` so it is green against the
+    `main` it will actually land on — a tier-independent substitute for a GitHub native merge
+    queue. The coordinator lives entirely in the bridge (the daemon holds no GitHub credentials,
+    §11.6.1 / §15.1); it never self-approves, and parks back to `needs_fixes_state` on conflict or
+    exhausted update cycles, composing with the existing attempt caps. This adds no daemon-side
+    behavior and no change to the `bridge.json` contract (§7.1).
 
 Sorting order (stable intent):
 

@@ -171,6 +171,23 @@ feedback_loop:
   max_failures_parsed: 20                         # max scenarios folded into the digest
   max_failure_digest_bytes: 8_192                 # cap on the sinfonia_last_ci_failure digest text
 
+  # ---- Merge coordinator (Proposal 0005) ----
+  # A Sinfonia-native, plan-independent substitute for a GitHub native merge
+  # queue (Enterprise-Cloud-only for private repos). When enabled, an approved,
+  # green PR is enqueued and the bridge serially: update-branch (integrate the
+  # latest base) -> await CI on the new head -> merge. This makes a PR "green
+  # against the `main` it will actually land on" without an Enterprise tier.
+  # Requires a `pull_request_review` webhook subscription so approvals reach the
+  # bridge. DEFAULT OFF — an absent block leaves today's behavior exactly: the
+  # bridge only labels green PRs `awaiting-review` and humans merge by hand.
+  merge_coordinator:
+    enabled: false             # opt-in master switch; default false (ships dark)
+    merge_method: rebase       # rebase (default, keeps main linear) | squash | merge
+    max_update_cycles: 3       # update-branch -> re-test attempts before parking
+    # On conflict, exhausted cycles, or a closed PR the landing is parked: the
+    # ticket transitions to `needs_fixes_state` above and the agent loop picks
+    # it back up — no new state, no new cap system (composes with max_attempts).
+
 # ---- Custom fields ----
 # Tracker-side field names the bridge reads and writes. The Linear
 # adapter stores the entire envelope in a single bot-owned comment

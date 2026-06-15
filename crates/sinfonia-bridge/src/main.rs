@@ -182,6 +182,24 @@ async fn run(args: Args) -> Result<i32, Box<dyn std::error::Error>> {
     let _debounce_handle = spawn_debounce_reconciler(budget.clone());
 
     let state = AppState::new(cfg, store, tracker, gh, labels, budget);
+
+    // Merge coordinator (Proposal 0005 §8.4): reconcile every in-flight landing
+    // against GitHub's actual state BEFORE the webhook server binds, so an
+    // out-of-band human merge that happened while the bridge was down cannot
+    // cause a double-merge. No-op unless `merge_coordinator.enabled`.
+    if state.config.feedback_loop.merge_coordinator.enabled {
+        let ctx = sinfonia_bridge::merge::Ctx {
+            config: state.config.as_ref(),
+            store: state.store.as_ref(),
+            tracker: state.tracker.as_ref(),
+            gh: &state.gh,
+            labels: &state.labels,
+        };
+        if let Err(e) = sinfonia_bridge::merge::reconcile_on_boot(&ctx).await {
+            tracing::warn!(target: "main", error = %e, "merge coordinator boot reconcile failed (continuing)");
+        }
+    }
+
     let app = router(state);
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
