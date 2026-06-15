@@ -113,9 +113,10 @@ pub async fn dispatch_tool(
     name: &str,
     arguments: &Value,
     workspace_root: &Path,
+    env_policy: &crate::config::EnvPolicy,
 ) -> Result<ToolResult> {
     match name {
-        "shell" => run_shell(arguments, workspace_root).await,
+        "shell" => run_shell(arguments, workspace_root, env_policy).await,
         "read_file" => run_read_file(arguments, workspace_root).await,
         "write_file" => run_write_file(arguments, workspace_root).await,
         "edit_file" => run_edit_file(arguments, workspace_root).await,
@@ -135,7 +136,11 @@ pub async fn dispatch_tool(
     }
 }
 
-async fn run_shell(args: &Value, workspace_root: &Path) -> Result<ToolResult> {
+async fn run_shell(
+    args: &Value,
+    workspace_root: &Path,
+    env_policy: &crate::config::EnvPolicy,
+) -> Result<ToolResult> {
     let cmd = args
         .get("command")
         .and_then(|v| v.as_str())
@@ -152,6 +157,9 @@ async fn run_shell(args: &Value, workspace_root: &Path) -> Result<ToolResult> {
         .current_dir(workspace_root)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    // Proposal 0004 §4.1: scope the subprocess environment per policy.
+    // Default (`Inherit`) is a no-op, preserving today's behavior.
+    crate::agent::apply_env_policy(&mut command, env_policy);
 
     let mut child = command
         .spawn()

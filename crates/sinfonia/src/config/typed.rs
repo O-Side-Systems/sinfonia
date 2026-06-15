@@ -37,6 +37,33 @@ pub struct AgentConfig {
     pub max_turns: u32,
     pub max_retry_backoff_ms: u64,
     pub max_concurrent_agents_by_state: HashMap<String, u32>,
+    /// Environment policy applied to agent subprocesses (Proposal 0004 §4.1).
+    pub env_policy: EnvPolicy,
+}
+
+/// How agent subprocesses (`shell` tool + CLI backends) inherit the daemon's
+/// environment (Proposal 0004 §4.1). Default `Inherit` = today's behavior, so
+/// this is default-safe; `Scrubbed` is the opt-in hardening that stops the
+/// agent's `shell` from reading arbitrary daemon secrets via `env`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum EnvMode {
+    /// Inherit the full daemon environment (legacy behavior).
+    #[default]
+    Inherit,
+    /// Start from a minimal base (PATH/HOME/LANG/…) plus an explicit
+    /// passthrough allowlist; everything else is cleared.
+    Scrubbed,
+}
+
+/// Parsed from `agent.env_policy`. `passthrough` and `forward` are merged into a
+/// single allowlist of variable names copied from the daemon environment when
+/// `mode: scrubbed`; the distinction in the proposal is documentation-only.
+#[derive(Debug, Clone, Default)]
+pub struct EnvPolicy {
+    pub mode: EnvMode,
+    /// Extra variable names to copy through in `Scrubbed` mode (union of the
+    /// `passthrough` and `forward` config lists).
+    pub passthrough: Vec<String>,
 }
 
 /// Dispatch eligibility allowlist (Proposal 0004 §4.3). An entry-boundary gate
@@ -544,12 +571,35 @@ fn parse_agent(config: &Json) -> Result<AgentConfig> {
         }
     }
 
+    let env_policy = parse_env_policy(a_obj);
+
     Ok(AgentConfig {
         max_concurrent_agents,
         max_turns,
         max_retry_backoff_ms,
         max_concurrent_agents_by_state: per_state,
+        env_policy,
     })
+}
+
+fn parse_env_policy(agent: &Json) -> EnvPolicy {
+    let ep = match agent.get("env_policy") {
+        Some(v) if v.is_object() => v,
+        _ => return EnvPolicy::default(),
+    };
+    let mode = match ep.get("mode").and_then(|v| v.as_str()) {
+        Some(s) if s.eq_ignore_ascii_case("scrubbed") => EnvMode::Scrubbed,
+        _ => EnvMode::Inherit,
+    };
+    let mut passthrough: Vec<String> = Vec::new();
+    for key in ["passthrough", "forward"] {
+        if let Some(arr) = ep.get(key).and_then(|v| v.as_array()) {
+            passthrough.extend(arr.iter().filter_map(|x| x.as_str().map(str::to_string)));
+        }
+    }
+    passthrough.sort();
+    passthrough.dedup();
+    EnvPolicy { mode, passthrough }
 }
 
 fn parse_dispatch_allowlist(config: &Json) -> DispatchAllowlist {
@@ -903,6 +953,30 @@ mod tests {
         matches!(
             err,
             Error::Tracker(sinfonia_tracker::Error::UnsupportedTrackerKind(_))
+        );
+    }
+
+    #[test]
+    fn env_policy_defaults_to_inherit() {
+        let def = parse_workflow_str(
+            "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: y\n---\nbody",
+        )
+        .unwrap();
+        let cfg = ServiceConfig::from_workflow(&def).unwrap();
+        assert_eq!(cfg.agent.env_policy.mode, EnvMode::Inherit);
+        assert!(cfg.agent.env_policy.passthrough.is_empty());
+    }
+
+    #[test]
+    fn env_policy_scrubbed_merges_passthrough_and_forward() {
+        let yaml = "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: y\nagent:\n  env_policy:\n    mode: scrubbed\n    passthrough: [\"FOO\", \"BAR\"]\n    forward: [\"ANTHROPIC_API_KEY\", \"FOO\"]\n---\nbody";
+        let def = parse_workflow_str(yaml).unwrap();
+        let cfg = ServiceConfig::from_workflow(&def).unwrap();
+        assert_eq!(cfg.agent.env_policy.mode, EnvMode::Scrubbed);
+        // union + dedup, sorted
+        assert_eq!(
+            cfg.agent.env_policy.passthrough,
+            vec!["ANTHROPIC_API_KEY", "BAR", "FOO"]
         );
     }
 

@@ -90,6 +90,11 @@ bounded only by the environment and credential scope above.
 
 **Opt-in controls available today:**
 
+- `agent.env_policy: { mode: scrubbed, ... }` — stop the agent's `shell` from
+  reading arbitrary daemon secrets via `env`. Default `inherit` keeps today's
+  behavior; `scrubbed` clears the environment and re-adds only a minimal base
+  plus a named allowlist (Proposal 0004 §4.1). Pair this with restricted egress
+  for defense in depth.
 - `agent.dispatch_allowlist.require_labels` — only dispatch tickets carrying an
   approval label, an entry-boundary gate mirroring CODEOWNERS at the exit
   (Proposal 0004 §4.3).

@@ -20,15 +20,18 @@
 > the maximally-permissive defaults that section warns against and has not documented its posture
 > per §15.1.** 0004 closes that gap.
 
-**Implementation status (v0.4).** Landed: §4.3 dispatch allowlist
+**Implementation status (v0.4).** Landed: §4.1 `env_policy` subprocess env
+scoping (default `inherit`, opt-in `scrubbed`; applied to the `shell` tool and
+all CLI/raw backends), §4.3 dispatch allowlist
 (`agent.dispatch_allowlist.require_labels`), §4.4 symlink-resolving file-tool
 confinement, §4.5 tool-catalog latent-risk pin test, the §4.2 startup
 permissive-posture `WARN`, and the §5 `SECURITY.md` posture + §6 SPEC §15 notes.
 Per operator decision, the **breaking default-flips are NOT applied**:
-`--dangerously-skip-permissions` stays on (the sandboxed agents require it) and
-the documented mitigation is environmental isolation (run in a container/VM).
-Deferred: §4.1 `env_policy` scoping knob, §4.3 `allowed_authors` (needs an
-author field on the normalized `Issue`), and the `cli_autonomous` knob.
+`--dangerously-skip-permissions` stays on (the sandboxed agents require it),
+`env_policy` defaults to `inherit`, and the documented mitigation is
+environmental isolation (run in a container/VM). Deferred: §4.3
+`allowed_authors` (needs an author field on the normalized `Issue`) and the
+`cli_autonomous` knob.
 
 ---
 

@@ -98,6 +98,8 @@ pub struct OpenCodeAgent {
     /// Per-turn timeout. Hitting this kills the subprocess and returns
     /// `TurnOutcome::Timeout`. Matches `cli.rs`'s timeout semantic.
     turn_timeout: Duration,
+    /// Environment policy applied to the OpenCode subprocess (Proposal 0004 §4.1).
+    env_policy: crate::config::EnvPolicy,
 }
 
 impl OpenCodeAgent {
@@ -107,7 +109,7 @@ impl OpenCodeAgent {
     /// resolve to a real binary on `PATH`) and runs a preflight `which`
     /// check on the binary name so misconfigurations fail loudly at
     /// startup rather than turn-time.
-    pub fn new(_cfg: &crate::config::ServiceConfig, llm: &LlmConfig) -> Result<Self> {
+    pub fn new(cfg: &crate::config::ServiceConfig, llm: &LlmConfig) -> Result<Self> {
         if llm.command.trim().is_empty() {
             return Err(Error::ConfigInvalid(
                 "OpenCode: agent.command must be non-empty".into(),
@@ -123,6 +125,7 @@ impl OpenCodeAgent {
             command: llm.command.clone(),
             model,
             turn_timeout: Duration::from_millis(llm.turn_timeout_ms),
+            env_policy: cfg.agent.env_policy.clone(),
         })
     }
 
@@ -160,6 +163,7 @@ impl CodingAgent for OpenCodeAgent {
             thread_id: format!("pending-{}", Uuid::new_v4()),
             workspace,
             history: Vec::new(),
+            env_policy: self.env_policy.clone(),
         })
     }
 
@@ -192,13 +196,16 @@ impl CodingAgent for OpenCodeAgent {
         };
         let cmd_line = self.build_command_line(prior_session);
 
-        let mut child = Command::new("bash")
+        let mut command = Command::new("bash");
+        command
             .arg("-lc")
             .arg(&cmd_line)
             .current_dir(&session.workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        crate::agent::apply_env_policy(&mut command, &session.env_policy);
+        let mut child = command
             .spawn()
             .map_err(|e| Error::CodexNotFound(format!("spawn '{cmd_line}': {e}")))?;
 
@@ -549,6 +556,7 @@ mod tests {
             command: "opencode run --format json".into(),
             model: model.map(str::to_string),
             turn_timeout: Duration::from_secs(60),
+            env_policy: Default::default(),
         }
     }
 

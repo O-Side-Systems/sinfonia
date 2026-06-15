@@ -54,6 +54,20 @@ agent:
   # dispatch_allowlist:
   #   require_labels: ["sinfonia-approved"]
 
+  # ---- Subprocess environment policy (optional; Proposal 0004 §4.1) ----
+  # Controls what environment the agent's `shell` tool and CLI backends inherit.
+  #   mode: inherit  (default) — child inherits the daemon's full environment.
+  #   mode: scrubbed          — start from a minimal base (PATH/HOME/LANG/…) plus
+  #                             the names listed below; everything else (e.g.
+  #                             stray API keys in the daemon env) is cleared, so
+  #                             the agent's shell can't read them via `env`.
+  # `passthrough` and `forward` are merged; list any vars the agent legitimately
+  # needs (e.g. a CLI backend's own provider key). Recommended for untrusted input.
+  # env_policy:
+  #   mode: scrubbed
+  #   passthrough: ["PATH", "HOME"]
+  #   forward: ["ANTHROPIC_API_KEY"]
+
   # ---- Default LLM backend ----
   # Used for any state without a `states:` override below.
   # Provider options: openai | anthropic | google | ollama | claude_code | codex | opencode

@@ -125,6 +125,7 @@ mod tests {
                 max_turns: 1,
                 max_retry_backoff_ms: 1000,
                 max_concurrent_agents_by_state: Default::default(),
+                env_policy: Default::default(),
             },
             dispatch_allowlist: Default::default(),
             llm: LlmConfig {

@@ -127,7 +127,9 @@ pub async fn run_provider_turn<C: LlmCaller>(
         let mut hit_final = false;
         let mut final_message = String::new();
         for tc in tool_calls {
-            let res = dispatch_tool(&tc.name, &tc.arguments, &session.workspace).await?;
+            let res =
+                dispatch_tool(&tc.name, &tc.arguments, &session.workspace, &session.env_policy)
+                    .await?;
             events.send(AgentEvent::Notification {
                 timestamp: Utc::now(),
                 message: format!("tool {}", tc.name),

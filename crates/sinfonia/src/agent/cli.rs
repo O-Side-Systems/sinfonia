@@ -50,10 +50,15 @@ pub struct CliAgent {
     command: String,
     model: Option<String>,
     turn_timeout: Duration,
+    env_policy: crate::config::EnvPolicy,
 }
 
 impl CliAgent {
-    pub fn new(flavor: CliFlavor, llm: &LlmConfig) -> Result<Self> {
+    pub fn new(
+        flavor: CliFlavor,
+        cfg: &crate::config::ServiceConfig,
+        llm: &LlmConfig,
+    ) -> Result<Self> {
         if llm.command.trim().is_empty() {
             return Err(Error::ConfigInvalid(format!(
                 "{:?}: agent.command must be non-empty",
@@ -70,6 +75,7 @@ impl CliAgent {
             command: llm.command.clone(),
             model,
             turn_timeout: Duration::from_millis(llm.turn_timeout_ms),
+            env_policy: cfg.agent.env_policy.clone(),
         })
     }
 
@@ -106,6 +112,7 @@ impl CodingAgent for CliAgent {
             thread_id: format!("pending-{}", Uuid::new_v4()),
             workspace,
             history: Vec::new(),
+            env_policy: self.env_policy.clone(),
         })
     }
 
@@ -130,13 +137,16 @@ impl CodingAgent for CliAgent {
         };
         let cmd_line = self.build_command_line(prior_session);
 
-        let mut child = Command::new("bash")
+        let mut command = Command::new("bash");
+        command
             .arg("-lc")
             .arg(&cmd_line)
             .current_dir(&session.workspace)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        crate::agent::apply_env_policy(&mut command, &session.env_policy);
+        let mut child = command
             .spawn()
             .map_err(|e| Error::CodexNotFound(format!("spawn '{cmd_line}': {e}")))?;
 
@@ -447,7 +457,7 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 /// Construct a CLI agent for a `claude_code` / `codex` provider value.
-pub fn build_for(llm: &LlmConfig) -> Result<CliAgent> {
+pub fn build_for(cfg: &crate::config::ServiceConfig, llm: &LlmConfig) -> Result<CliAgent> {
     let flavor = match llm.provider {
         AgentProvider::ClaudeCode => CliFlavor::ClaudeCode,
         AgentProvider::Codex => CliFlavor::Codex,
@@ -458,7 +468,7 @@ pub fn build_for(llm: &LlmConfig) -> Result<CliAgent> {
             )))
         }
     };
-    CliAgent::new(flavor, llm)
+    CliAgent::new(flavor, cfg, llm)
 }
 
 #[cfg(test)]
