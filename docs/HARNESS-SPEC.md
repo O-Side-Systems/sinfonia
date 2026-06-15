@@ -248,6 +248,22 @@ additionally compute a soft quality grade and open bounded, deduplicated,
 no-auto-merge refactor PRs against below-threshold areas. These keep an
 autonomous loop from trading structure for green.
 
+For repositories using the `AGENTS.md` doc-graph (§7.3, `docs/CONTEXT-CONTRACT.md`), the
+manifest-driven invariant gate SHOULD include two additional checks:
+
+- **Stale-node check** (`scripts/lint-stale-nodes.sh`): fails when a context-graph node's
+  `last_verified_sha` lags `main` by more than a configurable grace window on owned paths.
+  *Grace window:* a tunable threshold (default: 5 commits on owned paths) set via
+  `STALE_COMMIT_THRESHOLD`. Within the window: warn (exit 0). Beyond the window: hard-fail
+  (exit non-zero) both locally and in CI. The stale check is path-aware: commits to `main`
+  that do not touch files the node owns do NOT trigger staleness.
+
+- **Overlap check** (`scripts/lint-pr-overlap.sh` wrapping `scripts/scan-overlap.sh`): fails
+  when two open `sinfonia/<issue-id>` PRs modify the same owned module as defined in the root
+  `AGENTS.md` module-ownership table. The shared `scan-overlap.sh` command is also called by
+  agents before writing shared/utility code (CTXGRAPH-01), so the same deterministic code path
+  serves both the CI gate and the pre-build agent check.
+
 ## 6. Pillar 3 — Observability Feedback Contract
 
 This pillar answers prompts like "ensure service startup completes under 800ms"
