@@ -37,6 +37,17 @@ STALE_IGNORE_NODES="${STALE_IGNORE_NODES:-}"
 ERRORS=0
 WARNINGS=0
 
+# --- Resolve the comparison ref once (CR-02) ---------------------------------
+# A bare `main` only resolves via refs/heads/main, which does NOT exist under
+# actions/checkout@v4 on a pull_request event (detached HEAD; only
+# refs/remotes/origin/main is present). Resolve robustly, preferring a local
+# main but falling back to the remote-tracking ref. A resolution failure must
+# fail loud — never silently report "fresh" (WR-01/WR-02).
+MAIN_REF=$(git rev-parse --verify --quiet refs/heads/main \
+        || git rev-parse --verify --quiet refs/remotes/origin/main \
+        || git rev-parse --verify --quiet origin/main) \
+  || { echo "ERROR: cannot resolve 'main' ref (no refs/heads/main or origin/main)" >&2; exit 1; }
+
 # --- Helpers -----------------------------------------------------------------
 
 parse_frontmatter_field() {
@@ -55,8 +66,11 @@ is_ignored_node() {
   local IFS_ORIG="$IFS"
   IFS=","
   for entry in $STALE_IGNORE_NODES; do
-    # Strip whitespace from entry
-    entry="${entry# }"; entry="${entry% }"
+    # WR-05: strip ALL leading/trailing whitespace (not just one space), so
+    # entries like "AGENTS.md,  crates/x/AGENTS.md" (multiple spaces after the
+    # comma) still match instead of silently failing the safety valve.
+    entry="${entry#"${entry%%[![:space:]]*}"}"
+    entry="${entry%"${entry##*[![:space:]]}"}"
     if [ "$norm" = "$entry" ] || [ "$node" = "$entry" ]; then
       IFS="$IFS_ORIG"
       return 0
@@ -102,17 +116,28 @@ while IFS= read -r node; do
     continue
   fi
 
-  # --- Compute effective baseline (CR-01: handles pre-merge branch SHAs) -----
+  # --- Compute effective baseline (handles pre-merge branch SHAs) -----------
   # git merge-base returns the branching point when SHA is not yet on main.
   # This avoids counting all of main's history as "new" for in-flight PRs.
-  EFFECTIVE=$(git merge-base "${LAST_SHA}" main 2>/dev/null || git rev-parse main)
+  #
+  # WR-02: if LAST_SHA shares NO common ancestor with main (force-pushed /
+  # rebased-away branch, unrelated graft), merge-base fails. Do NOT silently
+  # fall back to main HEAD (which would make the node read as "always fresh").
+  # Instead warn and baseline from the root commit so all owned commits count.
+  if ! EFFECTIVE=$(git merge-base "${LAST_SHA}" "${MAIN_REF}" 2>/dev/null); then
+    echo "WARN:  $node — last_verified_sha ${LAST_SHA} has no common ancestor with main; treating as stale baseline" >&2
+    WARNINGS=$((WARNINGS + 1))
+    EFFECTIVE=$(git rev-list --max-parents=0 "${MAIN_REF}" | tail -1)
+  fi
 
   # --- Extract owned path-globs from the node's Module Ownership table --------
   # Falls back to the node's own directory when no ownership table is found.
+  # WR-03: trim only SURROUNDING whitespace per line (not all spaces) so a
+  # legitimate path containing a space is not silently corrupted into tokens.
   PATHS=$(awk '/## Module Ownership/,/## See also/' "$node" \
     | grep '|' | grep -v 'Capability\|---' \
     | awk -F'|' '{print $3}' \
-    | sed 's/`//g' | tr -d ' ' | grep -v '^$' || true)
+    | sed 's/`//g; s/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' || true)
 
   if [ -z "$PATHS" ]; then
     # Fallback: use the node's own directory as the owned path
@@ -121,8 +146,19 @@ while IFS= read -r node; do
   fi
 
   # --- Check each owned path-glob for stale commits on main ------------------
-  for path_glob in $PATHS; do
-    COUNT=$(git rev-list --count "${EFFECTIVE}..main" -- "$path_glob" 2>/dev/null || echo 0)
+  # WR-03: iterate via `while read` with no unquoted word-splitting and
+  # globbing disabled so untrusted front-matter path-globs containing shell
+  # metacharacters (*, ?, [) are NOT expanded against the working directory.
+  # WR-01: drop the `2>/dev/null || echo 0` masking — a genuine git/ref error
+  # must fail loud (counted as an ERROR), not be reinterpreted as "fresh".
+  set -f  # disable pathname expansion for the duration of the loop
+  while IFS= read -r path_glob; do
+    [ -z "$path_glob" ] && continue
+    if ! COUNT=$(git rev-list --count "${EFFECTIVE}..${MAIN_REF}" -- "$path_glob"); then
+      echo "ERROR: $node — git rev-list failed for $path_glob (baseline ${EFFECTIVE}..${MAIN_REF})" >&2
+      ERRORS=$((ERRORS + 1))
+      continue
+    fi
     if [ "$COUNT" -gt "$STALE_COMMIT_THRESHOLD" ]; then
       echo "ERROR: $node STALE — $COUNT commits on main touch $path_glob since ${LAST_SHA} (threshold: ${STALE_COMMIT_THRESHOLD})" >&2
       ERRORS=$((ERRORS + 1))
@@ -130,7 +166,8 @@ while IFS= read -r node; do
       echo "WARN:  $node — $COUNT commits on main touch $path_glob since ${LAST_SHA} (within grace window of ${STALE_COMMIT_THRESHOLD})" >&2
       WARNINGS=$((WARNINGS + 1))
     fi
-  done
+  done <<< "$PATHS"
+  set +f
 
 done < <(find . -name "AGENTS.md" -not -path "./.planning/*" | sort)
 
