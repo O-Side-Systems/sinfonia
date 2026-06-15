@@ -25,6 +25,7 @@ follow links to this node only when the issue acceptance criteria reference docs
 | Harness feedback proposal | `docs/proposals/0001-harness-feedback-ingestion.md` | @osidesys @leebrett | bridge.json v2 ingestion |
 | Reliability-seams proposal | `docs/proposals/0003-feedback-loop-reliability-seams.md` | @osidesys @leebrett | Write contention · missed-webhook sweep · restart workspace-reset |
 | Tool-surface security proposal | `docs/proposals/0004-agent-tool-surface-hardening.md` | @osidesys @leebrett | Env scoping · permission opt-in · dispatch allowlist · documented posture |
+| Merge-coordinator proposal | `docs/proposals/0005-merge-coordinator.md` | @osidesys @leebrett | Bridge-hosted rebase→re-test→merge; tier-independent native-queue substitute |
 | Architecture / feedback loops | `docs/ARCHITECTURE.md` | @osidesys @leebrett | Non-normative; mermaid feedback-loop + HITL diagrams |
 
 ## See also
