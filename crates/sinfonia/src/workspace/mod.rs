@@ -4,4 +4,4 @@ mod hooks;
 mod manager;
 
 pub use hooks::{run_hook, HookKind};
-pub use manager::{Workspace, WorkspaceManager};
+pub use manager::{Workspace, WorkspaceEntry, WorkspaceManager};

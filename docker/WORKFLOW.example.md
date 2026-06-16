@@ -35,6 +35,18 @@ polling:
 workspace:
   # Resolves to /home/dev/sinfonia-workspaces inside the docker container.
   root: ~/sinfonia-workspaces
+  # Disk reclamation. Each per-issue workspace is a full repo checkout plus
+  # build artifacts (a Rust `target/` can be >1 GB), so for a long-running
+  # daemon these add up. Legacy behavior was a single terminal-state sweep at
+  # startup; these knobs make it continuous.
+  cleanup:
+    # Re-run the terminal-state sweep (Done/Cancelled → remove) every N seconds
+    # while running, not just at startup. 0 = startup-only (legacy).
+    sweep_interval_secs: 600
+    # Also remove any workspace not modified in this many hours whose issue is
+    # not currently running — reaps In Review / stale / errored checkouts (they
+    # are re-cloned on demand). 0 = disabled (In Review workspaces kept forever).
+    max_age_hours: 0
 
 # ---- Lifecycle hooks (run as `bash -lc`, cwd = workspace) ----
 # IMPORTANT: hooks are NOT Liquid-rendered (only prompt bodies are). The cwd

@@ -20,6 +20,37 @@ pub struct PollingConfig {
 #[derive(Debug, Clone)]
 pub struct WorkspaceConfig {
     pub root: PathBuf,
+    /// Reclamation of per-issue workspace directories (Option 4 — disk GC).
+    pub cleanup: WorkspaceCleanupConfig,
+}
+
+/// Workspace reclamation policy. The legacy behavior was a single
+/// terminal-state sweep at startup (SPEC §16.1); for a long-running daemon
+/// that left In Review / errored / unswept-terminal workspaces — each a full
+/// repo checkout plus build artifacts — to accumulate until the next restart.
+#[derive(Debug, Clone)]
+pub struct WorkspaceCleanupConfig {
+    /// Run the terminal-state workspace sweep every N seconds while running,
+    /// not just at startup. `0` keeps the legacy startup-only behavior.
+    pub sweep_interval_secs: u64,
+    /// Also remove any workspace whose directory has not been modified in this
+    /// many hours and whose issue is not currently running — catches In Review
+    /// / stale / errored workspaces the terminal sweep leaves behind (they are
+    /// re-created on demand). `0` disables this age-based reaper.
+    pub max_age_hours: u64,
+}
+
+impl Default for WorkspaceCleanupConfig {
+    fn default() -> Self {
+        // Periodic terminal sweep ON (additive-safe: only removes Done/Cancelled
+        // workspaces, exactly the startup sweep, just more often). Age-based
+        // reaper OFF by default — it can remove In Review workspaces, which are
+        // kept by design, so it stays opt-in.
+        Self {
+            sweep_interval_secs: 600,
+            max_age_hours: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -490,7 +521,33 @@ fn parse_workspace(config: &Json, workflow_dir: &Path) -> WorkspaceConfig {
         workflow_dir.join(path)
     };
     let normalized = absolute.canonicalize().unwrap_or(absolute);
-    WorkspaceConfig { root: normalized }
+    let cleanup = parse_workspace_cleanup(config);
+    WorkspaceConfig {
+        root: normalized,
+        cleanup,
+    }
+}
+
+/// Parse the optional `workspace.cleanup` block. Absent keys fall back to
+/// [`WorkspaceCleanupConfig::default`], so an omitted block keeps the periodic
+/// terminal sweep on and the age-based reaper off.
+fn parse_workspace_cleanup(config: &Json) -> WorkspaceCleanupConfig {
+    let d = WorkspaceCleanupConfig::default();
+    let c = config
+        .get("workspace")
+        .and_then(|w| w.get("cleanup"))
+        .cloned()
+        .unwrap_or(Json::Null);
+    WorkspaceCleanupConfig {
+        sweep_interval_secs: c
+            .get("sweep_interval_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(d.sweep_interval_secs),
+        max_age_hours: c
+            .get("max_age_hours")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(d.max_age_hours),
+    }
 }
 
 fn default_workspace_root() -> String {
