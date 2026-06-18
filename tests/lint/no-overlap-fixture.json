@@ -1,0 +1,18 @@
+[
+  {
+    "number": 201,
+    "headRefName": "sinfonia/LIN-20",
+    "files": [
+      {"path": "crates/sinfonia/src/agent/anthropic.rs", "additions": 25, "deletions": 0},
+      {"path": "crates/sinfonia/src/agent/mod.rs", "additions": 5, "deletions": 2}
+    ]
+  },
+  {
+    "number": 202,
+    "headRefName": "sinfonia/LIN-21",
+    "files": [
+      {"path": "docs/SPEC.md", "additions": 40, "deletions": 10},
+      {"path": "docs/HARNESS-SPEC.md", "additions": 15, "deletions": 0}
+    ]
+  }
+]

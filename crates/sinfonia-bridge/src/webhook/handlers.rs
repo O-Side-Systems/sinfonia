@@ -178,6 +178,7 @@ async fn webhook_inner(
 
     match event.as_str() {
         "pull_request" => handle_pull_request(&state, &payload, &delivery_id).await,
+        "pull_request_review" => handle_pull_request_review(&state, &payload, &delivery_id).await,
         "check_suite" => handle_check_suite(&state, &payload, &delivery_id).await,
         "workflow_run" => handle_workflow_run(&state, &payload, &delivery_id).await,
         "ping" => {
@@ -350,6 +351,96 @@ async fn handle_pull_request(
             "repo": repo,
             "pr_number": pr_number,
             "ticket_id": ticket_id,
+            "delivery_id": delivery_id,
+        })),
+    )
+        .into_response()
+}
+
+/// `pull_request_review` — the merge coordinator's enqueue trigger (Proposal
+/// 0005 §8.6). Only `submitted` reviews with state `approved` for a
+/// tracker-linked PR enqueue a landing; everything else is a 200 no-op. The
+/// coordinator itself is inert unless `merge_coordinator.enabled`, so this
+/// handler is effectively dead weight until an operator opts in.
+async fn handle_pull_request_review(
+    state: &AppState,
+    payload: &Value,
+    delivery_id: &str,
+) -> axum::response::Response {
+    let action = payload.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let review_state = payload
+        .get("review")
+        .and_then(|r| r.get("state"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let repo = payload
+        .get("repository")
+        .and_then(|v| v.get("full_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    tracing::Span::current().record(spans::ATTR_REPO, repo);
+    let pr_number = payload
+        .get("pull_request")
+        .and_then(|p| p.get("number"))
+        .and_then(|v| v.as_u64());
+
+    // GitHub sends review.state lowercased ("approved"); compare case-insensitively.
+    if action != "submitted" || !review_state.eq_ignore_ascii_case("approved") {
+        debug!(
+            target: "webhook",
+            %delivery_id, action, review_state,
+            "pull_request_review not an approval; ignoring"
+        );
+        return (
+            StatusCode::OK,
+            Json(json!({"status": "ignored", "reason": "not an approval", "action": action})),
+        )
+            .into_response();
+    }
+
+    let Some(pr_number) = pr_number else {
+        warn!(target: "webhook", %delivery_id, "pull_request_review missing pull_request.number");
+        return (
+            StatusCode::OK,
+            Json(json!({"status": "ignored", "reason": "missing pr number"})),
+        )
+            .into_response();
+    };
+
+    if !state.config.feedback_loop.merge_coordinator.enabled {
+        debug!(
+            target: "webhook",
+            %delivery_id, repo, pr_number,
+            "approval received but merge_coordinator disabled; ignoring"
+        );
+        return (
+            StatusCode::OK,
+            Json(json!({"status": "ignored", "reason": "merge_coordinator disabled"})),
+        )
+            .into_response();
+    }
+
+    let ctx = crate::merge::Ctx {
+        config: state.config.as_ref(),
+        store: state.store.as_ref(),
+        tracker: state.tracker.as_ref(),
+        gh: &state.gh,
+        labels: &state.labels,
+    };
+    if let Err(e) = crate::merge::enqueue_on_approval(&ctx, repo, pr_number).await {
+        // The approval is already recorded by GitHub; a coordinator error here
+        // is logged and surfaced as 202 (the delivery is marked processed, so a
+        // retry would be a duplicate no-op anyway).
+        warn!(target: "webhook", %delivery_id, repo, pr_number, error = %e, "enqueue_on_approval failed");
+    }
+    info!(target: "webhook", %delivery_id, repo, pr_number, "pull_request_review approval processed");
+    (
+        StatusCode::ACCEPTED,
+        Json(json!({
+            "status": "queued",
+            "event": "pull_request_review",
+            "repo": repo,
+            "pr_number": pr_number,
             "delivery_id": delivery_id,
         })),
     )

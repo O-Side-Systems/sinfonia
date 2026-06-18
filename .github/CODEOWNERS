@@ -1,3 +1,14 @@
 # Default owners for everything in the repo.
 # These users are requested for review when someone opens a PR.
 * @osidesys @leebrett
+
+# Context graph nodes — explicit gate on all AGENTS.md edits (last-match-wins)
+**/AGENTS.md @osidesys @leebrett
+
+# Per-area ownership (mirrors AGENTS.md module-ownership table)
+/crates/sinfonia/         @osidesys @leebrett
+/crates/sinfonia-bridge/  @osidesys @leebrett
+/crates/sinfonia-tracker/ @osidesys @leebrett
+/docker/                  @osidesys @leebrett
+/docs/                    @osidesys @leebrett
+/templates/               @osidesys @leebrett

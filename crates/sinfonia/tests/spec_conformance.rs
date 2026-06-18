@@ -343,6 +343,36 @@ agent:
     );
 }
 
+// §17.5 BLOCK-01 guardrail regression test -----------------------------------------------
+
+/// Regression guard for BLOCK-01: the blocker-merged guardrail marker must appear in both
+/// the Todo STEP 0 and In Progress STEP 0 blocks of the workflow template.
+///
+/// Note: `docker/WORKFLOW.md` is gitignored (operator-local copy); the canonical tracked
+/// template is `docker/WORKFLOW.example.md`. This test uses the tracked file so CI passes.
+#[test]
+fn workflow_prompts_contain_blocker_guardrail_marker() {
+    let workflow = include_str!("../../../docker/WORKFLOW.example.md");
+    let marker = "sinfonia-bot: blocked-by-unmerged";
+    let count = workflow.matches(marker).count();
+    assert_eq!(
+        count, 2,
+        "Marker '{}' must appear exactly twice in docker/WORKFLOW.example.md \
+         (once in Todo STEP 0 and once in In Progress STEP 0); found {}",
+        marker, count
+    );
+    // Verify inverseRelations (not relations) is used — correct direction per linear.rs:527-538
+    assert!(
+        workflow.contains("inverseRelations"),
+        "STEP 0 guardrail must use inverseRelations (not relations) to get upstream blockers"
+    );
+    // Verify the gh pr list flags for merge-to-main check
+    assert!(
+        workflow.contains("--state merged") && workflow.contains("--base main"),
+        "STEP 0 guardrail must check gh pr list --base main --state merged"
+    );
+}
+
 // Helpers -----------------------------------------------------------------------
 
 fn sample_issue(id: &str, state: &str, priority: Option<i64>) -> Issue {

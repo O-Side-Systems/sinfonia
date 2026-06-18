@@ -724,8 +724,27 @@ An issue is dispatch-eligible only if all are true:
 - It is not already in `claimed`.
 - Global concurrency slots are available.
 - Per-state concurrency slots are available.
-- Blocker rule for `Todo` state passes:
-  - If the issue state is `Todo`, do not dispatch when any blocker is non-terminal.
+- Dependency gating uses two complementary layers:
+  - **Coarse pre-filter (orchestrator, `Todo` only):** do not dispatch when any blocker is
+    non-terminal. Cheap schedule-time check; a non-terminal blocker is definitely not merged.
+  - **Authoritative gate (workflow STEP 0, both `Todo` and `In Progress`):** verify each
+    blocker's PR is merged to `main` (not merely terminal state) before beginning work. If
+    any blocker is unmerged, post an idempotent Linear comment and stop without code changes.
+    These two layers are complementary, not redundant.
+  - **Note (v0.4 Phase 3):** Parent-child dispatch gating (`children`) was removed. Dependency
+    gating now keys solely on Linear `blocks` relations.
+  - **Note (v0.4 Phase 4):** Serial-foundation concurrency —
+    `max_concurrent_agents_by_state: "In Progress": 1` enforces foundational stories to run
+    and land on `main` serially before the next begins; see `docs/HARNESS-SPEC.md` §7.4.
+  - **Note (landing lifecycle, additive — Proposal 0005):** Dispatch eligibility gates *starting*
+    work; *landing* may optionally be coordinated by the bridge's merge coordinator
+    (`feedback_loop.merge_coordinator`, default off). When enabled, an approved + green PR is
+    enqueued and serially driven `update-branch → re-test → merge` so it is green against the
+    `main` it will actually land on — a tier-independent substitute for a GitHub native merge
+    queue. The coordinator lives entirely in the bridge (the daemon holds no GitHub credentials,
+    §11.6.1 / §15.1); it never self-approves, and parks back to `needs_fixes_state` on conflict or
+    exhausted update cycles, composing with the existing attempt caps. This adds no daemon-side
+    behavior and no change to the `bridge.json` contract (§7.1).
 
 Sorting order (stable intent):
 
@@ -2073,6 +2092,12 @@ Operational safety requirements:
 - Workspace isolation and path validation are important baseline controls, but they are not a
   substitute for whatever approval and sandbox policy an implementation chooses.
 
+> **Reference implementation:** Sinfonia documents its posture in `SECURITY.md` ("Trust posture &
+> hardening") and Proposal 0004. It runs a high-trust default (arbitrary `shell` tool; CLI backends
+> with per-action approval disabled for unattended operation) and relies on environmental isolation
+> (container/VM, scoped credentials, restricted egress) as the load-bearing boundary, with an opt-in
+> `agent.dispatch_allowlist` entry gate.
+
 ### 15.2 Filesystem Safety Requirements
 
 Mandatory:
@@ -2131,6 +2156,12 @@ Possible hardening measures include:
 
 The correct controls are deployment-specific, but implementations SHOULD document them clearly and
 treat harness hardening as part of the core safety model rather than an optional afterthought.
+
+> **Reference implementation:** Sinfonia exposes a `shell` tool and CLI subprocess backends. Its
+> documented posture and the available hardening knobs (`agent.dispatch_allowlist`, symlink-resolving
+> file-tool confinement, the startup permissive-posture warning, and the container/VM isolation
+> recipe) are in `SECURITY.md` and Proposal 0004. Because the agent needs autonomous shell to
+> function, the load-bearing control is environmental isolation, not an in-binary sandbox.
 
 ## 16. Reference Algorithms (Language-Agnostic)
 
@@ -2438,8 +2469,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 ### 17.4 Orchestrator Dispatch, Reconciliation, and Retry
 
 - Dispatch sort order is priority then oldest creation time
-- `Todo` issue with non-terminal blockers is not eligible
-- `Todo` issue with terminal blockers is eligible
+- `Todo` issue with non-terminal blockers is not eligible (coarse orchestrator pre-filter)
+- Issue with all blockers merged to `main` is eligible (authoritative STEP 0 gate; applies to both `Todo` and `In Progress`)
 - Active-state issue refresh updates running entry state
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace

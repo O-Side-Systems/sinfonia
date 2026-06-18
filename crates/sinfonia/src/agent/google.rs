@@ -24,6 +24,7 @@ pub struct GoogleAgent {
     max_iterations: u32,
     turn_timeout: Duration,
     temperature: Option<f64>,
+    env_policy: crate::config::EnvPolicy,
 }
 
 impl GoogleAgent {
@@ -48,6 +49,7 @@ impl GoogleAgent {
             max_iterations: cfg.agent.max_turns.saturating_mul(20).max(40),
             turn_timeout: Duration::from_millis(llm.turn_timeout_ms),
             temperature: llm.temperature,
+            env_policy: cfg.agent.env_policy.clone(),
         })
     }
 }
@@ -210,6 +212,7 @@ impl CodingAgent for GoogleAgent {
             thread_id,
             workspace,
             history,
+            env_policy: self.env_policy.clone(),
         })
     }
 

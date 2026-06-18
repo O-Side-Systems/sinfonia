@@ -1,0 +1,18 @@
+[
+  {
+    "number": 101,
+    "headRefName": "sinfonia/LIN-10",
+    "files": [
+      {"path": "crates/sinfonia-bridge/src/feedback/mod.rs", "additions": 50, "deletions": 0},
+      {"path": "crates/sinfonia-bridge/src/config.rs", "additions": 10, "deletions": 0}
+    ]
+  },
+  {
+    "number": 102,
+    "headRefName": "sinfonia/LIN-11",
+    "files": [
+      {"path": "crates/sinfonia-bridge/src/github/client.rs", "additions": 30, "deletions": 0},
+      {"path": "crates/sinfonia/src/orchestrator/dispatch.rs", "additions": 5, "deletions": 0}
+    ]
+  }
+]

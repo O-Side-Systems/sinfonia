@@ -41,6 +41,7 @@ pub mod events;
 pub mod feedback;
 pub mod github;
 pub mod labels;
+pub mod merge;
 pub mod selftest;
 pub mod storage;
 pub mod telemetry;

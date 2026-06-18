@@ -125,6 +125,36 @@ pub struct FeedbackLoopSection {
     /// are optional; an omitted block disables ingestion and the bridge
     /// behaves exactly as it does on the check-name path.
     pub harness_manifest: HarnessManifestSection,
+    /// Sinfonia-native merge coordinator (Proposal 0005). `enabled: false`
+    /// by default, so an omitted block leaves the bridge's behaviour exactly
+    /// as it is today — the coordinator ships dark.
+    pub merge_coordinator: MergeCoordinatorSection,
+}
+
+/// Merge-coordinator settings (Proposal 0005 §8.8). When `enabled` is
+/// `false` (the default) the coordinator is fully inert: no landing queue is
+/// touched, no `pull_request_review` event is acted on, and the boot sweep is
+/// skipped. The whole feature is additive and opt-in.
+#[derive(Debug, Clone)]
+pub struct MergeCoordinatorSection {
+    /// Master switch. `false` = today's behaviour exactly.
+    pub enabled: bool,
+    /// GitHub merge method for the final landing merge: `rebase` (default,
+    /// matches HARNESS-SPEC §7.4 and keeps `main` linear) / `squash` / `merge`.
+    pub merge_method: String,
+    /// Bounded `update-branch → re-test` cycles before a landing is parked
+    /// to the configured needs-fixes state (Proposal 0005 §8.5).
+    pub max_update_cycles: u32,
+}
+
+impl Default for MergeCoordinatorSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            merge_method: "rebase".to_string(),
+            max_update_cycles: 3,
+        }
+    }
 }
 
 /// Optional harness-feedback ingestion settings (Proposal 0001 §6).
@@ -454,6 +484,7 @@ fn parse_feedback_loop(config: &Json) -> Result<FeedbackLoopSection> {
 
     let failure_categories = parse_failure_categories(&f, &needs_fixes_state)?;
     let harness_manifest = parse_harness_manifest(&f);
+    let merge_coordinator = parse_merge_coordinator(&f);
 
     Ok(FeedbackLoopSection {
         max_attempts,
@@ -467,7 +498,33 @@ fn parse_feedback_loop(config: &Json) -> Result<FeedbackLoopSection> {
         failure_comment_template,
         failure_categories,
         harness_manifest,
+        merge_coordinator,
     })
+}
+
+/// Parse the optional `feedback_loop.merge_coordinator` block (Proposal
+/// 0005 §8.8). Every key falls back to [`MergeCoordinatorSection::default`],
+/// so an omitted block yields a fully-defaulted (and disabled) section. The
+/// `merge_method` value is range-checked in [`validate`], not here.
+fn parse_merge_coordinator(f: &Json) -> MergeCoordinatorSection {
+    let d = MergeCoordinatorSection::default();
+    let m = f.get("merge_coordinator").cloned().unwrap_or(Json::Null);
+    MergeCoordinatorSection {
+        enabled: m
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(d.enabled),
+        merge_method: m
+            .get("merge_method")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .unwrap_or(d.merge_method),
+        max_update_cycles: m
+            .get("max_update_cycles")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(d.max_update_cycles),
+    }
 }
 
 /// Parse the optional harness-manifest ingestion keys from a
@@ -783,6 +840,22 @@ fn validate(cfg: &BridgeConfig) -> Result<()> {
         ));
     }
 
+    // Rule 4b: merge_coordinator.merge_method is one of the three GitHub
+    // merge methods (Proposal 0005 §8.8). Only enforced when the coordinator
+    // is enabled, so a stray value in a disabled block is tolerated.
+    {
+        let mc = &cfg.feedback_loop.merge_coordinator;
+        if mc.enabled
+            && !matches!(mc.merge_method.as_str(), "rebase" | "squash" | "merge")
+        {
+            return Err(Error::BridgeConfigInvalid(format!(
+                "feedback_loop.merge_coordinator.merge_method must be one of \
+                 rebase|squash|merge, got '{}'",
+                mc.merge_method
+            )));
+        }
+    }
+
     // Rules 5 + 6: regex compilation. Already checked at parse time; the
     // validator just confirms the values landed (no second compile pass).
     let _ = &cfg.feedback_loop.pr_link_pattern;
@@ -1076,6 +1149,50 @@ telemetry:
         let yaml = baseline().replace(r#"  blocked_state: "Blocked - Human Review""#, r#"  blocked_state: """#);
         let err = parse_bridge_str(&yaml).unwrap_err();
         assert!(matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("blocked_state")));
+    }
+
+    // -- Rule 4b: merge_coordinator (Proposal 0005 §8.8) ------------------
+
+    #[test]
+    fn merge_coordinator_defaults_off_when_block_absent() {
+        let cfg = parse_bridge_str(baseline()).expect("parses");
+        let mc = &cfg.feedback_loop.merge_coordinator;
+        assert!(!mc.enabled);
+        assert_eq!(mc.merge_method, "rebase");
+        assert_eq!(mc.max_update_cycles, 3);
+    }
+
+    #[test]
+    fn merge_coordinator_parses_explicit_block() {
+        let yaml = baseline().replace(
+            "  blocked_state: \"Blocked - Human Review\"",
+            "  blocked_state: \"Blocked - Human Review\"\n  merge_coordinator:\n    enabled: true\n    merge_method: squash\n    max_update_cycles: 5",
+        );
+        let cfg = parse_bridge_str(&yaml).expect("parses");
+        let mc = &cfg.feedback_loop.merge_coordinator;
+        assert!(mc.enabled);
+        assert_eq!(mc.merge_method, "squash");
+        assert_eq!(mc.max_update_cycles, 5);
+    }
+
+    #[test]
+    fn merge_coordinator_bad_merge_method_errors_only_when_enabled() {
+        // Enabled + bad method → rejected.
+        let bad_on = baseline().replace(
+            "  blocked_state: \"Blocked - Human Review\"",
+            "  blocked_state: \"Blocked - Human Review\"\n  merge_coordinator:\n    enabled: true\n    merge_method: fast-forward",
+        );
+        let err = parse_bridge_str(&bad_on).unwrap_err();
+        assert!(
+            matches!(err, Error::BridgeConfigInvalid(ref s) if s.contains("merge_method")),
+            "expected merge_method error, got: {err:?}"
+        );
+        // Disabled + bad method → tolerated (the feature is inert).
+        let bad_off = baseline().replace(
+            "  blocked_state: \"Blocked - Human Review\"",
+            "  blocked_state: \"Blocked - Human Review\"\n  merge_coordinator:\n    enabled: false\n    merge_method: fast-forward",
+        );
+        assert!(parse_bridge_str(&bad_off).is_ok());
     }
 
     // -- Rule 5: pr_link_pattern compiles --------------------------------

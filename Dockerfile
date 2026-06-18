@@ -102,6 +102,12 @@ CMD ["/etc/sinfonia/BRIDGE.md", "--port", "8081"]
 # ============================================================================
 FROM sinfonia AS sinfonia-with-claude-code
 USER root
+# Claude Code refuses `--dangerously-skip-permissions` when running as
+# root/sudo unless an explicit sandbox override is set. The agent images run
+# as root, so without this the default `claude -p … --dangerously-skip-permissions`
+# command exits 1 on every turn ("cannot be used with root/sudo privileges").
+# IS_SANDBOX=1 is Claude Code's supported opt-out for containerized use.
+ENV IS_SANDBOX=1
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     npm install -g @anthropic-ai/claude-code && \

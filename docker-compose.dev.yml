@@ -11,6 +11,10 @@ x-base: &base
   env_file:
     - path: .env
       required: false
+    # Supabase credentials for the target project (wyrd-builder). Loaded into
+    # the container env; the agent subprocess inherits them (env_policy: inherit).
+    - path: docker/.env
+      required: false
   environment:
     TERM: xterm-256color
     LINEAR_API_KEY: ${LINEAR_API_KEY:-}
@@ -19,10 +23,17 @@ x-base: &base
     RUST_LOG: ${RUST_LOG:-sinfonia=debug,orchestrator=debug,runner=debug}
     GIT_USER_NAME: ${GIT_USER_NAME:-}
     GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
+    # Lets `claude` run with --dangerously-skip-permissions headlessly. The
+    # old working instance set this alongside a Claude Max login; keep it.
+    IS_SANDBOX: "1"
   volumes:
     - .:/workspace
-    - ${HOME}/.claude:/home/dev/.claude
-    - ${HOME}/.claude.json:/home/dev/.claude.json
+    # Claude Code auth: a dedicated named volume holding the agent's
+    # ~/.claude (incl. the Max OAuth .credentials.json). On macOS the host
+    # login lives in the Keychain and is NOT bind-mountable, so we persist a
+    # one-time in-container Max `/login` in this volume instead — matching the
+    # previous working setup. Re-login via the `shell` service if it expires.
+    - sinfonia-claude:/home/dev/.claude
     - sinfonia-cargo-registry:/home/dev/.cargo/registry
     - sinfonia-cargo-git:/home/dev/.cargo/git
     - sinfonia-target:/workspace/target
@@ -54,3 +65,7 @@ volumes:
   sinfonia-cargo-registry:
   sinfonia-cargo-git:
   sinfonia-target:
+  # Reuse the existing volume that already holds the Claude Max login
+  # (created by the prior standalone instance), not a project-prefixed one.
+  sinfonia-claude:
+    external: true

@@ -194,11 +194,14 @@ impl Orchestrator {
 
     /// Spec §16.1: startup terminal workspace cleanup + first tick + main poll loop.
     pub async fn run(&self) -> Result<()> {
-        if let Err(e) = self.startup_terminal_cleanup().await {
-            warn!(target: "orchestrator", error=%e, "startup terminal cleanup failed");
-        }
+        self.warn_permissive_posture();
+        // Startup sweep: terminal-state workspaces (legacy §16.1) plus the
+        // opt-in age-based reaper. Subsequently re-run on the configured
+        // interval so a long-running daemon reclaims disk without a restart.
+        self.workspace_sweep().await;
         self.tick().await;
 
+        let mut last_sweep = std::time::Instant::now();
         loop {
             let interval_ms = self.config().polling.interval_ms.max(50);
             let sleep = tokio::time::sleep(std::time::Duration::from_millis(interval_ms));
@@ -206,6 +209,51 @@ impl Orchestrator {
                 _ = sleep => self.tick().await,
                 _ = self.inner.refresh.notified() => self.tick().await,
             }
+            let sweep_secs = self.config().workspace.cleanup.sweep_interval_secs;
+            if sweep_secs > 0 && last_sweep.elapsed().as_secs() >= sweep_secs {
+                self.workspace_sweep().await;
+                last_sweep = std::time::Instant::now();
+            }
+        }
+    }
+
+    /// Make a permissive agent posture visible at startup (Proposal 0004 §4.2).
+    /// CLI backends are commonly run with their own permission systems disabled
+    /// (e.g. `--dangerously-skip-permissions` for Claude Code, `codex exec`),
+    /// which is what unattended autonomous operation needs — but it means the
+    /// agent can run arbitrary commands with no per-action approval. Surfacing
+    /// it in the log (rather than burying it in a default command string) is the
+    /// §4.2 control; the operational mitigation is to run Sinfonia inside an
+    /// isolated environment (container/VM, scoped credentials, restricted
+    /// egress) — see `SECURITY.md`.
+    fn warn_permissive_posture(&self) {
+        let cfg = self.config();
+        // Collect the effective command line for the default lane plus every
+        // configured state override, de-duplicated.
+        let mut commands: Vec<String> = vec![cfg.llm.command.clone()];
+        for state in cfg.tracker.active_states.iter() {
+            commands.push(cfg.effective_llm_for_state(state).command);
+        }
+        commands.sort();
+        commands.dedup();
+        let permissive: Vec<&String> = commands
+            .iter()
+            .filter(|c| {
+                let lc = c.to_lowercase();
+                lc.contains("--dangerously-skip-permissions")
+                    || lc.contains("dangerously_skip_permissions")
+                    || lc.contains("codex exec")
+            })
+            .collect();
+        if !permissive.is_empty() {
+            warn!(
+                target: "orchestrator",
+                commands = ?permissive,
+                "agent runs with per-action approval disabled (autonomous mode). \
+                 This grants the agent unrestricted shell in its workspace and the \
+                 daemon's environment. Run Sinfonia in an isolated container/VM with \
+                 scoped credentials and restricted egress — see SECURITY.md."
+            );
         }
     }
 
@@ -299,15 +347,29 @@ impl Orchestrator {
             if state.running.contains_key(&issue.id) {
                 return DispatchOutcome::Skipped;
             }
-            // For retries the issue is already claimed; for fresh dispatch we add it now.
-            if !state.claimed.contains(&issue.id) {
+            // `attempt.is_some()` means this came from the retry queue (the
+            // issue is already claimed and a backoff timer fired). A fresh
+            // poll-tick dispatch passes `None`.
+            let is_retry = attempt.is_some();
+            if state.claimed.contains(&issue.id) {
+                // The issue is already owned by the orchestrator. If this is a
+                // fresh poll-tick dispatch, a retry is pending for it — skip,
+                // and let the backoff schedule drive it. Re-dispatching here
+                // would bypass backoff and reset the attempt counter, turning a
+                // failing issue into a tight crash loop (it also clobbers the
+                // pending RetryEntry at the `retry_attempts.remove` below).
+                if !is_retry {
+                    return DispatchOutcome::Skipped;
+                }
+                // Retry path: claim already held; just confirm a slot is free.
+                if !dispatch::has_slot(&state, &issue, &cfg) {
+                    return DispatchOutcome::NoSlot;
+                }
+            } else {
                 if !dispatch::has_slot(&state, &issue, &cfg) {
                     return DispatchOutcome::NoSlot;
                 }
                 state.claimed.insert(issue.id.clone());
-            } else if !dispatch::has_slot(&state, &issue, &cfg) {
-                // Slot exhausted on retry — caller should requeue.
-                return DispatchOutcome::NoSlot;
             }
             let started_at = Utc::now();
             let workspace_path = self
@@ -539,6 +601,15 @@ impl Orchestrator {
             let next_attempt = attempt.unwrap_or(0) + 1;
             let backoff = retries::backoff_ms(next_attempt, max_backoff);
             let due_at = Utc::now() + ChronoDuration::milliseconds(backoff as i64);
+            warn!(
+                target: "orchestrator",
+                issue_identifier=%identifier,
+                issue_id=%issue_id,
+                attempt=next_attempt,
+                backoff_ms=backoff,
+                error=%error.as_deref().unwrap_or("(none)"),
+                "worker exit (abnormal); retry scheduled"
+            );
             retries::schedule(
                 &mut state,
                 &self.inner,
@@ -550,7 +621,6 @@ impl Orchestrator {
                     error,
                 },
             );
-            warn!(target: "orchestrator", issue_identifier=%identifier, issue_id=%issue_id, "worker exit (abnormal); retry scheduled");
         }
     }
 
@@ -677,6 +747,57 @@ impl Orchestrator {
         Ok(())
     }
 
+    /// Reclaim workspace directories (Option 4 — disk GC). Always runs the
+    /// terminal-state sweep (Done/Cancelled → remove); when
+    /// `workspace.cleanup.max_age_hours > 0`, additionally reaps idle
+    /// workspaces whose directory has not changed within that window, skipping
+    /// any issue currently running. Reaped In Review / stale checkouts are
+    /// re-created on demand, so this only costs a re-clone on resume.
+    async fn workspace_sweep(&self) {
+        // 1. Terminal-state sweep — the legacy §16.1 startup behavior, now
+        //    also driven periodically from the poll loop.
+        if let Err(e) = self.startup_terminal_cleanup().await {
+            warn!(target: "orchestrator", error=%e, "terminal workspace sweep failed");
+        }
+
+        // 2. Age-based reaper (opt-in).
+        let max_age_hours = self.config().workspace.cleanup.max_age_hours;
+        if max_age_hours == 0 {
+            return;
+        }
+        let max_age = std::time::Duration::from_secs(max_age_hours.saturating_mul(3600));
+
+        // Never reap a workspace whose issue is mid-run.
+        let running_keys: std::collections::HashSet<String> = {
+            let state = self.inner.state.lock().await;
+            state
+                .running
+                .values()
+                .map(|e| crate::domain::sanitize_workspace_key(&e.identifier))
+                .collect()
+        };
+
+        let mgr = self.workspace_manager();
+        let entries = mgr.list_workspaces();
+        let stale =
+            select_stale_workspaces(&entries, &running_keys, std::time::SystemTime::now(), max_age);
+        let mut reaped = 0u32;
+        for key in &stale {
+            match mgr.remove_key(key) {
+                Ok(()) => {
+                    reaped += 1;
+                    debug!(target: "orchestrator", key=%key, "reaped stale workspace");
+                }
+                Err(e) => {
+                    warn!(target: "orchestrator", key=%key, error=%e, "stale workspace reap failed")
+                }
+            }
+        }
+        if reaped > 0 {
+            info!(target: "orchestrator", reaped, max_age_hours, "age-based workspace reap complete");
+        }
+    }
+
     /// Render an immutable snapshot for the HTTP `/api/v1/state` endpoint (§13.7.2).
     pub async fn snapshot(&self) -> SnapshotView {
         let state = self.inner.state.lock().await;
@@ -703,6 +824,28 @@ impl Orchestrator {
     }
 }
 
+/// Select workspace directories to reap: those whose issue is **not** running
+/// AND whose directory has not changed within `max_age`. Pure, so the age/skip
+/// logic is unit-testable without an orchestrator or tracker. An unknown mtime
+/// (`modified == None`) is conservatively kept.
+fn select_stale_workspaces(
+    entries: &[crate::workspace::WorkspaceEntry],
+    running_keys: &std::collections::HashSet<String>,
+    now: std::time::SystemTime,
+    max_age: std::time::Duration,
+) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|w| !running_keys.contains(&w.key))
+        .filter(|w| {
+            w.modified
+                .and_then(|m| now.duration_since(m).ok())
+                .is_some_and(|age| age >= max_age)
+        })
+        .map(|w| w.key.clone())
+        .collect()
+}
+
 async fn forward_events(
     issue_id: String,
     mut rx: mpsc::UnboundedReceiver<AgentEvent>,
@@ -721,5 +864,50 @@ async fn forward_events(
         if tx.send((issue_id.clone(), ev)).is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::select_stale_workspaces;
+    use crate::workspace::WorkspaceEntry;
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime};
+
+    fn entry(key: &str, age_secs: u64, now: SystemTime) -> WorkspaceEntry {
+        WorkspaceEntry {
+            key: key.into(),
+            path: PathBuf::from(format!("/ws/{key}")),
+            modified: Some(now - Duration::from_secs(age_secs)),
+        }
+    }
+
+    #[test]
+    fn reaps_old_idle_only() {
+        let now = SystemTime::now();
+        let max_age = Duration::from_secs(48 * 3600);
+        let entries = vec![
+            entry("OSI-1", 72 * 3600, now), // old + idle → reap
+            entry("OSI-2", 3600, now),      // fresh → keep
+            entry("OSI-3", 99 * 3600, now), // old but running → keep
+            WorkspaceEntry {
+                key: "OSI-4".into(),
+                path: PathBuf::from("/ws/OSI-4"),
+                modified: None, // unknown mtime → keep
+            },
+        ];
+        let running: HashSet<String> = ["OSI-3".to_string()].into_iter().collect();
+        let stale = select_stale_workspaces(&entries, &running, now, max_age);
+        assert_eq!(stale, vec!["OSI-1".to_string()]);
+    }
+
+    #[test]
+    fn exactly_max_age_is_reaped() {
+        let now = SystemTime::now();
+        let max_age = Duration::from_secs(3600);
+        let entries = vec![entry("OSI-5", 3600, now)];
+        let stale = select_stale_workspaces(&entries, &HashSet::new(), now, max_age);
+        assert_eq!(stale, vec!["OSI-5".to_string()]);
     }
 }

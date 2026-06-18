@@ -603,6 +603,60 @@ custom fields (Jira) ARE the durable state.
 
 ---
 
+## Merge queue & branch protection
+
+For Sinfonia agent PRs to land cleanly under the GitHub native merge queue
+integration model, the target repo requires specific branch protection and CI
+configuration. No Sinfonia code changes are needed — this is configuration
+in the target repo and GitHub settings.
+
+### Branch protection rule
+
+Enable the following settings on the `main` branch:
+
+| Setting | Value |
+|---------|-------|
+| Require a pull request before merging | Enabled |
+| Require status checks to pass | Enabled — include the harness gate check name (§7.2) |
+| Require merge queue | Enabled |
+
+> **Linear history note:** GitHub's UI treats the linear-history branch protection
+> toggle as mutually exclusive with a merge queue. No separate toggle is needed —
+> the merge queue's "Rebase and merge" method (see
+> [Merge queue settings](#merge-queue-settings) below) already produces linear history.
+
+### Merge queue settings
+
+| Setting | Value |
+|---------|-------|
+| Merge method | Rebase and merge |
+| Required status checks to pass before merging | All required checks (rebase-and-test) |
+
+This ensures every PR is rebased against the latest `main` and tested before
+merging. A PR that was green when submitted is validated against concurrent work
+before it lands.
+
+### Post-merge harness gate
+
+Add a CI workflow triggered on `push` to `main` that runs the harness gate
+(the same check that runs on PRs). When the gate fails after a merge, operators
+should receive an alert — a green-at-PR-time change that breaks once integrated
+is caught before the next agent dispatch sees a broken base.
+
+The post-merge gate's role is described normatively in
+[`docs/HARNESS-SPEC.md` §7.4](HARNESS-SPEC.md); this section is the
+operator-actionable counterpart.
+
+### Serial-foundation convention
+
+Foundational or cross-cutting stories in a milestone run serially (one lands on
+`main` before the next begins). This is enforced at the dispatch layer by
+`agent.max_concurrent_agents_by_state: "In Progress": 1` in `WORKFLOW.md`.
+The convention and its rationale are defined in
+[`docs/HARNESS-SPEC.md` §7.4](HARNESS-SPEC.md).
+
+---
+
 ## Upgrading
 
 Sinfonia follows [SemVer](https://semver.org/). Within a minor (e.g.

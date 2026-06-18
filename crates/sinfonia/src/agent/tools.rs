@@ -113,9 +113,10 @@ pub async fn dispatch_tool(
     name: &str,
     arguments: &Value,
     workspace_root: &Path,
+    env_policy: &crate::config::EnvPolicy,
 ) -> Result<ToolResult> {
     match name {
-        "shell" => run_shell(arguments, workspace_root).await,
+        "shell" => run_shell(arguments, workspace_root, env_policy).await,
         "read_file" => run_read_file(arguments, workspace_root).await,
         "write_file" => run_write_file(arguments, workspace_root).await,
         "edit_file" => run_edit_file(arguments, workspace_root).await,
@@ -135,7 +136,11 @@ pub async fn dispatch_tool(
     }
 }
 
-async fn run_shell(args: &Value, workspace_root: &Path) -> Result<ToolResult> {
+async fn run_shell(
+    args: &Value,
+    workspace_root: &Path,
+    env_policy: &crate::config::EnvPolicy,
+) -> Result<ToolResult> {
     let cmd = args
         .get("command")
         .and_then(|v| v.as_str())
@@ -152,6 +157,9 @@ async fn run_shell(args: &Value, workspace_root: &Path) -> Result<ToolResult> {
         .current_dir(workspace_root)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    // Proposal 0004 §4.1: scope the subprocess environment per policy.
+    // Default (`Inherit`) is a no-op, preserving today's behavior.
+    crate::agent::apply_env_policy(&mut command, env_policy);
 
     let mut child = command
         .spawn()
@@ -223,6 +231,34 @@ fn resolve_in_workspace(workspace_root: &Path, raw: &str) -> Result<PathBuf> {
             normalized.display(),
             workspace_root.display()
         )));
+    }
+
+    // Defense in depth (Proposal 0004 §4.4): the lexical check above collapses
+    // `..` but does NOT resolve symlinks, so a symlink *inside* the workspace
+    // pointing out would still pass it and then be followed by the OS. Resolve
+    // the deepest existing ancestor (the target file itself may not exist yet,
+    // e.g. `write_file` to a new path) and require its real location to remain
+    // under the (already-canonical) workspace root. `workspace_root` is the
+    // canonicalized `Workspace.path` from `WorkspaceManager::ensure_for_issue`.
+    let mut probe: &Path = &normalized;
+    let real_ancestor = loop {
+        match probe.canonicalize() {
+            Ok(c) => break Some(c),
+            Err(_) => match probe.parent() {
+                Some(p) => probe = p,
+                None => break None,
+            },
+        }
+    };
+    if let Some(real) = real_ancestor {
+        if !real.starts_with(workspace_root) {
+            return Err(Error::InvalidWorkspaceCwd(format!(
+                "path '{}' resolves (via symlink) to '{}' outside workspace root '{}'",
+                normalized.display(),
+                real.display(),
+                workspace_root.display()
+            )));
+        }
     }
     Ok(normalized)
 }
@@ -359,5 +395,65 @@ fn truncate(s: &str, n: usize) -> String {
             &s[..n],
             s.len() - n
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Latent-risk guard (Proposal 0004 §4.5): the agent tool catalog MUST NOT
+    /// grow an unrestricted tracker-mutation surface (e.g. a `linear_graphql` /
+    /// `raw_graphql` passthrough). That capability is bridge-only by design;
+    /// exposing it to the agent without project-scoping would let a
+    /// prompt-injected agent mutate arbitrary tickets. Pin the catalog so any
+    /// such addition fails loudly here and gets a security review.
+    #[test]
+    fn tool_catalog_has_no_unrestricted_tracker_tool() {
+        let catalog = tool_catalog();
+        let names: BTreeSet<&str> = catalog.iter().map(|t| t.name.as_str()).collect();
+        let allowed: BTreeSet<&str> = ["shell", "read_file", "write_file", "edit_file", "list_dir", "finish"]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            names, allowed,
+            "agent tool catalog changed; if you added a tool, confirm it is not an \
+             unrestricted tracker/graphql mutation surface (Proposal 0004 §4.5)"
+        );
+        for banned in ["linear_graphql", "raw_graphql", "graphql"] {
+            assert!(
+                !names.contains(banned),
+                "tool '{banned}' must not be exposed to the agent unscoped"
+            );
+        }
+    }
+
+    /// Proposal 0004 §4.4: a symlink created inside the workspace that points
+    /// outside it must not be a path-confinement escape for the file tools.
+    #[cfg(unix)]
+    #[test]
+    fn symlink_escape_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let ws = root.path().canonicalize().unwrap();
+        // A symlink `ws/escape` -> outside dir.
+        let link = ws.join("escape");
+        symlink(outside.path(), &link).unwrap();
+        // Reading "through" the symlink must be rejected even though the lexical
+        // path `ws/escape/secret.txt` starts with the workspace root.
+        let err = resolve_in_workspace(&ws, "escape/secret.txt");
+        assert!(err.is_err(), "symlink-escape path should be rejected");
+    }
+
+    /// A normal new-file path under the workspace still resolves (the target
+    /// need not exist yet — `write_file` creates it).
+    #[test]
+    fn new_file_under_workspace_resolves() {
+        let root = tempfile::tempdir().unwrap();
+        let ws = root.path().canonicalize().unwrap();
+        let resolved = resolve_in_workspace(&ws, "subdir/new.txt").unwrap();
+        assert!(resolved.starts_with(&ws));
     }
 }

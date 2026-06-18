@@ -44,6 +44,7 @@ interface (§7). Everything else is the target repo's choice.
 | The determinism *NFR* (§5.4) | How isolation/repeatability is achieved |
 | The observability-feedback *contract* (§6) | Which telemetry backends or query dialects |
 | The Sinfonia interface: `bridge.json`, bundle, conventions (§7) | Everything behind those interface points |
+| The `.harness/` workspace *layout*, when present (§11) | The prose content of each standards/criteria/knowledge file |
 
 A conforming harness for a Python/FastAPI + React app, a Plotly/Dash analytics
 app, and the reference TypeScript/Playwright implementation are all equally
@@ -85,8 +86,8 @@ A Sinfonia-ready harness MUST:
 5. Assemble a **`bridge.json` manifest** at `schema_version 2` (§7.1).
 6. Honor the **repository conventions** Sinfonia drives by (§7.3).
 
-It SHOULD additionally provide architectural-invariant gating (§5.5) and the
-observability feedback contract (§6).
+It SHOULD additionally provide architectural-invariant gating (§5.5), the
+observability feedback contract (§6), and a `.harness/` workspace (§11).
 
 It MAY provide a natural-language → executable-specification step (§4.1) for
 bootstrapping a repo from prose. This is **OPTIONAL**: Sinfonia's agent takes
@@ -121,6 +122,12 @@ When a harness *does* provide this step:
     default and rationale.
 - On re-run against an existing input it MUST NOT silently overwrite a
   human-reviewed spec; it SHOULD write to a side location for diff inspection.
+- When decomposing into stories, it SHOULD also run a **decomposition consistency
+  pass** emitting an overlap/contradict report (`OVERLAP-REPORT.md`) identifying
+  stories that share owned modules, and a blocks-relation dependency graph
+  (`blocks-graph.json`) describing serial-foundation → parallel-fan-out ordering.
+  Applying the blocks graph to the tracker is a separate, explicit step — this
+  pass emits files only (consistent with the MUST NOT write to tracker above).
 
 The spec *language* is unconstrained. Gherkin is one choice; a table of
 input/expected pairs, a notebook of assertions, or a typed scenario DSL are
@@ -248,6 +255,64 @@ additionally compute a soft quality grade and open bounded, deduplicated,
 no-auto-merge refactor PRs against below-threshold areas. These keep an
 autonomous loop from trading structure for green.
 
+For repositories using the `AGENTS.md` doc-graph (§7.3, `docs/CONTEXT-CONTRACT.md`), the
+manifest-driven invariant gate SHOULD include two additional checks:
+
+- **Stale-node check** (`scripts/lint-stale-nodes.sh`): fails when a context-graph node's
+  `last_verified_sha` lags `main` by more than a configurable grace window on owned paths.
+  *Grace window:* a tunable threshold (default: 5 commits on owned paths) set via
+  `STALE_COMMIT_THRESHOLD`. Within the window: warn (exit 0). Beyond the window: hard-fail
+  (exit non-zero) both locally and in CI. The stale check is path-aware: commits to `main`
+  that do not touch files the node owns do NOT trigger staleness.
+
+- **Overlap check** (`scripts/lint-pr-overlap.sh` wrapping `scripts/scan-overlap.sh`): fails
+  when two open `sinfonia/<issue-id>` PRs modify the same owned module as defined in the root
+  `AGENTS.md` module-ownership table. The shared `scan-overlap.sh` command is also called by
+  agents before writing shared/utility code (CTXGRAPH-01), so the same deterministic code path
+  serves both the CI gate and the pre-build agent check.
+
+### 5.6 Gating vs. authored-ahead scenarios (REQUIRED)
+
+Outside-in authoring (§4.2) means the suite legitimately contains scenarios that
+are **expected to be RED** — written ahead of the feature they specify. The harness
+MUST therefore distinguish two classes of scenario by an explicit, machine-readable
+**gating tag** (the reference producer uses `@smoke`; any stable tag or flag is
+conformant):
+
+- **Gating scenarios** — the merge-blocking subset. A gating failure MUST fail the
+  CI gate (non-zero exit) **and** MUST appear in `bridge.json.failures` (§7.1).
+- **Authored-ahead (non-gating) scenarios** — written ahead of their feature per
+  §4.2. They MUST still run and emit the full four-artifact bundle (§5.1) so the
+  agent can see progress, but a non-gating failure MUST NOT fail the gate and MUST
+  NOT appear in `bridge.json.failures`.
+
+A scenario is promoted from authored-ahead to gating when its feature becomes the
+target of the issue under work (typically by adding the gating tag in the same PR).
+This is what lets §4.2 ("author RED first") coexist with §7.4 ("green must mean
+something"): the consumer retries only on **gating** failures, never on specs the
+agent is not yet meant to satisfy. A green-equivalent manifest (empty `failures[]`)
+MUST be emitted whenever every *gating* scenario passes, even while authored-ahead
+scenarios are still RED.
+
+### 5.7 Non-vacuous gates (REQUIRED)
+
+"Green" MUST mean a suite *ran and asserted something*. A gate that passes because
+it executed **zero assertions** — an empty test set, an empty fixture directory, a
+harness with no gating scenarios — is a decoy and MUST be made impossible to land.
+For **every** required check (the harness gate and any build / test / lint /
+integration gates), the repo MUST provide a guard that **fails loud** when that
+check could report success having executed nothing:
+
+- the harness gate MUST have ≥1 gating scenario (§5.6);
+- every other required gate MUST have a non-empty backing set (e.g. a unit-test
+  count > 0, a non-empty integration-fixture directory).
+
+The guard is itself a required check (the reference producer names it
+`zero-assertion lint`). The mechanism — counting tests, scenarios, or fixture
+files — is trivially portable; only the per-gate patterns are repo-specific. This
+generalizes the §5.4 (determinism) and §5.5 (invariant) intent into one rule: a
+gate may only be green for a *reason*.
+
 ## 6. Pillar 3 — Observability Feedback Contract
 
 This pillar answers prompts like "ensure service startup completes under 800ms"
@@ -325,6 +390,12 @@ tracker state. The reference consumer routes `(?i)(e2e|playwright|harness)` →
 `e2e harness (@smoke gate)`. A target repo MAY define its own categories, but the
 check name and the configured pattern MUST agree.
 
+A repository commonly runs **several** required gates across substrates — e.g. an
+API harness, a UI harness, and a data/DB gate, each emitting the four-artifact
+contract (§5.1), plus build/lint gates. Each gate's check name MUST match a
+configured category so failures route to the correct tracker state independently;
+the harness gate is the one that assembles `bridge.json` (§7.1).
+
 ### 7.3 Repository conventions (REQUIRED)
 
 - **Branch:** agent work lands on `sinfonia/<issue-id>` branches.
@@ -337,13 +408,74 @@ check name and the configured pattern MUST agree.
   can satisfy checks and address comments but MUST NOT be able to self-merge.
 - **CI gates:** the harness gate (and any invariant linters) MUST block merge on
   failure.
+- **Local parity (RECOMMENDED):** the repo SHOULD install a pre-push (or
+  pre-commit) hook that runs the same gating checks as CI, ordered cheapest-first,
+  with an explicit escape hatch (e.g. an env var). CI remains the authority; the
+  hook only shortens the agent's feedback loop by failing before a CI round-trip.
+- **Context graph:** The repo MUST maintain a hierarchical `AGENTS.md` doc-graph
+  conforming to `docs/CONTEXT-CONTRACT.md`. The root `AGENTS.md` is the agent
+  entry point; all node edits ride in the code PR under CODEOWNERS. See
+  [`docs/CONTEXT-CONTRACT.md`](CONTEXT-CONTRACT.md) for the full contract.
 
 ### 7.4 Merge gating (REQUIRED)
 
 Green CI is necessary but not sufficient to merge; the CODEOWNERS human gate
 (§7.3) is the terminal authority. The harness gate's job is to make "green" *mean*
-something — see the determinism NFR (§5.4) and load-bearing scenario tagging
-(§5.5).
+something — see the determinism NFR (§5.4), the gating-scenario rule (§5.6), and
+non-vacuous gates (§5.7).
+
+**Merge queue.** The target repo SHOULD enable a GitHub native merge
+queue configured to rebase-and-test each PR against the latest `main` before
+merging. This ensures that a PR that was green when submitted is still green once
+integrated with concurrent work. Method: "Rebase and merge"; all required status
+checks (including the harness gate) must pass after the rebase.
+
+**Accepted substitute (Proposal 0005).** GitHub's native merge queue is
+Enterprise-Cloud-only for private repositories, so repos below that tier cannot
+satisfy the merge-queue recommendation with native tooling. Sinfonia's **merge
+coordinator** (`feedback_loop.merge_coordinator` in `BRIDGE.md`, default off) is an
+accepted, tier-independent substitute: the bridge serially drives each approved +
+green PR through `update-branch → re-test → merge` against the latest `main`,
+giving the same "green against the `main` it will land on" guarantee. It reuses the
+"Rebase and merge" method by default and composes with the serial-foundation
+convention below. Repos that *are* on Enterprise SHOULD still prefer the native
+queue; the coordinator is the equivalent for everyone else. The post-merge harness
+gate below remains REQUIRED underneath either choice.
+
+**PR gate triggers.** The harness PR gate MUST run on the PR `opened` **and**
+`synchronize` events (new commits), not only on open. A base-sync from the native
+merge queue or from the merge coordinator's `update-branch` pushes a new head
+commit; the gate re-tests against the integrated base only if it is subscribed to
+`synchronize`. (The reference producer uses an unfiltered `pull_request:` trigger,
+which includes `synchronize`.)
+
+**Post-merge harness gate.** The harness gate MUST also run on `main` after every
+merge (a CI workflow triggered on `push` to `main`). A green-at-PR-time change
+that breaks once integrated with concurrent work is caught by this gate before the
+next agent dispatch sees a broken base. Gate failure MUST alert operators.
+
+**Mergeable-not-CLEAN gate refinement.** For agent workflows the
+pre-`In Review` gate is "mergeable w.r.t. `main`" — specifically,
+`mergeStateStatus` is anything *except* `DIRTY` or `BEHIND`. `BLOCKED` (awaiting
+required-review approval) and `UNSTABLE` (non-required checks failing) count as
+conflict-free and SHOULD trigger the `In Review` transition; required-review
+approval is the human gate that happens *in* the `In Review` state. Only `DIRTY`
+or `BEHIND` keep the mergeability loop running; `UNKNOWN` (GitHub still computing)
+triggers a re-poll. **Explicit note:** this refines a literal "only when
+`mergeStateStatus == CLEAN`" reading (including the MERGE-02 success-criterion
+literal-CLEAN wording). A fresh agent PR awaiting required review is `BLOCKED`,
+never `CLEAN` — gating literally on `CLEAN` deadlocks the agent against the very
+branch-protection this section mandates. The gate is "no merge conflict against
+`main`"; human approval is not the agent's gate.
+
+**Serial-foundation / leaf-fan-out convention.** Foundational or
+cross-cutting stories in a milestone run serially: one story must land on `main`
+before the next begins. Only leaf stories (no shared-surface dependencies within
+the milestone) may fan out in parallel. This prevents merge-conflict cascades on
+shared code and is enforced at the dispatch layer by
+`agent.max_concurrent_agents_by_state: "In Progress": 1` in `WORKFLOW.md`. Leaf
+stories are identified during milestone decomposition and may raise this limit
+when the milestone graph confirms non-overlapping surface.
 
 ---
 
@@ -390,14 +522,30 @@ A repo is **Sinfonia-ready** when:
 - [ ] `result.json` carries `schema_version`, `scenario`, `passed`,
       `duration_s`, and structured `failed_step`/`assertion` on failure. (§5.2–§5.3)
 - [ ] A determinism check passes N-of-N for a fixed code state. (§5.4)
+- [ ] A machine-readable gating tag separates merge-gating scenarios from
+      authored-ahead ones; `bridge.json.failures` carries only gating failures.
+      (§5.6)
+- [ ] Every required gate is guarded against vacuous green — a lint fails if any
+      gating suite could pass having executed zero assertions. (§5.7)
 - [ ] CI assembles `bridge.json` at `schema_version 2` and uploads it +
       the four-artifact bundle. (§7.1)
 - [ ] The harness CI check name matches the bridge's `failure_categories`
-      pattern. (§7.2)
+      pattern, and the PR gate triggers on `opened` + `synchronize`. (§7.2, §7.4)
 - [ ] `sinfonia/<id>` branches, a `Resolves <ID>` PR-body line, bridge-owned
       `sinfonia:*` labels, and a CODEOWNERS human-merge gate are in place. (§7.3)
+- [ ] A GitHub native merge queue is configured for rebase-and-test — or, below
+      Enterprise tier, Sinfonia's merge coordinator is enabled as the accepted
+      substitute — and a post-merge harness gate runs on `main` (push trigger). (§7.4)
+- [ ] For agent workflows, the agent prompt applies the mergeable-w.r.t.-`main`
+      gate — looping only on `DIRTY`/`BEHIND` and treating `BLOCKED`/`UNSTABLE`
+      as ready-for-human. (§7.4)
+- [ ] A root `AGENTS.md` exists and conforms to `docs/CONTEXT-CONTRACT.md`;
+      CODEOWNERS gates all `**/AGENTS.md` edits. (§7.3)
 - [ ] *(RECOMMENDED)* architectural-invariant gating (§5.5) and the observability
       feedback contract (§6).
+- [ ] *(RECOMMENDED)* a `.harness/` workspace in the prescribed layout
+      (standards / criteria / knowledge), referenced from root `AGENTS.md`, with
+      compounding writes human-gated under CODEOWNERS. (§11)
 - [ ] *(OPTIONAL)* a natural-language → executable-specification step for
       bootstrapping from prose. (§4.1)
 
@@ -409,6 +557,116 @@ test, Rust services, OpenTelemetry + Loki/Prometheus/Tempo for §6, and GitHub
 Actions assembling `bridge.json`. It is cited throughout as *an* example, never
 as the rule — every framework-specific choice there is substitutable per §8
 without changing a single interface point in §7.
+
+---
+
+## 11. The `.harness/` Workspace (RECOMMENDED)
+
+The harness *sensor* (§4–§7) grades **whether** a change is done. The `.harness/`
+workspace answers the orthogonal question the agent needs *before* it writes a
+line: **how** this repo builds, **what** each step must satisfy, and **why**
+prior work went the way it did. It is the durable, agent-readable record that
+turns a one-shot agent run into a compounding one — the structure a target repo
+is bootstrapped with so each agent informs the next.
+
+It is the producer repo's third durable layer, alongside the two this
+specification already references:
+
+| Layer | Question it answers | Spec |
+|---|---|---|
+| **Sensor** | Is the change correct? (executable grading) | this doc, §4–§7 |
+| **Map** | Where does context live? (`AGENTS.md` doc-graph) | `docs/CONTEXT-CONTRACT.md` |
+| **Workspace** | How / what / why do we build? (`.harness/`) | this section |
+
+A harness SHOULD provide a `.harness/` workspace. When present, its shape is
+**prescribed** — identical in every repo — so an agent or a person dropped into
+any Sinfonia-driven repo finds the rules and the gates in exactly the same place.
+
+### 11.1 Directory layout (prescribed when present)
+
+```
+<repo>/.harness/
+├── standards/            ← HOW we build (durable rules; change rarely)
+│   ├── coding.md
+│   ├── architecture/        ← architecture standards + ADRs
+│   ├── documentation.md
+│   └── compounding.md
+├── criteria/             ← the EXIT GATES each execution-loop step must meet
+│   ├── plan.md
+│   ├── build.md
+│   └── review.md
+└── knowledge/            ← compounded learnings, in an AI-indexable format
+```
+
+- **`standards/` — how we build.** Durable rules the agent must honor: coding
+  standards, architecture standards + ADRs, documentation standards, and the
+  compounding standard (how learnings get written back). They change rarely and
+  are referenced explicitly by the plan (§11.2).
+- **`criteria/` — the gates.** One file per execution-loop step (§11.2): `plan`,
+  `build`, `review`. Each is the explicit, checkable exit gate a validator grades
+  that step against.
+- **`knowledge/` — the memory.** Where the compounding step writes learnings, in
+  a consistent, AI-indexable format, for future agents to read.
+
+The *layout* is prescribed; the prose inside each file is the target repo's
+choice.
+
+### 11.2 The execution loop (structure)
+
+`.harness/criteria/` encodes the three exit gates of the **execution loop** — the
+inner worker-plus-validator loop that drives a ready story to human sign-off. The
+execution loop is distinct from, and sits above, the harness *sensor*: the sensor
+is one of the checks the Build and Review gates invoke, not the loop itself. Each
+step pairs a worker that does the work with a validator that grades it against the
+matching `criteria/` file before the step can pass:
+
+- **Plan** (`criteria/plan.md`) — the plan must earn the build: tests to create,
+  docs to update, the coding/architecture standards (§11.1) it will honor, the
+  acceptance-criteria mapping, and a compounding step that captures learnings back
+  to `knowledge/`.
+- **Build** (`criteria/build.md`) — build to the plan and prove it: code, tests,
+  and docs together; the sensor (§4–§7) green on gating scenarios (§5.6);
+  standards honored; learnings compounded.
+- **Review** (`criteria/review.md`) — a reviewer agent and the developer agent
+  loop until clean, then hand to the human gate (§7.4).
+
+This section prescribes the *structure* — the three gate files and what each
+covers — not the loop's runtime mechanics, which are the orchestrator's concern.
+
+### 11.3 Read protocol (RECOMMENDED)
+
+Before planning or building, the agent SHOULD read the relevant `standards/` and
+the `criteria/` file for the current step, plus any `knowledge/` entries the issue
+touches — just-in-time, nearest-wins, the same discipline the map uses
+(`docs/CONTEXT-CONTRACT.md §5`). The root `AGENTS.md` entry point (§7.3) SHOULD
+point at `.harness/` so this read path is discoverable from the one file the agent
+always opens first.
+
+### 11.4 Write protocol — compounding (REQUIRED when `.harness/` is written)
+
+The compounding step writes learnings to `.harness/knowledge/`. These writes MUST
+follow the **same human-gated write protocol as `AGENTS.md` nodes**
+(`docs/CONTEXT-CONTRACT.md §6`, DEC-004):
+
+- A `.harness/` diff MUST ride the **same pull request** as the code change that
+  produced the learning; `CODEOWNERS` (§7.3) gates that PR.
+- An agent MUST NOT commit or push a `.harness/` edit outside a human-reviewed
+  PR. **Autonomous, self-learning writes are PROHIBITED** — the agent proposes the
+  diff and the human gate (§7.4) approves it.
+- `standards/` and `criteria/` are edited the same way: durable rules changed
+  deliberately, never mutated mid-run by an agent.
+
+This keeps `.harness/` inside the same merge-gated trust boundary as the rest of
+the repo: the loop compounds knowledge, but a human still approves every byte that
+lands on `main`.
+
+### 11.5 Bootstrapping
+
+`templates/.harness/` in this repository is the deployable skeleton — the
+prescribed directory tree with stub files a target repo fills in. It ships
+alongside `templates/AGENTS.md` (the root map entry point, which references
+`.harness/`) and `templates/CODEOWNERS` (the gate). Bootstrapping a
+Sinfonia-ready repo SHOULD copy all three.
 
 ---
 

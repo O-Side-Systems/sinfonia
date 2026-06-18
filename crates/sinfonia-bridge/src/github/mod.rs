@@ -19,4 +19,7 @@ pub mod auth;
 pub mod client;
 
 pub use auth::{build_gh_ops, load_private_key, AppModeGhOps, BridgeAuthMode};
-pub use client::{ArtifactMeta, CheckRunOutcome, CheckRunSummary, GhOps, OctocrabGhOps};
+pub use client::{
+    ArtifactMeta, CheckRunOutcome, CheckRunSummary, GhOps, MergeOutcome, OctocrabGhOps, PrLanding,
+    UpdateBranchOutcome,
+};

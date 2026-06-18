@@ -44,6 +44,65 @@ Practical implications:
 
 See spec §15 (`docs/SPEC.md`) for the full security and operational-safety contract.
 
+## Trust posture & hardening
+
+This section is Sinfonia's documented trust posture, satisfying spec §15.1's
+requirement that an implementation state its own. The design rationale is in
+[`docs/proposals/0004-agent-tool-surface-hardening.md`](docs/proposals/0004-agent-tool-surface-hardening.md).
+
+**Default posture: high-trust.** Sinfonia runs the coding agent with broad
+authority. The `shell` tool is arbitrary `bash -lc`, and CLI backends run with
+their own permission systems **disabled by default** (`--dangerously-skip-permissions`
+for Claude Code, `codex exec` for Codex) — because unattended autonomous
+operation needs *some* form of auto-approval; an interactive permission prompt
+would simply hang a non-interactive subprocess. The daemon logs a `WARN` at
+startup naming each backend running in this mode so the posture is visible
+rather than implicit.
+
+**The load-bearing mitigation is environmental, not in-binary.** Because the
+agent legitimately needs autonomous shell to do its job, the boundary that
+actually contains it is the environment you run the daemon in. **Run Sinfonia
+inside an isolated container or VM** when any input (tracker tickets, PR
+comments, repository contents, or harness output) is not fully trusted:
+
+- **Dedicated, isolated host.** A container/VM with no access to anything you
+  would not hand the agent: a dedicated OS user, a restricted `workspace.root`
+  volume, and **restricted network egress** (the single most effective control
+  against secret exfiltration).
+- **Scoped credentials, least privilege.** Give the agent's tracker/GitHub
+  tokens the minimum scope needed. The subprocess inherits the daemon's
+  environment, so anything in that environment is reachable from `shell` — keep
+  it minimal.
+- **Branch protection is what actually backstops the merge gate.** CODEOWNERS
+  gates *merging a PR*; it does **not** gate secret exfiltration, writes outside
+  the workspace, or a direct/force push. Configure GitHub branch protection to
+  forbid force-pushes to protected branches so the merge gate cannot be bypassed
+  by an agent with push credentials.
+- **Treat all agent inputs as untrusted instructions.** The structural
+  defenses on harness output (`bridge.json`, SPEC §11.6.13) stop *template*
+  injection; they cannot stop *semantic* injection ("ignore prior instructions
+  …") reaching an LLM as natural-language text. The mitigation is bounding what
+  the agent can do, not sanitizing what it reads.
+
+**What CODEOWNERS does and does not cover:** it gates merge. It does nothing for
+secret exfiltration, out-of-workspace writes, or direct pushes — those are
+bounded only by the environment and credential scope above.
+
+**Opt-in controls available today:**
+
+- `agent.env_policy: { mode: scrubbed, ... }` — stop the agent's `shell` from
+  reading arbitrary daemon secrets via `env`. Default `inherit` keeps today's
+  behavior; `scrubbed` clears the environment and re-adds only a minimal base
+  plus a named allowlist (Proposal 0004 §4.1). Pair this with restricted egress
+  for defense in depth.
+- `agent.dispatch_allowlist.require_labels` — only dispatch tickets carrying an
+  approval label, an entry-boundary gate mirroring CODEOWNERS at the exit
+  (Proposal 0004 §4.3).
+- The file tools (`read_file`/`write_file`/`edit_file`/`list_dir`) resolve
+  symlinks and reject any path whose real location escapes the workspace
+  (Proposal 0004 §4.4). The `shell` tool is *not* so confined — only the
+  environment can bound it.
+
 ## What is in scope
 
 - Code execution paths an attacker could reach by submitting an issue in the connected tracker (e.g. prompt injection that causes the agent to exfiltrate workspace contents).

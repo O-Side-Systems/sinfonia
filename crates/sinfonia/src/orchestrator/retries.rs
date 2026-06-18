@@ -74,8 +74,21 @@ async fn fire_retry(inner: &Arc<Inner>, issue_id: String) {
     };
 
     let outcome = orch.dispatch_one(issue.clone(), Some(entry.attempt)).await;
-    if !outcome.continue_loop() {
-        // No slot — requeue.
+    if !outcome.is_dispatched() {
+        // Not dispatched. Two cases reach here, both transient — requeue with
+        // backoff so we keep the claim + attempt counter rather than dropping
+        // the issue out of the retry queue:
+        //   - NoSlot: concurrency budget is full.
+        //   - Skipped: the issue is still an active candidate but not yet
+        //     dispatch-eligible (parent-gated, blocked-by an unfinished
+        //     issue, or a transiently unknown child/blocker state). It can't
+        //     be "already running" here — a fresh tick that dispatched it
+        //     would have removed this retry entry first.
+        let reason = if matches!(outcome, crate::orchestrator::DispatchOutcome::NoSlot) {
+            "no available orchestrator slots"
+        } else {
+            "not dispatch-eligible (gated/blocked)"
+        };
         let next = RetryEntry {
             issue_id: entry.issue_id.clone(),
             identifier: issue.identifier.clone(),
@@ -83,7 +96,7 @@ async fn fire_retry(inner: &Arc<Inner>, issue_id: String) {
             due_at: Utc::now() + chrono::Duration::milliseconds(
                 backoff_ms(entry.attempt + 1, cfg.agent.max_retry_backoff_ms) as i64,
             ),
-            error: Some("no available orchestrator slots".into()),
+            error: Some(reason.into()),
         };
         let mut state = inner.state.lock().await;
         schedule(&mut state, inner, next);

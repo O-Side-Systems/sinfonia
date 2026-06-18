@@ -26,6 +26,14 @@ pub fn is_dispatch_eligible(issue: &Issue, cfg: &ServiceConfig) -> bool {
         return false;
     }
 
+    // Dispatch eligibility allowlist (Proposal 0004 §4.3) — entry-boundary gate.
+    // Empty allowlist permits everything (today's behavior), so this is
+    // default-safe. When configured, an externally-filed ticket that lacks the
+    // required label is not dispatched to the agent.
+    if !cfg.dispatch_allowlist.permits(&issue.labels) {
+        return false;
+    }
+
     let terminal_lc: Vec<String> = cfg
         .tracker
         .terminal_states
@@ -33,19 +41,8 @@ pub fn is_dispatch_eligible(issue: &Issue, cfg: &ServiceConfig) -> bool {
         .map(|s| s.to_lowercase())
         .collect();
 
-    // Parent-gating: a parent isn't eligible while any sub-issue is still
-    // non-terminal. Mirrors how a human works leaves of an epic before the
-    // epic itself. Issues with no children (the common case) are unaffected.
-    for c in &issue.children {
-        let cs = c.state.to_lowercase();
-        if cs.is_empty() {
-            // Unknown child state — conservatively block (parent waits a poll).
-            return false;
-        }
-        if !terminal_lc.iter().any(|t| t == &cs) {
-            return false;
-        }
-    }
+    // [D-05: parent-child hierarchy gate removed — dependency gating keys solely on
+    // Linear `blocks` relations. See Phase 3 implementation.]
 
     // Blocker rule for Todo state (§8.2).
     let todo = cfg
@@ -104,7 +101,7 @@ pub fn sort_for_dispatch(mut issues: Vec<Issue>) -> Vec<Issue> {
 fn priority_key(p: Option<i64>) -> (u8, i64) {
     match p {
         None => (1, i64::MAX),
-        Some(0) => (1, 0),     // 0 ("no priority" in Linear) sorts last like None
+        Some(0) => (1, 0), // 0 ("no priority" in Linear) sorts last like None
         Some(n) => (0, n),
     }
 }
@@ -151,57 +148,106 @@ mod tests {
         crate::config::ServiceConfig::from_workflow(&def).unwrap()
     }
 
-    fn iss_with_children(
-        id: &str,
-        children_states: &[&str],
-    ) -> Issue {
+    fn blocked_by(id: &str, blocker_states: &[&str]) -> Issue {
         let mut i = iss(id, Some(1), 100);
-        i.children = children_states
+        i.blocked_by = blocker_states
             .iter()
             .enumerate()
-            .map(|(idx, st)| crate::domain::ChildRef {
-                id: Some(format!("{id}-c{idx}")),
-                identifier: Some(format!("{id}.{}", idx + 1)),
-                state: (*st).into(),
+            .map(|(idx, st)| crate::domain::BlockerRef {
+                id: Some(format!("{id}-b{idx}")),
+                identifier: Some(format!("BLK-{}", idx + 1)),
+                state: Some((*st).into()),
             })
             .collect();
         i
     }
 
     #[test]
-    fn parent_with_open_child_is_not_eligible() {
+    fn todo_with_open_blocker_is_not_eligible() {
         let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
-        let parent = iss_with_children("P1", &["In Progress"]);
-        assert!(!is_dispatch_eligible(&parent, &cfg));
+        // Issue is Todo (default from iss); blocker is In Progress (non-terminal).
+        let issue = blocked_by("T1", &["In Progress"]);
+        assert!(!is_dispatch_eligible(&issue, &cfg));
     }
 
     #[test]
-    fn parent_with_all_terminal_children_is_eligible() {
+    fn in_progress_ignores_blockers() {
         let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
-        let parent = iss_with_children("P1", &["Done", "Cancelled"]);
+        // Same blocker, but the issue is In Progress — blocker gate is Todo-only.
+        let mut issue = blocked_by("T2", &["In Progress"]);
+        issue.state = "In Progress".into();
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn todo_with_terminal_blocker_is_eligible() {
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        // Todo + blocker in terminal state → gate opens.
+        let issue = blocked_by("T3", &["Done"]);
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn parent_with_open_child_is_now_eligible() {
+        // After D-05 removal: parent-child hierarchy gate is gone, so a parent
+        // with a non-terminal child IS dispatch-eligible. This is the explicit
+        // inverse of the deleted `parent_with_open_child_is_not_eligible` and
+        // pins the removal as intentional to guard against re-introduction.
+        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
+        let mut parent = iss("P1", Some(1), 100);
+        parent.children = vec![crate::domain::ChildRef {
+            id: Some("c1".into()),
+            identifier: Some("P1-sub".into()),
+            state: "In Progress".into(),
+        }];
+        // Hierarchy gate removed (D-05) — parent is now eligible.
         assert!(is_dispatch_eligible(&parent, &cfg));
     }
 
-    #[test]
-    fn parent_with_mixed_children_is_not_eligible_until_all_terminal() {
-        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
-        let parent = iss_with_children("P1", &["Done", "Backlog"]);
-        // Backlog is neither active nor terminal — conservatively blocks.
-        assert!(!is_dispatch_eligible(&parent, &cfg));
+    fn cfg_with_allowlist(require_labels: &[&str]) -> crate::config::ServiceConfig {
+        let labels_yaml = require_labels
+            .iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let wf = format!(
+            "---\ntracker:\n  kind: linear\n  api_key: testkey\n  project_slug: p\n  active_states: [\"Todo\", \"In Progress\"]\n  terminal_states: [\"Done\"]\nagent:\n  dispatch_allowlist:\n    require_labels: [{labels_yaml}]\n---\nbody"
+        );
+        let def = crate::config::parse_workflow_str(&wf).unwrap();
+        crate::config::ServiceConfig::from_workflow(&def).unwrap()
     }
 
     #[test]
-    fn issue_with_no_children_passes_parent_gate() {
-        let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
-        let leaf = iss("L1", Some(1), 100); // children: vec![]
-        assert!(is_dispatch_eligible(&leaf, &cfg));
+    fn allowlist_blocks_issue_without_required_label() {
+        let cfg = cfg_with_allowlist(&["sinfonia-approved"]);
+        let issue = iss("A1", Some(1), 100); // no labels
+        assert!(!is_dispatch_eligible(&issue, &cfg));
     }
 
     #[test]
-    fn parent_gating_is_case_insensitive() {
+    fn allowlist_permits_issue_with_required_label() {
+        let cfg = cfg_with_allowlist(&["sinfonia-approved"]);
+        let mut issue = iss("A2", Some(1), 100);
+        // Issue labels are normalized to lowercase by the tracker; match is
+        // case-insensitive regardless.
+        issue.labels = vec!["sinfonia-approved".into()];
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn empty_allowlist_permits_everything() {
+        // Default cfg (no allowlist) — an unlabeled issue is eligible.
         let cfg = cfg_with_states(&["Todo", "In Progress"], &["Done", "Cancelled"]);
-        let parent = iss_with_children("P1", &["done", "CANCELLED"]);
-        assert!(is_dispatch_eligible(&parent, &cfg));
+        let issue = iss("A3", Some(1), 100);
+        assert!(is_dispatch_eligible(&issue, &cfg));
+    }
+
+    #[test]
+    fn allowlist_match_is_case_insensitive() {
+        let cfg = cfg_with_allowlist(&["Sinfonia-Approved"]);
+        let mut issue = iss("A4", Some(1), 100);
+        issue.labels = vec!["sinfonia-approved".into()];
+        assert!(is_dispatch_eligible(&issue, &cfg));
     }
 
     #[test]

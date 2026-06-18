@@ -45,9 +45,6 @@ const ISSUE_FRAGMENT: &str = r#"
       issue { id identifier state { name } }
     }
   }
-  children(first: 100) {
-    nodes { id identifier state { name } }
-  }
   comments(first: 100) {
     nodes { body }
   }
@@ -554,31 +551,6 @@ fn normalize_full(n: &Json) -> Result<Issue> {
         })
         .unwrap_or_default();
 
-    // Sub-issues — used by dispatch to gate parents until all children reach
-    // a terminal state (§ parent-gating semantics).
-    let children = n
-        .get("children")
-        .and_then(|c| c.get("nodes"))
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|c| crate::types::ChildRef {
-                    id: c.get("id").and_then(|v| v.as_str()).map(str::to_string),
-                    identifier: c
-                        .get("identifier")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string),
-                    state: c
-                        .get("state")
-                        .and_then(|s| s.get("name"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
     let created_at = parse_ts(n.get("createdAt"));
     let updated_at = parse_ts(n.get("updatedAt"));
 
@@ -609,7 +581,7 @@ fn normalize_full(n: &Json) -> Result<Issue> {
         url,
         labels,
         blocked_by,
-        children,
+        children: vec![], // D-05: children no longer fetched; field kept empty (struct cleanup deferred)
         created_at,
         updated_at,
         fields,

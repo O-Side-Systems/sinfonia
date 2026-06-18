@@ -395,6 +395,7 @@ mod tests {
                     priority: 0,
                 }],
                 harness_manifest: crate::config::HarnessManifestSection::default(),
+                merge_coordinator: crate::config::MergeCoordinatorSection::default(),
             },
             custom_fields: CustomFieldsSection {
                 attempt_count: "sinfonia_attempt_count".into(),

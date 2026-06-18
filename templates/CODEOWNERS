@@ -1,0 +1,13 @@
+# Default owners for everything in the repo.
+# These users are requested for review when someone opens a PR.
+* <!-- replace: @<owner1> @<owner2> -->
+
+# Context graph nodes — explicit gate on all AGENTS.md edits (last-match-wins)
+**/AGENTS.md <!-- replace: @<owner1> @<owner2> -->
+
+# Per-area ownership (mirrors AGENTS.md module-ownership table)
+/crates/<!-- replace: <crate-1> -->/  <!-- replace: @<owner1> @<owner2> -->
+/crates/<!-- replace: <crate-2> -->/  <!-- replace: @<owner1> @<owner2> -->
+/docker/    <!-- replace: @<owner1> @<owner2> -->
+/docs/      <!-- replace: @<owner1> @<owner2> -->
+/templates/ <!-- replace: @<owner1> @<owner2> -->

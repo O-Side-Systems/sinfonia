@@ -20,6 +20,37 @@ pub struct PollingConfig {
 #[derive(Debug, Clone)]
 pub struct WorkspaceConfig {
     pub root: PathBuf,
+    /// Reclamation of per-issue workspace directories (Option 4 — disk GC).
+    pub cleanup: WorkspaceCleanupConfig,
+}
+
+/// Workspace reclamation policy. The legacy behavior was a single
+/// terminal-state sweep at startup (SPEC §16.1); for a long-running daemon
+/// that left In Review / errored / unswept-terminal workspaces — each a full
+/// repo checkout plus build artifacts — to accumulate until the next restart.
+#[derive(Debug, Clone)]
+pub struct WorkspaceCleanupConfig {
+    /// Run the terminal-state workspace sweep every N seconds while running,
+    /// not just at startup. `0` keeps the legacy startup-only behavior.
+    pub sweep_interval_secs: u64,
+    /// Also remove any workspace whose directory has not been modified in this
+    /// many hours and whose issue is not currently running — catches In Review
+    /// / stale / errored workspaces the terminal sweep leaves behind (they are
+    /// re-created on demand). `0` disables this age-based reaper.
+    pub max_age_hours: u64,
+}
+
+impl Default for WorkspaceCleanupConfig {
+    fn default() -> Self {
+        // Periodic terminal sweep ON (additive-safe: only removes Done/Cancelled
+        // workspaces, exactly the startup sweep, just more often). Age-based
+        // reaper OFF by default — it can remove In Review workspaces, which are
+        // kept by design, so it stays opt-in.
+        Self {
+            sweep_interval_secs: 600,
+            max_age_hours: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -37,6 +68,63 @@ pub struct AgentConfig {
     pub max_turns: u32,
     pub max_retry_backoff_ms: u64,
     pub max_concurrent_agents_by_state: HashMap<String, u32>,
+    /// Environment policy applied to agent subprocesses (Proposal 0004 §4.1).
+    pub env_policy: EnvPolicy,
+}
+
+/// How agent subprocesses (`shell` tool + CLI backends) inherit the daemon's
+/// environment (Proposal 0004 §4.1). Default `Inherit` = today's behavior, so
+/// this is default-safe; `Scrubbed` is the opt-in hardening that stops the
+/// agent's `shell` from reading arbitrary daemon secrets via `env`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum EnvMode {
+    /// Inherit the full daemon environment (legacy behavior).
+    #[default]
+    Inherit,
+    /// Start from a minimal base (PATH/HOME/LANG/…) plus an explicit
+    /// passthrough allowlist; everything else is cleared.
+    Scrubbed,
+}
+
+/// Parsed from `agent.env_policy`. `passthrough` and `forward` are merged into a
+/// single allowlist of variable names copied from the daemon environment when
+/// `mode: scrubbed`; the distinction in the proposal is documentation-only.
+#[derive(Debug, Clone, Default)]
+pub struct EnvPolicy {
+    pub mode: EnvMode,
+    /// Extra variable names to copy through in `Scrubbed` mode (union of the
+    /// `passthrough` and `forward` config lists).
+    pub passthrough: Vec<String>,
+}
+
+/// Dispatch eligibility allowlist (Proposal 0004 §4.3). An entry-boundary gate
+/// that mirrors the CODEOWNERS exit gate: a ticket only reaches the agent when
+/// it satisfies the allowlist, so an externally-filed issue cannot auto-drive
+/// the agent. Empty = no filter (today's behavior), so this is default-safe.
+///
+/// Parsed from `agent.dispatch_allowlist` in `WORKFLOW.md`. Label matching is
+/// case-insensitive (issue labels are already normalized to lowercase, §11.3).
+///
+/// `allowed_authors` is intentionally NOT implemented yet: the normalized
+/// `Issue` model carries no author field, so gating on it needs a tracker-fetch
+/// change first. Documented as a follow-up rather than half-wired.
+#[derive(Debug, Clone, Default)]
+pub struct DispatchAllowlist {
+    /// When non-empty, the issue MUST carry at least one of these labels
+    /// (compared case-insensitively) to be dispatch-eligible.
+    pub require_labels: Vec<String>,
+}
+
+impl DispatchAllowlist {
+    /// True when `labels` satisfies the allowlist. Empty allowlist ⇒ always true.
+    pub fn permits(&self, labels: &[String]) -> bool {
+        if self.require_labels.is_empty() {
+            return true;
+        }
+        self.require_labels.iter().any(|req| {
+            labels.iter().any(|l| l.eq_ignore_ascii_case(req))
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,6 +286,8 @@ pub struct ServiceConfig {
     pub workspace: WorkspaceConfig,
     pub hooks: HooksConfig,
     pub agent: AgentConfig,
+    /// Dispatch eligibility allowlist (Proposal 0004 §4.3). Empty = no filter.
+    pub dispatch_allowlist: DispatchAllowlist,
     pub llm: LlmConfig,
     pub server: ServerConfig,
     pub telemetry: TelemetryConfig,
@@ -221,6 +311,7 @@ impl ServiceConfig {
         let workspace = parse_workspace(&def.config, &workflow_dir);
         let hooks = parse_hooks(&def.config)?;
         let agent = parse_agent(&def.config)?;
+        let dispatch_allowlist = parse_dispatch_allowlist(&def.config);
         let llm = parse_llm(&def.config, &tracker.kind)?;
         let server = parse_server(&def.config)?;
         let telemetry = parse_telemetry(&def.config)?;
@@ -232,6 +323,7 @@ impl ServiceConfig {
             workspace,
             hooks,
             agent,
+            dispatch_allowlist,
             llm,
             server,
             telemetry,
@@ -429,7 +521,33 @@ fn parse_workspace(config: &Json, workflow_dir: &Path) -> WorkspaceConfig {
         workflow_dir.join(path)
     };
     let normalized = absolute.canonicalize().unwrap_or(absolute);
-    WorkspaceConfig { root: normalized }
+    let cleanup = parse_workspace_cleanup(config);
+    WorkspaceConfig {
+        root: normalized,
+        cleanup,
+    }
+}
+
+/// Parse the optional `workspace.cleanup` block. Absent keys fall back to
+/// [`WorkspaceCleanupConfig::default`], so an omitted block keeps the periodic
+/// terminal sweep on and the age-based reaper off.
+fn parse_workspace_cleanup(config: &Json) -> WorkspaceCleanupConfig {
+    let d = WorkspaceCleanupConfig::default();
+    let c = config
+        .get("workspace")
+        .and_then(|w| w.get("cleanup"))
+        .cloned()
+        .unwrap_or(Json::Null);
+    WorkspaceCleanupConfig {
+        sweep_interval_secs: c
+            .get("sweep_interval_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(d.sweep_interval_secs),
+        max_age_hours: c
+            .get("max_age_hours")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(d.max_age_hours),
+    }
 }
 
 fn default_workspace_root() -> String {
@@ -510,12 +628,50 @@ fn parse_agent(config: &Json) -> Result<AgentConfig> {
         }
     }
 
+    let env_policy = parse_env_policy(a_obj);
+
     Ok(AgentConfig {
         max_concurrent_agents,
         max_turns,
         max_retry_backoff_ms,
         max_concurrent_agents_by_state: per_state,
+        env_policy,
     })
+}
+
+fn parse_env_policy(agent: &Json) -> EnvPolicy {
+    let ep = match agent.get("env_policy") {
+        Some(v) if v.is_object() => v,
+        _ => return EnvPolicy::default(),
+    };
+    let mode = match ep.get("mode").and_then(|v| v.as_str()) {
+        Some(s) if s.eq_ignore_ascii_case("scrubbed") => EnvMode::Scrubbed,
+        _ => EnvMode::Inherit,
+    };
+    let mut passthrough: Vec<String> = Vec::new();
+    for key in ["passthrough", "forward"] {
+        if let Some(arr) = ep.get(key).and_then(|v| v.as_array()) {
+            passthrough.extend(arr.iter().filter_map(|x| x.as_str().map(str::to_string)));
+        }
+    }
+    passthrough.sort();
+    passthrough.dedup();
+    EnvPolicy { mode, passthrough }
+}
+
+fn parse_dispatch_allowlist(config: &Json) -> DispatchAllowlist {
+    let require_labels = config
+        .get("agent")
+        .and_then(|a| a.get("dispatch_allowlist"))
+        .and_then(|d| d.get("require_labels"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    DispatchAllowlist { require_labels }
 }
 
 fn parse_llm(config: &Json, _tracker_kind: &TrackerKind) -> Result<LlmConfig> {
@@ -854,6 +1010,30 @@ mod tests {
         matches!(
             err,
             Error::Tracker(sinfonia_tracker::Error::UnsupportedTrackerKind(_))
+        );
+    }
+
+    #[test]
+    fn env_policy_defaults_to_inherit() {
+        let def = parse_workflow_str(
+            "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: y\n---\nbody",
+        )
+        .unwrap();
+        let cfg = ServiceConfig::from_workflow(&def).unwrap();
+        assert_eq!(cfg.agent.env_policy.mode, EnvMode::Inherit);
+        assert!(cfg.agent.env_policy.passthrough.is_empty());
+    }
+
+    #[test]
+    fn env_policy_scrubbed_merges_passthrough_and_forward() {
+        let yaml = "---\ntracker:\n  kind: linear\n  api_key: x\n  project_slug: y\nagent:\n  env_policy:\n    mode: scrubbed\n    passthrough: [\"FOO\", \"BAR\"]\n    forward: [\"ANTHROPIC_API_KEY\", \"FOO\"]\n---\nbody";
+        let def = parse_workflow_str(yaml).unwrap();
+        let cfg = ServiceConfig::from_workflow(&def).unwrap();
+        assert_eq!(cfg.agent.env_policy.mode, EnvMode::Scrubbed);
+        // union + dedup, sorted
+        assert_eq!(
+            cfg.agent.env_policy.passthrough,
+            vec!["ANTHROPIC_API_KEY", "BAR", "FOO"]
         );
     }
 

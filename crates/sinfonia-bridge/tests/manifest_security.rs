@@ -363,6 +363,108 @@ async fn malformed_and_missing_entry_fall_back() {
 }
 
 // ---------------------------------------------------------------------------
+// Golden snapshot — exact byte-for-byte digest rendering (D-03 / GAP-2).
+//
+// Pins the precise rendered string for all four diagnostic fields
+// (scenario, feature_file, step, assertion) plus artifact references and
+// the bundle suffix in the footer. A durable regression guard: any
+// field-label typo, spacing change, or newline drift will cause this test
+// to fail immediately (HARNESS-01 / Criterion C-1).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn golden_snapshot_exact_field_rendering() {
+    let m = Manifest {
+        schema_version: 2,
+        run_url: Some("https://github.com/acme/widgets/actions/runs/1820934".into()),
+        artifact_bundle_name: Some("harness-runs-1820934".into()),
+        failures: vec![Failure {
+            scenario: "Create tenant persists across reload".into(),
+            feature_file: Some(
+                "requirements/features/tenant/create-tenant.feature".into(),
+            ),
+            step: Some("Then the tenant list shows \"Acme\"".into()),
+            assertion: Some(
+                "Expected element [data-testid='tenant-row-acme'] to be visible; was not present in DOM"
+                    .into(),
+            ),
+            artifact_urls: Some(ArtifactUrls {
+                result: Some("<dir>/result.json".into()),
+                trace: Some("<dir>/trace.zip".into()),
+                video: Some("<dir>/video.webm".into()),
+                a11y: Some("<dir>/a11y.json".into()),
+            }),
+        }],
+        total_failures: 1,
+    };
+    let cfg = cfg_with(5_242_880, 20, 8_192);
+    let digest = build_failure_digest(
+        &m,
+        "https://github.com/acme/widgets/actions/runs/1820934",
+        &cfg,
+    );
+    // Golden snapshot: assert the EXACT rendered string — not just contains-checks.
+    // Derived from manifest.rs:build_failure_digest + render_scenario_block + artifact_refs.
+    let expected = concat!(
+        "harness reported 1 failing scenario(s):\n",
+        "\n",
+        "1. \"Create tenant persists across reload\"\n",
+        "   feature:   requirements/features/tenant/create-tenant.feature\n",
+        "   step:      Then the tenant list shows \"Acme\"\n",
+        "   assertion: Expected element [data-testid='tenant-row-acme'] to be visible; was not present in DOM\n",
+        "   artifacts: <dir>/result.json · <dir>/trace.zip · <dir>/video.webm · <dir>/a11y.json\n",
+        "\n",
+        "(diagnostics from bridge.json schema_version=2; full artifacts at \
+https://github.com/acme/widgets/actions/runs/1820934 (bundle 'harness-runs-1820934'))",
+    );
+    assert_eq!(digest, expected, "golden snapshot mismatch");
+}
+
+// ---------------------------------------------------------------------------
+// No-disk-write proof — HARNESS-05 "in-memory parse only" (GAP-1 / C-3).
+//
+// Drives the full try_fetch_manifest path (download → unzip → parse) so any
+// disk-touching code would execute, then proves the invariant deterministically
+// by asserting the module source references no filesystem-writing API. A
+// before/after entry count of the global temp dir is racy under parallel
+// `cargo test` and false-passes when read_dir errors, so the source-level guard
+// is the durable instrument — it also catches any future fs::write / tempfile.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn ingestion_writes_no_files_to_disk() {
+    let cfg = cfg_with(5_242_880, 20, 8_192);
+    let zip = make_zip(&[("bridge.json", &v2_manifest_bytes(1))]);
+    let gh = CountingGh::new(
+        vec![art(42, "bridge-noDisk", zip.len() as u64)],
+        HashMap::from([(42u64, zip)]),
+    );
+
+    // Drive the full ingest path so any disk-touching code would execute.
+    let result = try_fetch_manifest(&gh, "acme/widgets", 42, &cfg).await;
+    assert!(result.is_some(), "valid v2 zip must parse to Some(Manifest)");
+
+    // Deterministic proof of the HARNESS-05 in-memory invariant: the manifest
+    // module performs zero filesystem writes. Asserted against the module source
+    // (read at compile time) rather than a racy temp-dir entry count.
+    const MANIFEST_SRC: &str = include_str!("../src/feedback/manifest.rs");
+    for needle in [
+        "std::fs",
+        "fs::write",
+        "fs::File",
+        "File::create",
+        "tempfile",
+        "NamedTempFile",
+        "tokio::fs",
+    ] {
+        assert!(
+            !MANIFEST_SRC.contains(needle),
+            "manifest.rs must not reference `{needle}` — ingestion is in-memory only (HARNESS-05)"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // A fork-PR-shaped manifest (the real producer shape) ingests cleanly and
 // the digest is well-formed.
 // ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ use crate::tracker::IssueTracker;
 use crate::workspace::{run_hook, HookKind, WorkspaceManager};
 use chrono::Utc;
 use std::sync::Arc;
-use tracing::{debug, info, info_span, Instrument};
+use tracing::{debug, info, info_span, warn, Instrument};
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_agent_attempt(
@@ -105,6 +105,14 @@ async fn run_agent_attempt_inner(
             s
         }
         Err(e) => {
+            warn!(target: "runner",
+                issue_identifier = %issue.identifier,
+                tracker_state = %issue.state,
+                provider = ?llm.provider,
+                model = %llm.model,
+                error = %e,
+                "agent session startup failed"
+            );
             events.send(AgentEvent::StartupFailed {
                 timestamp: Utc::now(),
                 message: e.to_string(),

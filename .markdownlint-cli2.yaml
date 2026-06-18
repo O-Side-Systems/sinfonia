@@ -18,9 +18,16 @@
 #   instead of an H1.
 # - MD046 (code-block-style): we use fenced (``` ```) blocks everywhere
 #   and indented elsewhere in source listings; allow both.
+#
+# And we configure one rule rather than disabling it:
+# - MD025 (single-h1): the AGENTS.md doc-graph nodes carry a YAML front-matter
+#   `title:` AND a body H1 by design (CONTEXT-CONTRACT). Tell MD025 not to treat
+#   the front-matter title as a heading, so the single H1 is not a "second" one.
 
 config:
   default: true
+  MD025:
+    front_matter_title: ""
   MD013: false
   MD024: false
   MD031: false

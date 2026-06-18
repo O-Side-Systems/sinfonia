@@ -72,10 +72,63 @@ pub struct ArtifactMeta {
     pub size_in_bytes: u64,
 }
 
+/// A PR's landing-relevant state (Proposal 0005 §8.7). A small owned
+/// projection of `GET /repos/{repo}/pulls/{n}`, kept octocrab-free so the
+/// coordinator and its tests don't depend on the client model.
+#[derive(Debug, Clone)]
+pub struct PrLanding {
+    /// Tip commit of the PR head branch.
+    pub head_sha: String,
+    /// Base branch name (e.g. `main`).
+    pub base_ref: String,
+    /// True once the PR has been merged (detects out-of-band / human merges).
+    pub merged: bool,
+    /// REST `state`: `open` / `closed`. A `closed` PR with `merged == false`
+    /// is an abandoned PR the coordinator should dequeue (Proposal 0005 §8.4).
+    pub state: String,
+    /// GitHub's `mergeable_state`: the REST lowercase of `mergeStateStatus`
+    /// (`clean` / `blocked` / `behind` / `dirty` / `unstable` / `draft` /
+    /// `unknown`). The coordinator acts on `behind` (update-branch) and parks
+    /// on `dirty` (conflict); `blocked`/`unstable` are ready-for-human (§7.4).
+    pub mergeable_state: String,
+    /// GitHub's tri-state `mergeable` (None = still computing).
+    pub mergeable: Option<bool>,
+}
+
+/// Outcome of an `update-branch` call (Proposal 0005 §8.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateBranchOutcome {
+    /// 202 — GitHub queued the base-merge; the new head arrives via a
+    /// `pull_request synchronize` webhook (or a follow-up `get_pull_request`).
+    Accepted,
+    /// 422 with an `expected_head_sha` mismatch — the head moved under us;
+    /// the caller should re-read state and retry.
+    Stale,
+    /// The branch cannot be updated (merge conflict). Park to Needs Fixes.
+    Conflict,
+}
+
+/// Outcome of a `merge_pr` call (Proposal 0005 §8.7). The `sha` precondition
+/// makes the merge a compare-and-set, so a head that moved fails closed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeOutcome {
+    /// 200 — merged. Carries the resulting merge commit SHA.
+    Merged { sha: String },
+    /// 405 — the PR is not in a mergeable state.
+    NotMergeable,
+    /// 409 — the provided `sha` no longer matches the PR head.
+    ShaMismatch,
+}
+
 /// Operations the bridge needs against the GitHub REST API.
 ///
 /// Implementations MUST be cheap to clone (the orchestrator holds an
 /// `Arc<dyn GhOps>` in `AppState` and clones it across handlers).
+///
+/// The merge-coordinator methods (`get_pull_request`, `update_pr_branch`,
+/// `merge_pr`, Proposal 0005) ship with default impls that return a
+/// "not supported" error, so existing fakes and the App-mode client compile
+/// unchanged; only [`OctocrabGhOps`] overrides them in Phase 1.
 #[async_trait]
 pub trait GhOps: Send + Sync {
     /// Idempotently create a repo-scoped label. The default GitHub
@@ -132,6 +185,44 @@ pub trait GhOps: Send + Sync {
         artifact_id: u64,
         max_bytes: u64,
     ) -> Result<Vec<u8>>;
+
+    /// Fetch a PR's landing-relevant state (Proposal 0005 §8.7). Default:
+    /// not supported.
+    async fn get_pull_request(&self, _repo: &str, _pr_number: u64) -> Result<PrLanding> {
+        Err(Error::GitHub(
+            "get_pull_request not supported by this GhOps implementation".into(),
+        ))
+    }
+
+    /// Update the PR head branch with the latest base (GitHub `update-branch`,
+    /// a merge-from-base — the bridge has no checkout so this is NOT a rebase;
+    /// Proposal 0005 §8.2). `expected_head_sha` is a precondition so a stale
+    /// call no-ops rather than acting on a moved head. Default: not supported.
+    async fn update_pr_branch(
+        &self,
+        _repo: &str,
+        _pr_number: u64,
+        _expected_head_sha: &str,
+    ) -> Result<UpdateBranchOutcome> {
+        Err(Error::GitHub(
+            "update_pr_branch not supported by this GhOps implementation".into(),
+        ))
+    }
+
+    /// Merge a PR with the given method (`rebase` / `squash` / `merge`),
+    /// guarded by a `head_sha` compare-and-set (Proposal 0005 §8.7).
+    /// Default: not supported.
+    async fn merge_pr(
+        &self,
+        _repo: &str,
+        _pr_number: u64,
+        _merge_method: &str,
+        _head_sha: &str,
+    ) -> Result<MergeOutcome> {
+        Err(Error::GitHub(
+            "merge_pr not supported by this GhOps implementation".into(),
+        ))
+    }
 }
 
 /// Production [`GhOps`] backed by `octocrab` in PAT mode.
@@ -167,6 +258,30 @@ impl OctocrabGhOps {
                 "expected 'owner/repo', got '{repo}' (no slash)"
             ))
         })
+    }
+
+    /// Extract the HTTP status code from an octocrab error, when GitHub
+    /// returned a structured error body. octocrab's `GitHubError::Display`
+    /// prints only the message (not the numeric status), so status-routing
+    /// (405/409/422) MUST read the typed `status_code` field, not the string.
+    fn status_of(e: &octocrab::Error) -> Option<u16> {
+        match e {
+            octocrab::Error::GitHub { source, .. } => Some(source.status_code.as_u16()),
+            _ => None,
+        }
+    }
+
+    /// True when the GitHub error message mentions an `expected_head_sha`
+    /// precondition mismatch (the head moved under an `update-branch` call).
+    /// Reads the typed `GitHubError::message` — the outer `octocrab::Error`
+    /// Display does not include the inner body message.
+    fn is_expected_head_mismatch(e: &octocrab::Error) -> bool {
+        match e {
+            octocrab::Error::GitHub { source, .. } => {
+                source.message.contains("expected_head_sha")
+            }
+            _ => false,
+        }
     }
 }
 
@@ -374,6 +489,126 @@ impl GhOps for OctocrabGhOps {
         }
         Ok(bytes.to_vec())
     }
+
+    async fn get_pull_request(&self, repo: &str, pr_number: u64) -> Result<PrLanding> {
+        let (owner, name_repo) = Self::split_repo(repo)?;
+        let route = format!("/repos/{owner}/{name_repo}/pulls/{pr_number}");
+        let v: serde_json::Value = self
+            .crab
+            .get(&route, None::<&()>)
+            .await
+            .map_err(|e| Error::GitHub(format!("GET {route}: {e}")))?;
+        let head_sha = v
+            .pointer("/head/sha")
+            .and_then(|s| s.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let base_ref = v
+            .pointer("/base/ref")
+            .and_then(|s| s.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let merged = v.get("merged").and_then(|b| b.as_bool()).unwrap_or(false);
+        let state = v
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("open")
+            .to_string();
+        // `mergeable_state` is the REST lowercase of GraphQL `mergeStateStatus`.
+        let mergeable_state = v
+            .get("mergeable_state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        let mergeable = v.get("mergeable").and_then(|b| b.as_bool());
+        Ok(PrLanding {
+            head_sha,
+            base_ref,
+            merged,
+            state,
+            mergeable_state,
+            mergeable,
+        })
+    }
+
+    async fn update_pr_branch(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        expected_head_sha: &str,
+    ) -> Result<UpdateBranchOutcome> {
+        let (owner, name_repo) = Self::split_repo(repo)?;
+        let route = format!("/repos/{owner}/{name_repo}/pulls/{pr_number}/update-branch");
+        let body = serde_json::json!({ "expected_head_sha": expected_head_sha });
+        // 202 Accepted returns a small `{message, url}` body.
+        match self
+            .crab
+            .put::<serde_json::Value, _, _>(&route, Some(&body))
+            .await
+        {
+            Ok(_) => Ok(UpdateBranchOutcome::Accepted),
+            Err(e) => {
+                // GitHub returns 422 both for an `expected_head_sha` mismatch
+                // (the head moved → Stale) and for an un-updatable branch
+                // (merge conflict → Conflict). Distinguish by the message;
+                // route by the typed status code.
+                if Self::is_expected_head_mismatch(&e) {
+                    debug!(target: "gh", repo, pr_number, "update-branch stale expected_head_sha");
+                    Ok(UpdateBranchOutcome::Stale)
+                } else if Self::status_of(&e) == Some(422) {
+                    debug!(target: "gh", repo, pr_number, "update-branch conflict (422)");
+                    Ok(UpdateBranchOutcome::Conflict)
+                } else {
+                    warn!(target: "gh", repo, pr_number, error = %e, "update-branch failed");
+                    Err(Error::GitHub(format!("update-branch pr={pr_number}: {e}")))
+                }
+            }
+        }
+    }
+
+    async fn merge_pr(
+        &self,
+        repo: &str,
+        pr_number: u64,
+        merge_method: &str,
+        head_sha: &str,
+    ) -> Result<MergeOutcome> {
+        let (owner, name_repo) = Self::split_repo(repo)?;
+        let route = format!("/repos/{owner}/{name_repo}/pulls/{pr_number}/merge");
+        let body = serde_json::json!({
+            "merge_method": merge_method,
+            "sha": head_sha, // compare-and-set: 409 if the head moved
+        });
+        match self
+            .crab
+            .put::<serde_json::Value, _, _>(&route, Some(&body))
+            .await
+        {
+            Ok(v) => {
+                let sha = v
+                    .get("sha")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                debug!(target: "gh", repo, pr_number, %sha, "merged PR");
+                Ok(MergeOutcome::Merged { sha })
+            }
+            Err(e) => match Self::status_of(&e) {
+                Some(405) => {
+                    debug!(target: "gh", repo, pr_number, "merge 405: not mergeable");
+                    Ok(MergeOutcome::NotMergeable)
+                }
+                Some(409) => {
+                    debug!(target: "gh", repo, pr_number, "merge 409: head sha moved");
+                    Ok(MergeOutcome::ShaMismatch)
+                }
+                _ => {
+                    warn!(target: "gh", repo, pr_number, error = %e, "merge failed");
+                    Err(Error::GitHub(format!("merge pr={pr_number}: {e}")))
+                }
+            },
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +692,126 @@ mod tests {
             .await
             .expect("download ok");
         assert_eq!(got, body);
+    }
+
+    #[tokio::test]
+    async fn get_pull_request_projects_landing_state() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+/pulls/[0-9]+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "number": 42,
+                "merged": false,
+                "state": "open",
+                "mergeable": true,
+                "mergeable_state": "behind",
+                "head": { "sha": "deadbeef" },
+                "base": { "ref": "main" },
+            })))
+            .mount(&server)
+            .await;
+        let ops = ops_for(&server.uri());
+        let pr = ops.get_pull_request("acme/widgets", 42).await.expect("ok");
+        assert_eq!(pr.head_sha, "deadbeef");
+        assert_eq!(pr.base_ref, "main");
+        assert!(!pr.merged);
+        assert_eq!(pr.state, "open");
+        assert_eq!(pr.mergeable_state, "behind");
+        assert_eq!(pr.mergeable, Some(true));
+    }
+
+    #[tokio::test]
+    async fn update_pr_branch_202_is_accepted() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+/pulls/[0-9]+/update-branch$"))
+            .respond_with(ResponseTemplate::new(202).set_body_json(json!({
+                "message": "Updating pull request branch.",
+                "url": "https://api.github.test/repos/acme/widgets/pulls/42"
+            })))
+            .mount(&server)
+            .await;
+        let ops = ops_for(&server.uri());
+        let out = ops
+            .update_pr_branch("acme/widgets", 42, "deadbeef")
+            .await
+            .expect("ok");
+        assert_eq!(out, UpdateBranchOutcome::Accepted);
+    }
+
+    #[tokio::test]
+    async fn update_pr_branch_stale_expected_head() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+/pulls/[0-9]+/update-branch$"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "message": "expected_head_sha doesn't match the current head ref."
+            })))
+            .mount(&server)
+            .await;
+        let ops = ops_for(&server.uri());
+        let out = ops
+            .update_pr_branch("acme/widgets", 42, "stale123")
+            .await
+            .expect("ok");
+        assert_eq!(out, UpdateBranchOutcome::Stale);
+    }
+
+    #[tokio::test]
+    async fn merge_pr_200_returns_merged_sha() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+/pulls/[0-9]+/merge$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "sha": "mergedsha1",
+                "merged": true,
+                "message": "Pull Request successfully merged"
+            })))
+            .mount(&server)
+            .await;
+        let ops = ops_for(&server.uri());
+        let out = ops
+            .merge_pr("acme/widgets", 42, "rebase", "deadbeef")
+            .await
+            .expect("ok");
+        assert_eq!(out, MergeOutcome::Merged { sha: "mergedsha1".into() });
+    }
+
+    #[tokio::test]
+    async fn merge_pr_405_not_mergeable_and_409_sha_mismatch() {
+        // 405 → NotMergeable
+        let s405 = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+/pulls/[0-9]+/merge$"))
+            .respond_with(ResponseTemplate::new(405).set_body_json(json!({
+                "message": "Pull Request is not mergeable"
+            })))
+            .mount(&s405)
+            .await;
+        let ops = ops_for(&s405.uri());
+        assert_eq!(
+            ops.merge_pr("acme/widgets", 42, "rebase", "deadbeef")
+                .await
+                .expect("ok"),
+            MergeOutcome::NotMergeable
+        );
+
+        // 409 → ShaMismatch
+        let s409 = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path_regex(r"^/repos/[^/]+/[^/]+/pulls/[0-9]+/merge$"))
+            .respond_with(ResponseTemplate::new(409).set_body_json(json!({
+                "message": "Head branch was modified. Review and try the merge again."
+            })))
+            .mount(&s409)
+            .await;
+        let ops = ops_for(&s409.uri());
+        assert_eq!(
+            ops.merge_pr("acme/widgets", 42, "rebase", "deadbeef")
+                .await
+                .expect("ok"),
+            MergeOutcome::ShaMismatch
+        );
     }
 
     #[tokio::test]
