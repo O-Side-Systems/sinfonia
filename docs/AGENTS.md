@@ -3,7 +3,7 @@ title: "docs — Spec Docs + Proposals"
 version: "1.0.0"
 status: active
 owners: ["@osidesys", "@leebrett"]
-last_verified_sha: "ffe6dc2"
+last_verified_sha: "ee13a82"
 derived_from: "docs/SPEC.md, docs/HARNESS-SPEC.md, docs/CONTEXT-CONTRACT.md"
 ---
 

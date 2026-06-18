@@ -270,6 +270,48 @@ manifest-driven invariant gate SHOULD include two additional checks:
   agents before writing shared/utility code (CTXGRAPH-01), so the same deterministic code path
   serves both the CI gate and the pre-build agent check.
 
+### 5.6 Gating vs. authored-ahead scenarios (REQUIRED)
+
+Outside-in authoring (§4.2) means the suite legitimately contains scenarios that
+are **expected to be RED** — written ahead of the feature they specify. The harness
+MUST therefore distinguish two classes of scenario by an explicit, machine-readable
+**gating tag** (the reference producer uses `@smoke`; any stable tag or flag is
+conformant):
+
+- **Gating scenarios** — the merge-blocking subset. A gating failure MUST fail the
+  CI gate (non-zero exit) **and** MUST appear in `bridge.json.failures` (§7.1).
+- **Authored-ahead (non-gating) scenarios** — written ahead of their feature per
+  §4.2. They MUST still run and emit the full four-artifact bundle (§5.1) so the
+  agent can see progress, but a non-gating failure MUST NOT fail the gate and MUST
+  NOT appear in `bridge.json.failures`.
+
+A scenario is promoted from authored-ahead to gating when its feature becomes the
+target of the issue under work (typically by adding the gating tag in the same PR).
+This is what lets §4.2 ("author RED first") coexist with §7.4 ("green must mean
+something"): the consumer retries only on **gating** failures, never on specs the
+agent is not yet meant to satisfy. A green-equivalent manifest (empty `failures[]`)
+MUST be emitted whenever every *gating* scenario passes, even while authored-ahead
+scenarios are still RED.
+
+### 5.7 Non-vacuous gates (REQUIRED)
+
+"Green" MUST mean a suite *ran and asserted something*. A gate that passes because
+it executed **zero assertions** — an empty test set, an empty fixture directory, a
+harness with no gating scenarios — is a decoy and MUST be made impossible to land.
+For **every** required check (the harness gate and any build / test / lint /
+integration gates), the repo MUST provide a guard that **fails loud** when that
+check could report success having executed nothing:
+
+- the harness gate MUST have ≥1 gating scenario (§5.6);
+- every other required gate MUST have a non-empty backing set (e.g. a unit-test
+  count > 0, a non-empty integration-fixture directory).
+
+The guard is itself a required check (the reference producer names it
+`zero-assertion lint`). The mechanism — counting tests, scenarios, or fixture
+files — is trivially portable; only the per-gate patterns are repo-specific. This
+generalizes the §5.4 (determinism) and §5.5 (invariant) intent into one rule: a
+gate may only be green for a *reason*.
+
 ## 6. Pillar 3 — Observability Feedback Contract
 
 This pillar answers prompts like "ensure service startup completes under 800ms"
@@ -347,6 +389,12 @@ tracker state. The reference consumer routes `(?i)(e2e|playwright|harness)` →
 `e2e harness (@smoke gate)`. A target repo MAY define its own categories, but the
 check name and the configured pattern MUST agree.
 
+A repository commonly runs **several** required gates across substrates — e.g. an
+API harness, a UI harness, and a data/DB gate, each emitting the four-artifact
+contract (§5.1), plus build/lint gates. Each gate's check name MUST match a
+configured category so failures route to the correct tracker state independently;
+the harness gate is the one that assembles `bridge.json` (§7.1).
+
 ### 7.3 Repository conventions (REQUIRED)
 
 - **Branch:** agent work lands on `sinfonia/<issue-id>` branches.
@@ -359,6 +407,10 @@ check name and the configured pattern MUST agree.
   can satisfy checks and address comments but MUST NOT be able to self-merge.
 - **CI gates:** the harness gate (and any invariant linters) MUST block merge on
   failure.
+- **Local parity (RECOMMENDED):** the repo SHOULD install a pre-push (or
+  pre-commit) hook that runs the same gating checks as CI, ordered cheapest-first,
+  with an explicit escape hatch (e.g. an env var). CI remains the authority; the
+  hook only shortens the agent's feedback loop by failing before a CI round-trip.
 - **Context graph:** The repo MUST maintain a hierarchical `AGENTS.md` doc-graph
   conforming to `docs/CONTEXT-CONTRACT.md`. The root `AGENTS.md` is the agent
   entry point; all node edits ride in the code PR under CODEOWNERS. See
@@ -368,8 +420,8 @@ check name and the configured pattern MUST agree.
 
 Green CI is necessary but not sufficient to merge; the CODEOWNERS human gate
 (§7.3) is the terminal authority. The harness gate's job is to make "green" *mean*
-something — see the determinism NFR (§5.4) and load-bearing scenario tagging
-(§5.5).
+something — see the determinism NFR (§5.4), the gating-scenario rule (§5.6), and
+non-vacuous gates (§5.7).
 
 **Merge queue.** The target repo SHOULD enable a GitHub native merge
 queue configured to rebase-and-test each PR against the latest `main` before
@@ -388,6 +440,13 @@ giving the same "green against the `main` it will land on" guarantee. It reuses 
 convention below. Repos that *are* on Enterprise SHOULD still prefer the native
 queue; the coordinator is the equivalent for everyone else. The post-merge harness
 gate below remains REQUIRED underneath either choice.
+
+**PR gate triggers.** The harness PR gate MUST run on the PR `opened` **and**
+`synchronize` events (new commits), not only on open. A base-sync from the native
+merge queue or from the merge coordinator's `update-branch` pushes a new head
+commit; the gate re-tests against the integrated base only if it is subscribed to
+`synchronize`. (The reference producer uses an unfiltered `pull_request:` trigger,
+which includes `synchronize`.)
 
 **Post-merge harness gate.** The harness gate MUST also run on `main` after every
 merge (a CI workflow triggered on `push` to `main`). A green-at-PR-time change
@@ -462,10 +521,15 @@ A repo is **Sinfonia-ready** when:
 - [ ] `result.json` carries `schema_version`, `scenario`, `passed`,
       `duration_s`, and structured `failed_step`/`assertion` on failure. (§5.2–§5.3)
 - [ ] A determinism check passes N-of-N for a fixed code state. (§5.4)
+- [ ] A machine-readable gating tag separates merge-gating scenarios from
+      authored-ahead ones; `bridge.json.failures` carries only gating failures.
+      (§5.6)
+- [ ] Every required gate is guarded against vacuous green — a lint fails if any
+      gating suite could pass having executed zero assertions. (§5.7)
 - [ ] CI assembles `bridge.json` at `schema_version 2` and uploads it +
       the four-artifact bundle. (§7.1)
 - [ ] The harness CI check name matches the bridge's `failure_categories`
-      pattern. (§7.2)
+      pattern, and the PR gate triggers on `opened` + `synchronize`. (§7.2, §7.4)
 - [ ] `sinfonia/<id>` branches, a `Resolves <ID>` PR-body line, bridge-owned
       `sinfonia:*` labels, and a CODEOWNERS human-merge gate are in place. (§7.3)
 - [ ] A GitHub native merge queue is configured for rebase-and-test — or, below
