@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0-alpha.2] — 2026-06-17
+
+A docs + tooling pre-release on the v0.4 line. Adds the **`.harness/` workspace convention** (HARNESS-SPEC §11) — the producer-repo's third durable layer alongside the test *sensor* and the `AGENTS.md` *map* — ships a deployable skeleton, and wires it into the WORKFLOW examples so a driven repo's agent reads its standards/criteria before building and compounds learnings back under the existing human-gated write protocol. Plus a containerized-agent Dockerfile fix. No orchestrator/bridge source-behavior change: the custom-field envelope (`sinfonia_bridge_state_v1`), the well-known field set (SPEC §11.6.4), and the `bridge.json` contract (§7.1) are unchanged, and the `.harness/` convention is RECOMMENDED-not-required so existing Sinfonia-ready repos remain conformant.
+
+### Added
+
+- **Harness `.harness/` workspace convention + deployable skeleton.** A prescribed, identical-in-every-repo directory the target repo is bootstrapped with, capturing the **how / what / why** that informs the agent before it writes code: `standards/` (coding, architecture + ADRs, documentation, compounding — *how* we build), `criteria/` (the per-step exit gates `plan` / `build` / `review`), and `knowledge/` (compounded learnings in an AI-indexable format). `templates/.harness/` ships the layout with fill-in stubs alongside `templates/{AGENTS.md,CODEOWNERS}`; the deployed `templates/AGENTS.md` now points agents at `.harness/` to read standards/criteria before building and to write learnings back. Knowledge/compounding writes are **human-gated** — they ride the same PR as the code change under CODEOWNERS, never an autonomous push, consistent with the doc-graph write protocol (DEC-004).
+
+### Docs
+
+- **HARNESS-SPEC §11 — the `.harness/` workspace.** New RECOMMENDED section specifying the workspace as the producer repo's third durable layer alongside the *sensor* (§4–§7) and the *map* (`CONTEXT-CONTRACT.md`): the prescribed directory layout (§11.1), the **execution loop** structure whose three exit gates are the `criteria/` files (§11.2 — the non-colliding name for the Plan→Build→Review flow; "harness" stays reserved for the sensor), the just-in-time read protocol (§11.3), the human-gated compounding write protocol cross-referenced to `CONTEXT-CONTRACT.md §6` / DEC-004 (§11.4), and bootstrapping from `templates/.harness/` (§11.5). The §1.1 prescribed/not-prescribed table, the §3 conformance overview, and the §9 checklist gain matching entries; `CONTEXT-CONTRACT.md §6.4` notes the same prohibition governs `.harness/knowledge/` writes.
+- **WORKFLOW examples reference the `.harness/` workspace.** Both the generic `WORKFLOW.example.md` (conditionally — "if the repo has a `.harness/` workspace") and the fuller `docker/WORKFLOW.example.md` now point each state prompt at `.harness/standards/` + the step's `.harness/criteria/` gate, and add a human-gated compounding step (write learnings to `.harness/knowledge/` in the code PR). `docker/AGENTS.md` corrected: it no longer lists the operator-local, gitignored `docker/WORKFLOW.md` as a committed artifact (the committed template is `docker/WORKFLOW.example.md`), and references the `.harness/` convention.
+- **Executive overview doc.** `docs/workflow-executive-overview.md` — a plain-language, mermaid-diagram walkthrough of the lifecycle (assigned → live) and the autonomy guardrails (attempt / cost / clarity gates) for non-implementer readers.
+
+### Fixed
+
+- **Docker: `IS_SANDBOX=1` baked into the claude-code agent image.** Claude Code refuses `--dangerously-skip-permissions` under root/sudo unless an explicit sandbox override is set; the agent images run as root, so without it the default `claude -p … --dangerously-skip-permissions` command exited 1 on every turn. Setting `ENV IS_SANDBOX=1` in the `sinfonia-with-claude-code` stage is Claude Code's supported opt-out for containerized use.
+
 ## [0.4.0-alpha.1] — 2026-06-15
 
 First **v0.4** pre-release. A minor bump (`0.3 → 0.4`) opening the v0.4 line: this tag collects the v0.4 milestone work that landed since `[0.3.0-alpha.9]` — the orchestrator retry-storm fix, the dependency-gating and proactive-merge hardening of the workflow contract, the Repository Context Contract and its CI invariant linters, and the additive feedback-loop reliability + security + merge-coordinator proposals (0002–0005). Everything new in this release is either an orchestrator/bridge source fix, an additive opt-in capability (default off), a contract/spec amendment, or producer-side documentation; the custom-field envelope (`sinfonia_bridge_state_v1`), the well-known field set (SPEC §11.6.4), and the `bridge.json` contract (§7.1) are unchanged. Legacy defaults are preserved throughout — every new behavior ships dark behind an explicit flag.

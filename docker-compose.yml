@@ -16,7 +16,7 @@
 
 services:
   sinfonia:
-    image: ghcr.io/o-side-systems/sinfonia-all-agents:0.4.0-alpha.1
+    image: ghcr.io/o-side-systems/sinfonia-all-agents:0.4.0-alpha.2
     restart: unless-stopped
     volumes:
       - ./WORKFLOW.md:/etc/sinfonia/WORKFLOW.md:ro
@@ -39,7 +39,7 @@ services:
       - otel-collector
 
   sinfonia-bridge:
-    image: ghcr.io/o-side-systems/sinfonia-bridge:0.4.0-alpha.1
+    image: ghcr.io/o-side-systems/sinfonia-bridge:0.4.0-alpha.2
     restart: unless-stopped
     volumes:
       - ./BRIDGE.md:/etc/sinfonia/BRIDGE.md:ro
