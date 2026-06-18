@@ -44,6 +44,7 @@ interface (§7). Everything else is the target repo's choice.
 | The determinism *NFR* (§5.4) | How isolation/repeatability is achieved |
 | The observability-feedback *contract* (§6) | Which telemetry backends or query dialects |
 | The Sinfonia interface: `bridge.json`, bundle, conventions (§7) | Everything behind those interface points |
+| The `.harness/` workspace *layout*, when present (§11) | The prose content of each standards/criteria/knowledge file |
 
 A conforming harness for a Python/FastAPI + React app, a Plotly/Dash analytics
 app, and the reference TypeScript/Playwright implementation are all equally
@@ -85,8 +86,8 @@ A Sinfonia-ready harness MUST:
 5. Assemble a **`bridge.json` manifest** at `schema_version 2` (§7.1).
 6. Honor the **repository conventions** Sinfonia drives by (§7.3).
 
-It SHOULD additionally provide architectural-invariant gating (§5.5) and the
-observability feedback contract (§6).
+It SHOULD additionally provide architectural-invariant gating (§5.5), the
+observability feedback contract (§6), and a `.harness/` workspace (§11).
 
 It MAY provide a natural-language → executable-specification step (§4.1) for
 bootstrapping a repo from prose. This is **OPTIONAL**: Sinfonia's agent takes
@@ -542,6 +543,9 @@ A repo is **Sinfonia-ready** when:
       CODEOWNERS gates all `**/AGENTS.md` edits. (§7.3)
 - [ ] *(RECOMMENDED)* architectural-invariant gating (§5.5) and the observability
       feedback contract (§6).
+- [ ] *(RECOMMENDED)* a `.harness/` workspace in the prescribed layout
+      (standards / criteria / knowledge), referenced from root `AGENTS.md`, with
+      compounding writes human-gated under CODEOWNERS. (§11)
 - [ ] *(OPTIONAL)* a natural-language → executable-specification step for
       bootstrapping from prose. (§4.1)
 
@@ -553,6 +557,116 @@ test, Rust services, OpenTelemetry + Loki/Prometheus/Tempo for §6, and GitHub
 Actions assembling `bridge.json`. It is cited throughout as *an* example, never
 as the rule — every framework-specific choice there is substitutable per §8
 without changing a single interface point in §7.
+
+---
+
+## 11. The `.harness/` Workspace (RECOMMENDED)
+
+The harness *sensor* (§4–§7) grades **whether** a change is done. The `.harness/`
+workspace answers the orthogonal question the agent needs *before* it writes a
+line: **how** this repo builds, **what** each step must satisfy, and **why**
+prior work went the way it did. It is the durable, agent-readable record that
+turns a one-shot agent run into a compounding one — the structure a target repo
+is bootstrapped with so each agent informs the next.
+
+It is the producer repo's third durable layer, alongside the two this
+specification already references:
+
+| Layer | Question it answers | Spec |
+|---|---|---|
+| **Sensor** | Is the change correct? (executable grading) | this doc, §4–§7 |
+| **Map** | Where does context live? (`AGENTS.md` doc-graph) | `docs/CONTEXT-CONTRACT.md` |
+| **Workspace** | How / what / why do we build? (`.harness/`) | this section |
+
+A harness SHOULD provide a `.harness/` workspace. When present, its shape is
+**prescribed** — identical in every repo — so an agent or a person dropped into
+any Sinfonia-driven repo finds the rules and the gates in exactly the same place.
+
+### 11.1 Directory layout (prescribed when present)
+
+```
+<repo>/.harness/
+├── standards/            ← HOW we build (durable rules; change rarely)
+│   ├── coding.md
+│   ├── architecture/        ← architecture standards + ADRs
+│   ├── documentation.md
+│   └── compounding.md
+├── criteria/             ← the EXIT GATES each execution-loop step must meet
+│   ├── plan.md
+│   ├── build.md
+│   └── review.md
+└── knowledge/            ← compounded learnings, in an AI-indexable format
+```
+
+- **`standards/` — how we build.** Durable rules the agent must honor: coding
+  standards, architecture standards + ADRs, documentation standards, and the
+  compounding standard (how learnings get written back). They change rarely and
+  are referenced explicitly by the plan (§11.2).
+- **`criteria/` — the gates.** One file per execution-loop step (§11.2): `plan`,
+  `build`, `review`. Each is the explicit, checkable exit gate a validator grades
+  that step against.
+- **`knowledge/` — the memory.** Where the compounding step writes learnings, in
+  a consistent, AI-indexable format, for future agents to read.
+
+The *layout* is prescribed; the prose inside each file is the target repo's
+choice.
+
+### 11.2 The execution loop (structure)
+
+`.harness/criteria/` encodes the three exit gates of the **execution loop** — the
+inner worker-plus-validator loop that drives a ready story to human sign-off. The
+execution loop is distinct from, and sits above, the harness *sensor*: the sensor
+is one of the checks the Build and Review gates invoke, not the loop itself. Each
+step pairs a worker that does the work with a validator that grades it against the
+matching `criteria/` file before the step can pass:
+
+- **Plan** (`criteria/plan.md`) — the plan must earn the build: tests to create,
+  docs to update, the coding/architecture standards (§11.1) it will honor, the
+  acceptance-criteria mapping, and a compounding step that captures learnings back
+  to `knowledge/`.
+- **Build** (`criteria/build.md`) — build to the plan and prove it: code, tests,
+  and docs together; the sensor (§4–§7) green on gating scenarios (§5.6);
+  standards honored; learnings compounded.
+- **Review** (`criteria/review.md`) — a reviewer agent and the developer agent
+  loop until clean, then hand to the human gate (§7.4).
+
+This section prescribes the *structure* — the three gate files and what each
+covers — not the loop's runtime mechanics, which are the orchestrator's concern.
+
+### 11.3 Read protocol (RECOMMENDED)
+
+Before planning or building, the agent SHOULD read the relevant `standards/` and
+the `criteria/` file for the current step, plus any `knowledge/` entries the issue
+touches — just-in-time, nearest-wins, the same discipline the map uses
+(`docs/CONTEXT-CONTRACT.md §5`). The root `AGENTS.md` entry point (§7.3) SHOULD
+point at `.harness/` so this read path is discoverable from the one file the agent
+always opens first.
+
+### 11.4 Write protocol — compounding (REQUIRED when `.harness/` is written)
+
+The compounding step writes learnings to `.harness/knowledge/`. These writes MUST
+follow the **same human-gated write protocol as `AGENTS.md` nodes**
+(`docs/CONTEXT-CONTRACT.md §6`, DEC-004):
+
+- A `.harness/` diff MUST ride the **same pull request** as the code change that
+  produced the learning; `CODEOWNERS` (§7.3) gates that PR.
+- An agent MUST NOT commit or push a `.harness/` edit outside a human-reviewed
+  PR. **Autonomous, self-learning writes are PROHIBITED** — the agent proposes the
+  diff and the human gate (§7.4) approves it.
+- `standards/` and `criteria/` are edited the same way: durable rules changed
+  deliberately, never mutated mid-run by an agent.
+
+This keeps `.harness/` inside the same merge-gated trust boundary as the rest of
+the repo: the loop compounds knowledge, but a human still approves every byte that
+lands on `main`.
+
+### 11.5 Bootstrapping
+
+`templates/.harness/` in this repository is the deployable skeleton — the
+prescribed directory tree with stub files a target repo fills in. It ships
+alongside `templates/AGENTS.md` (the root map entry point, which references
+`.harness/`) and `templates/CODEOWNERS` (the gate). Bootstrapping a
+Sinfonia-ready repo SHOULD copy all three.
 
 ---
 

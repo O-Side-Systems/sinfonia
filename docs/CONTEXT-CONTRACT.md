@@ -226,6 +226,10 @@ doc generation or self-learning node updates are PROHIBITED. This prohibition is
 enforced by the CODEOWNERS human gate (§6.1) and is restated here as an explicit
 invariant so that agents reading this contract see it directly.
 
+The same prohibition governs autonomous writes to a repository's
+`.harness/knowledge/` compounding store: those learnings ride the code PR under
+CODEOWNERS, never an autonomous push. See `docs/HARNESS-SPEC.md §11.4`.
+
 ---
 
 ## 7. Conformance (overview) (REQUIRED)
