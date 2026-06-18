@@ -1,25 +1,28 @@
 ---
 title: "docker — Docker Topology + WORKFLOW Templates"
-version: "1.0.0"
+version: "1.1.0"
 status: active
 owners: ["@osidesys", "@leebrett"]
-last_verified_sha: "b26bc50"
+last_verified_sha: "b0c7217"
 derived_from: "docs/HARNESS-SPEC.md §7.2, docs/SPEC.md §5, §6"
 ---
 
 # docker — Docker Topology + WORKFLOW Templates
 
-Runtime delivery layer: the production WORKFLOW template, the annotated example,
-and the container entrypoint. The fallback orient step in WORKFLOW.md and
-WORKFLOW.example.md uses the JIT read protocol (CONTEXT-CONTRACT §5) — do not
-revert it to the deprecated `README.md, CLAUDE.md, docs/` blanket-slurp.
+Runtime delivery layer: the annotated WORKFLOW example (committed) and the container
+entrypoint. The operator's live `docker/WORKFLOW.md` is **per-machine and gitignored**
+(`.gitignore`) — it is NOT a committed artifact; edit `WORKFLOW.example.md` and copy it.
+The fallback orient step in `WORKFLOW.example.md` uses the JIT read protocol
+(CONTEXT-CONTRACT §5) — do not revert it to the deprecated `README.md, CLAUDE.md,
+docs/` blanket-slurp. The example's state prompts reference the target repo's
+`.harness/` workspace (HARNESS-SPEC §11) for the standards/criteria an agent reads
+and the `knowledge/` it writes back.
 
 ## Module Ownership
 
 | Capability | Path-glob | Owned By | Notes |
 |------------|-----------|----------|-------|
-| Default WORKFLOW template | `docker/WORKFLOW.md` | @osidesys @leebrett | Liquid prompt + YAML front matter |
-| Annotated WORKFLOW example | `docker/WORKFLOW.example.md` | @osidesys @leebrett | Full per-state machine example |
+| Annotated WORKFLOW example (the committed template) | `docker/WORKFLOW.example.md` | @osidesys @leebrett | Full per-state machine example; Liquid prompt + YAML front matter. The live `WORKFLOW.md` is operator-local/gitignored. |
 | Container entrypoint script | `docker/entrypoint.sh` | @osidesys @leebrett | Sets env, exec sinfonia binary |
 
 ## See also

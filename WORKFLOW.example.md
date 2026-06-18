@@ -107,11 +107,15 @@ states:
 
       ## What to do
 
-      1. Read the repo to understand the existing patterns.
+      1. Read the repo to understand the existing patterns. If it has a `.harness/`
+         workspace, start there: `.harness/standards/` (how this repo builds) and
+         `.harness/criteria/plan.md` (the exit gate your plan must meet).
       2. Sketch a plan in `.sinfonia/plans/{{ issue.identifier | downcase }}.md`
-         (create the dir if needed). The `.sinfonia/` tree is a per-workspace
-         scratchpad — do NOT commit it. If the repo's `.gitignore` doesn't
-         already cover it, add a line for `.sinfonia/` and commit that change
+         (create the dir if needed) — when `.harness/` is present, make it satisfy
+         `.harness/criteria/plan.md` (tests, docs, the standards it honors,
+         acceptance-criteria mapping, and a compounding step). The `.sinfonia/` tree
+         is a per-workspace scratchpad — do NOT commit it. If the repo's `.gitignore`
+         doesn't already cover it, add a line for `.sinfonia/` and commit that change
          on its own. Per-issue filenames also keep parallel agent branches
          from merge-conflicting on a single shared plan file.
       3. Make a minimal first cut of the change.
@@ -127,9 +131,13 @@ states:
       Resume implementation of **{{ issue.identifier }}**.
 
       The previous turn left state in this workspace and in
-      `.sinfonia/plans/{{ issue.identifier | downcase }}.md`. Pick up from there. Run
-      the project's tests. When the change is complete and tests pass, transition the
-      issue to "In Review" in the tracker.
+      `.sinfonia/plans/{{ issue.identifier | downcase }}.md`. Pick up from there. If the
+      repo has a `.harness/` workspace, build to `.harness/criteria/build.md` and the
+      `.harness/standards/`. Run the project's tests. When `.harness/` is present and the
+      work surfaced a durable learning, capture it in `.harness/knowledge/` (one file)
+      and commit it in the same PR as the code — human-gated, never an autonomous push.
+      When the change is complete and tests pass, transition the issue to "In Review"
+      in the tracker.
 
   "In Review":
     # Review pass: small fast raw-LLM call, no tool loop subprocess overhead.
@@ -140,9 +148,10 @@ states:
       Review the changes for **{{ issue.identifier }}** as if you were a senior engineer.
 
       Use `shell` to run `git diff main...HEAD` (or equivalent), read the touched files,
-      and produce a short review. If the change looks good, leave a "ship it" comment and
-      transition to "Done". If not, leave a comment explaining what to fix and transition
-      back to "In Progress".
+      and produce a short review. If the repo has a `.harness/` workspace, check the work
+      against `.harness/criteria/review.md`. If the change looks good, leave a "ship it"
+      comment and transition to "Done". If not, leave a comment explaining what to fix and
+      transition back to "In Progress".
 
 # ---- OpenCode alternative (uncomment to use) ----
 #
@@ -331,7 +340,8 @@ This is attempt {{ attempt }} of this run. The previous attempt did not finish.
 
 ## What to do
 
-1. Inspect the workspace.
+1. Inspect the workspace. If it has a `.harness/` workspace, read `.harness/standards/`
+   and the `.harness/criteria/` gate for this step before changing anything.
 2. Make focused changes to address the issue. Prefer minimal diffs.
 3. Run the project's tests and linters if they exist.
 4. Use the `finish` tool (raw-LLM backends) or transition the ticket (CLI backends) when done.

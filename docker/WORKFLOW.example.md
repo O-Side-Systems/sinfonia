@@ -106,9 +106,11 @@ states:
     prompt: |
       You are picking up Linear issue **{{ issue.identifier }} — {{ issue.title }}**.
 
-      **Orient:** start at the repo-root `AGENTS.md` and follow only the links
-      relevant to this issue's acceptance criteria; grep/glob for anything else —
-      never bulk-read `docs/`.
+      **Orient:** start at the repo-root `AGENTS.md`, then read the `.harness/`
+      workspace — `.harness/standards/` (how this repo builds: coding + architecture
+      / ADRs) and `.harness/criteria/plan.md` (the exit gate your plan must meet).
+      Follow only the links relevant to this issue's acceptance criteria; grep/glob
+      for anything else — never bulk-read `docs/`.
 
       ## Issue description
 
@@ -284,7 +286,9 @@ states:
       ## Fresh work (only when STEP 1 said "no PR exists")
 
       1. Sketch a short plan in `.sinfonia/plans/{{ issue.identifier | downcase }}.md`
-         (~10 bullets, not an essay). Create the directory if it doesn't exist.
+         (~10 bullets, not an essay). Make it satisfy `.harness/criteria/plan.md` —
+         tests to create, docs to update, the `.harness/standards/` it honors, the
+         acceptance-criteria mapping, and a compounding step. Create the directory if it doesn't exist.
          The `.sinfonia/` tree is your per-workspace scratchpad — `after_create`
          already added it to `.gitignore`, so do NOT `git add .sinfonia/`. If
          the `.gitignore` entry got dropped, add it back as your first commit
@@ -339,9 +343,11 @@ states:
     prompt: |
       Resume work on **{{ issue.identifier }} — {{ issue.title }}**.
 
-      **Orient:** start at the repo-root `AGENTS.md` and follow only the links
-      relevant to this issue's acceptance criteria; grep/glob for anything else —
-      never bulk-read `docs/`.
+      **Orient:** start at the repo-root `AGENTS.md`, then read the `.harness/`
+      workspace — `.harness/standards/` (the rules you build to) and
+      `.harness/criteria/build.md` (the exit gate this work must meet). Follow only
+      the links relevant to this issue's acceptance criteria; grep/glob for anything
+      else — never bulk-read `docs/`.
 
       ## STEP 0 — Detect prior work (run this every time)
 
@@ -489,9 +495,14 @@ states:
       ## Implementation continuation (when STEP 1 had nothing to address)
 
       1. Pick up from `.sinfonia/plans/{{ issue.identifier | downcase }}.md` and
-         complete the implementation.
+         complete the implementation, building to `.harness/criteria/build.md`.
       2. Run the project's tests + linters. Iterate until green.
       3. Commit cleanly. Reference `{{ issue.identifier }}` in the message.
+         **Compound (per `.harness/standards/compounding.md`):** if this work surfaced
+         a durable learning a future agent would otherwise rediscover, capture it in
+         `.harness/knowledge/` (one file, the format in its README) and commit it in
+         this same PR — human-gated like everything else here, never an autonomous
+         push. Skip if there's nothing worth carrying forward.
 
       4. **Pre-PR gate (MERGE-01): follow the Mergeability procedure before pushing.**
          Fetch `origin/main`, rebase, resolve any conflicts (this issue's files only),
