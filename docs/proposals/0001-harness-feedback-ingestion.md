@@ -16,7 +16,7 @@
 > `tests/bridge_e2e.rs` scenario_10 proves the end-to-end ingestion path.
 > The full requirement→evidence map is in
 > `.planning/phases/02-harness-manifest-ingestion-closure/02-CLOSURE.md`.
-
+>
 > This is the first of a planned pair. Proposal 0001 (this document) closes the
 > feedback gap in Sinfonia's bridge. A companion effort extracts the producer
 > side — the test harness pattern — into a tech-stack-neutral spec so any target

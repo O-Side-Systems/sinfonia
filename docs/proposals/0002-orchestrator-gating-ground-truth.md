@@ -108,8 +108,8 @@ The following invariant text is carried verbatim in both this ADR and in
 >    `inverseRelations` of `type == "blocks"` (`linear.rs:527-555`). Applies to `Todo` issues
 >    only; opens when every blocker reaches a terminal *state*. **Confirmed delta vs intent:**
 >    `Done` SHOULD be set by PR-merge-to-`main`, but the gate opens on terminal state, not merge.
->    **RESOLVED (Phase 3):** SPEC §8.2 amended to two-layer gate (coarse orchestrator pre-filter
->    + authoritative STEP 0 PR-merged-to-`main` gate for both `Todo` and `In Progress`).
+>    **RESOLVED (Phase 3):** SPEC §8.2 amended to a two-layer gate (coarse orchestrator pre-filter
+>    plus an authoritative STEP 0 PR-merged-to-`main` gate for both `Todo` and `In Progress`).
 > 2. **Parent-child hierarchy gate (CONFIRMED DEVIATION — RESOLVED):** keys on `children`
 >    (`dispatch.rs:36-48`), blocking a parent in any active state until every child is terminal.
 >    This was a second, live dependency gate keyed on hierarchy — which the blocks-only invariant
