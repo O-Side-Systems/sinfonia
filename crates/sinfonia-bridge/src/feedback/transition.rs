@@ -33,9 +33,48 @@ pub struct RedContext<'a> {
     pub failure_log_excerpt: &'a str,
 }
 
-/// Apply the green-CI transitions: tag the PR as `awaiting-review`
-/// and clear `in-progress` / `needs-fixes`. No tracker writes.
-pub async fn apply_green(labels: &LabelManager, repo: &str, pr_number: u64) -> Result<()> {
+/// Apply the green-CI transitions: optionally promote the ticket into the
+/// configured review state, then tag the PR as `awaiting-review` and clear
+/// `in-progress` / `needs-fixes`.
+///
+/// When `awaiting_review_state` is `Some`, the bridge is the authoritative
+/// gate that moves a ticket into human review — it does so ONLY here, after
+/// the expected checks are confirmed green (see `evaluate_one_pr`). The
+/// tracker write happens BEFORE labels (mirroring the red path): a green PR
+/// must never be left un-promoted just because a label call hiccuped. When
+/// `None`, this is label-only — the legacy behaviour, where the agent owns
+/// the review-state transition.
+pub async fn apply_green(
+    tracker: &dyn IssueTracker,
+    labels: &LabelManager,
+    repo: &str,
+    pr_number: u64,
+    ticket_id: &str,
+    awaiting_review_state: Option<&str>,
+) -> Result<()> {
+    if let Some(state) = awaiting_review_state {
+        let span = info_span!(
+            target: "feedback",
+            spans::BRIDGE_STATE_TRANSITION,
+            { spans::ATTR_TICKET_ID } = ticket_id,
+            { spans::ATTR_TO_STATE } = state,
+            { spans::ATTR_REASON } = spans::REASON_CI_GREEN,
+        );
+        async {
+            tracker
+                .transition_issue(ticket_id, state)
+                .await
+                .map_err(Error::Tracker)
+        }
+        .instrument(span)
+        .await?;
+        info!(
+            target: "feedback",
+            repo, pr_number, ticket_id, to_state = state,
+            "green: ticket promoted to review state"
+        );
+    }
+
     labels
         .apply(repo, pr_number, &BridgeLabel::AwaitingReview)
         .await?;
@@ -296,4 +335,125 @@ async fn apply_cap_hit_inner(
         "cap-hit: transitioned to blocked_state; counter not advanced"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_green;
+    use crate::config::LabelAliases;
+    use crate::github::{ArtifactMeta, CheckRunSummary, GhOps};
+    use crate::labels::LabelManager;
+    use crate::Result as BridgeResult;
+    use async_trait::async_trait;
+    use sinfonia_tracker::{
+        CustomFieldSchema, CustomFieldValue, Issue, IssueState, IssueTracker,
+        Result as TrackerResult,
+    };
+    use std::sync::{Arc, Mutex};
+
+    /// Tracker that records every `transition_issue(id, target)` call.
+    #[derive(Default)]
+    struct RecordingTracker {
+        transitions: Mutex<Vec<(String, String)>>,
+    }
+
+    #[async_trait]
+    impl IssueTracker for RecordingTracker {
+        async fn fetch_candidate_issues(&self) -> TrackerResult<Vec<Issue>> {
+            Ok(vec![])
+        }
+        async fn fetch_issues_by_states(&self, _: &[String]) -> TrackerResult<Vec<Issue>> {
+            Ok(vec![])
+        }
+        async fn fetch_issue_states_by_ids(&self, _: &[String]) -> TrackerResult<Vec<IssueState>> {
+            Ok(vec![])
+        }
+        async fn read_custom_field(&self, _: &str, _: &str) -> TrackerResult<CustomFieldValue> {
+            Ok(CustomFieldValue::Null)
+        }
+        async fn write_custom_field(
+            &self,
+            _: &str,
+            _: &str,
+            _: CustomFieldValue,
+        ) -> TrackerResult<()> {
+            Ok(())
+        }
+        async fn ensure_custom_field(&self, _: &CustomFieldSchema) -> TrackerResult<()> {
+            Ok(())
+        }
+        async fn post_comment(&self, _: &str, _: &str) -> TrackerResult<()> {
+            Ok(())
+        }
+        async fn transition_issue(&self, id: &str, target: &str) -> TrackerResult<()> {
+            self.transitions
+                .lock()
+                .unwrap()
+                .push((id.to_string(), target.to_string()));
+            Ok(())
+        }
+    }
+
+    /// GhOps that does nothing — the LabelManager below is disabled, so its
+    /// label calls short-circuit before reaching this.
+    struct NoopGh;
+
+    #[async_trait]
+    impl GhOps for NoopGh {
+        async fn ensure_label(&self, _: &str, _: &str, _: &str, _: &str) -> BridgeResult<()> {
+            Ok(())
+        }
+        async fn apply_label_to_pr(&self, _: &str, _: u64, _: &str) -> BridgeResult<()> {
+            Ok(())
+        }
+        async fn remove_label_from_pr(&self, _: &str, _: u64, _: &str) -> BridgeResult<()> {
+            Ok(())
+        }
+        async fn post_pr_comment(&self, _: &str, _: u64, _: &str) -> BridgeResult<()> {
+            Ok(())
+        }
+        async fn list_check_run_summary(&self, _: &str, _: &str) -> BridgeResult<CheckRunSummary> {
+            Ok(CheckRunSummary::default())
+        }
+        async fn whoami(&self) -> BridgeResult<String> {
+            Ok("noop".into())
+        }
+        async fn list_run_artifacts(&self, _: &str, _: u64) -> BridgeResult<Vec<ArtifactMeta>> {
+            Ok(vec![])
+        }
+        async fn download_artifact(&self, _: &str, _: u64, _: u64) -> BridgeResult<Vec<u8>> {
+            Ok(vec![])
+        }
+    }
+
+    fn disabled_labels() -> LabelManager {
+        LabelManager::new(Arc::new(NoopGh), false, "sinfonia:", LabelAliases::default())
+    }
+
+    #[tokio::test]
+    async fn apply_green_transitions_when_review_state_configured() {
+        let tracker = RecordingTracker::default();
+        let labels = disabled_labels();
+        apply_green(&tracker, &labels, "acme/widgets", 7, "TICKET-1", Some("In Review"))
+            .await
+            .expect("apply_green ok");
+        assert_eq!(
+            tracker.transitions.lock().unwrap().as_slice(),
+            &[("TICKET-1".to_string(), "In Review".to_string())],
+            "green must promote the ticket into the configured review state"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_green_is_label_only_when_no_review_state() {
+        let tracker = RecordingTracker::default();
+        let labels = disabled_labels();
+        apply_green(&tracker, &labels, "acme/widgets", 7, "TICKET-1", None)
+            .await
+            .expect("apply_green ok");
+        assert!(
+            tracker.transitions.lock().unwrap().is_empty(),
+            "legacy behaviour: no tracker write when awaiting_review_state is unset"
+        );
+    }
 }

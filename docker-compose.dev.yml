@@ -20,9 +20,12 @@ x-base: &base
     LINEAR_API_KEY: ${LINEAR_API_KEY:-}
     GH_TOKEN: ${GH_TOKEN:-}
     GITHUB_TOKEN: ${GITHUB_TOKEN:-}
-    RUST_LOG: ${RUST_LOG:-sinfonia=debug,orchestrator=debug,runner=debug}
+    RUST_LOG: ${RUST_LOG:-sinfonia=debug,orchestrator=debug,runner=debug,sinfonia_bridge=debug,webhook=debug,feedback=debug,merge=info,gh=info}
     GIT_USER_NAME: ${GIT_USER_NAME:-}
     GIT_USER_EMAIL: ${GIT_USER_EMAIL:-}
+    # HMAC secret for the GitHub repo webhook the bridge verifies. Lives in
+    # .env (gitignored); must match the secret configured on the repo webhook.
+    GH_WEBHOOK_SECRET: ${GH_WEBHOOK_SECRET:-}
     # Lets `claude` run with --dangerously-skip-permissions headlessly. The
     # old working instance set this alongside a Claude Max login; keep it.
     IS_SANDBOX: "1"
@@ -51,6 +54,24 @@ services:
       - |
         cargo build --release
         exec ./target/release/sinfonia docker/WORKFLOW.md --port 8080 --log-format pretty
+
+  # CI feedback bridge. Reacts to GitHub webhooks and drives Linear state.
+  # Start with `docker compose -f docker-compose.dev.yml up -d bridge`.
+  # Shares the build target volume with the daemon, so it runs the locally
+  # built binary (incl. the required_checks + awaiting_review_state changes),
+  # NOT the published 0.4.0-alpha.2 image.
+  bridge:
+    <<: *base
+    container_name: sinfonia-bridge
+    ports:
+      - "8081:8081"
+    command:
+      - sh
+      - -c
+      - |
+        cargo build --release
+        mkdir -p /home/dev/.sinfonia
+        exec ./target/release/sinfonia-bridge docker/BRIDGE.md --port 8081 --log-format pretty
 
   # Interactive Claude Code session. Use with `docker compose run --rm shell`.
   # Useful for signing in, debugging, or driving manual checks against the repo.

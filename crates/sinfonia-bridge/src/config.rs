@@ -108,6 +108,16 @@ pub struct FeedbackLoopSection {
     pub max_attempts: u32,
     pub needs_fixes_state: String,
     pub blocked_state: String,
+    /// Tracker state the bridge transitions a ticket INTO once CI is
+    /// confirmed green (every [`required_checks`](Self::required_checks)
+    /// passed). `None` (the default) preserves the legacy behaviour: green
+    /// CI only applies the `awaiting-review` *label* and the agent owns the
+    /// review-state transition. When set — e.g. `"In Review"` — the bridge
+    /// becomes the sole authority that moves a ticket into human review, so
+    /// the agent should leave the ticket in a non-active holding state
+    /// (e.g. `"Awaiting CI"`) on finish and let the bridge promote it only
+    /// after the expected checks are green. See `docs/SPEC.md` §11.6.
+    pub awaiting_review_state: Option<String>,
     /// Compiled regex to extract a tracker identifier from a PR title/body.
     pub pr_link_pattern: Regex,
     pub required_checks: Vec<String>,
@@ -464,6 +474,17 @@ fn parse_feedback_loop(config: &Json) -> Result<FeedbackLoopSection> {
 
     let required_checks = read_str_array(&f, "required_checks");
 
+    // Optional: when set, the bridge transitions the ticket into this state on
+    // confirmed-green CI (see `FeedbackLoopSection::awaiting_review_state`). An
+    // empty string is treated as unset so `awaiting_review_state: ""` doesn't
+    // attempt a no-op transition.
+    let awaiting_review_state = f
+        .get("awaiting_review_state")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+
     let max_tokens_per_ticket = f
         .get("max_tokens_per_ticket")
         .and_then(|v| v.as_u64());
@@ -488,6 +509,7 @@ fn parse_feedback_loop(config: &Json) -> Result<FeedbackLoopSection> {
 
     Ok(FeedbackLoopSection {
         max_attempts,
+        awaiting_review_state,
         needs_fixes_state,
         blocked_state,
         pr_link_pattern,

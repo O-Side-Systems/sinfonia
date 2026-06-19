@@ -392,7 +392,7 @@ async fn advance_ready(ctx: &Ctx<'_>, landing: &LandingRow, pr: &PrLanding) -> R
             .await?;
         return Ok(false);
     }
-    if !summary.all_passed() {
+    if !summary.is_green(&ctx.config.feedback_loop.required_checks) {
         // Red against the integrated base. The feedback loop's own red path
         // owns the needs-fixes transition; relinquish so re-approval re-enqueues.
         info!(

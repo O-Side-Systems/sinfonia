@@ -382,6 +382,7 @@ mod tests {
                 max_attempts: 3,
                 needs_fixes_state: "Needs Fixes".into(),
                 blocked_state: "Blocked".into(),
+                awaiting_review_state: None,
                 pr_link_pattern: Regex::new(r".*").unwrap(),
                 required_checks: vec![],
                 max_tokens_per_ticket: max_tokens,

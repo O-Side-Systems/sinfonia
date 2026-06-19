@@ -93,13 +93,31 @@ feedback_loop:
   needs_fixes_state: "Needs Fixes"      # state to route to on red CI
   blocked_state: "Blocked - Human Review"   # state to route to once max_attempts is hit
 
+  # State the bridge moves a ticket INTO once CI is confirmed green (every
+  # `required_checks` passed). OMIT (the default) to keep legacy behaviour:
+  # green CI only applies the `awaiting-review` label and the agent owns the
+  # review transition. SET it (e.g. "In Review") to make the bridge the sole
+  # authority that moves a ticket into human review — then have the agent
+  # leave the ticket in a NON-active holding state (e.g. "Awaiting CI") on
+  # finish, so a ticket can never reach review until the expected checks are
+  # actually green on GitHub.
+  # awaiting_review_state: "In Review"
+
   # Regex applied to PR title + body to discover the linked tracker
   # identifier (e.g. "Closes ENG-42"). Default shown.
   pr_link_pattern: '(?i)(?:closes|fixes|resolves)\s+([A-Z]+-\d+|[a-z]+-\d+)'
 
-  # Empty = all required checks (as configured in the repo's branch
-  # protection) must pass. Populate to override.
+  # The checks that gate "green". This is a CLOSED gate: every name listed
+  # here must report a PASS conclusion on the PR head — and none may fail —
+  # before the bridge declares the PR green (promotes to review / applies the
+  # awaiting-review label). A required check that has not reported yet keeps
+  # the PR PENDING; it cannot masquerade as green on a partial suite. Checks
+  # NOT listed here are ignored (mirrors GitHub branch-protection "required
+  # status checks"). Leave EMPTY to fall back to "nothing failed and at least
+  # one check passed" — simpler, but it will call a still-running suite green
+  # the moment the fast checks pass, so prefer listing your gating checks.
   required_checks: []
+  # required_checks: ["cargo test", "cargo fmt", "e2e harness (@smoke gate)"]
 
   # ---- Budget caps ----
   # Per-ticket token and dollar ceilings enforced at the tracker-write
