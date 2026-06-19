@@ -24,6 +24,13 @@ Cargo.lock.bak
 /WORKFLOW.md
 /docker/WORKFLOW.md
 
+# Operator-local BRIDGE.md — same convention as WORKFLOW.md above. The example
+# file is committed; the live `docker/BRIDGE.md` is the operator's per-machine
+# copy bind-mounted into the sinfonia-bridge container (project-specific Linear
+# slug + required_checks) and must not be tracked.
+/BRIDGE.md
+/docker/BRIDGE.md
+
 # Workspace dirs (if someone runs from inside the repo)
 /symphony-workspaces/
 /sinfonia-workspaces/
