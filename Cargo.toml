@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0-alpha.2"
+version = "0.4.0-alpha.3"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -18,7 +18,7 @@ documentation = "https://docs.rs/sinfonia"
 
 [workspace.dependencies]
 # Cross-crate Sinfonia members.
-sinfonia-tracker = { path = "crates/sinfonia-tracker", version = "0.4.0-alpha.2" }
+sinfonia-tracker = { path = "crates/sinfonia-tracker", version = "0.4.0-alpha.3" }
 
 # Async runtime + HTTP + serialization shared across crates.
 tokio = { version = "1.41", features = ["full"] }

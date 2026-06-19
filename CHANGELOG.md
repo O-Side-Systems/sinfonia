@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.4.0-alpha.3] — 2026-06-19
+
+A bridge-reliability pre-release on the v0.4 line. Brings the bridge's merge gate and review-transition surface online: merges are now gated on the configured `required_checks` reporting green before the bridge acts, and the feedback loop owns the transition of an issue into review. Also wires the bridge into the dev Docker stack. No change to the custom-field envelope (`sinfonia_bridge_state_v1`), the well-known field set (SPEC §11.6.4), or the `bridge.json` contract (§7.1).
+
+### Added
+
+- **Green-CI merge gating on `required_checks`.** The bridge now confirms the configured required checks are green before merging, rather than acting on review state alone (`sinfonia-bridge`: `github/client.rs`, `merge/mod.rs`, `config.rs`).
+- **Bridge-owned review transition.** The feedback loop transitions an issue into its review state under the bridge's ownership, with budget accounting (`sinfonia-bridge`: `feedback/mod.rs`, `feedback/transition.rs`, `feedback/budget.rs`).
+- **Bridge service in the dev stack.** `docker-compose.dev.yml` gains the `bridge` service, with a `docker/BRIDGE.example.md` template and a `.gitignore` entry following the live-config/`.example` convention.
+
 ## [0.4.0-alpha.2] — 2026-06-17
 
 A docs + tooling pre-release on the v0.4 line. Adds the **`.harness/` workspace convention** (HARNESS-SPEC §11) — the producer-repo's third durable layer alongside the test *sensor* and the `AGENTS.md` *map* — ships a deployable skeleton, and wires it into the WORKFLOW examples so a driven repo's agent reads its standards/criteria before building and compounds learnings back under the existing human-gated write protocol. Plus a containerized-agent Dockerfile fix. No orchestrator/bridge source-behavior change: the custom-field envelope (`sinfonia_bridge_state_v1`), the well-known field set (SPEC §11.6.4), and the `bridge.json` contract (§7.1) are unchanged, and the `.harness/` convention is RECOMMENDED-not-required so existing Sinfonia-ready repos remain conformant.
