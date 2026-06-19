@@ -165,8 +165,22 @@ async fn evaluate_one_pr(
         }
     };
 
-    if summary.all_passed() {
-        transition::apply_green(ctx.labels, repo, pr_number).await?;
+    // The set of checks that gate "green". Empty = legacy behaviour (any
+    // pass, nothing failed). Non-empty = a closed gate: every named check
+    // must have reported a pass before we declare the PR green. See
+    // `CheckRunSummary::is_green`.
+    let required = &ctx.config.feedback_loop.required_checks;
+
+    if summary.is_green(required) {
+        transition::apply_green(
+            ctx.tracker,
+            ctx.labels,
+            repo,
+            pr_number,
+            &ticket_id,
+            ctx.config.feedback_loop.awaiting_review_state.as_deref(),
+        )
+        .await?;
         // Merge coordinator (Proposal 0005): if this PR is an approved,
         // in-flight landing, a green head may now be mergeable (or the
         // update-branch re-test just completed). No-op unless enabled + queued;
@@ -179,12 +193,14 @@ async fn evaluate_one_pr(
         return Ok(CiOutcome::Green);
     }
 
-    if !summary.has_failed() {
-        // No failed checks AND not all_passed means: zero completed
-        // checks (or only "skipped" without explicit pass). Treat as
-        // pending rather than green — we don't want to declare victory
-        // on an empty suite.
-        debug!(target: "feedback", repo, pr_number, "no failed and no passed runs; treating as pending");
+    if !summary.required_failed(required) {
+        // Not green, but no gating check has failed. Either the suite is
+        // empty / only-skipped (legacy case), or — when `required` is set —
+        // an expected check has not reported yet. Either way, treat as
+        // pending rather than green: we don't declare victory on an
+        // incomplete suite, and we don't bounce the ticket to needs-fixes
+        // for a check that simply hasn't run.
+        debug!(target: "feedback", repo, pr_number, "no gating failure and not green; treating as pending");
         return Ok(CiOutcome::Pending);
     }
 

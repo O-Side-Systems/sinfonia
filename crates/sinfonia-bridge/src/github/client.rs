@@ -56,6 +56,44 @@ impl CheckRunSummary {
     pub fn has_failed(&self) -> bool {
         !self.failed.is_empty()
     }
+
+    /// True when CI counts as green for the purpose of advancing the ticket.
+    ///
+    /// When `required` is empty this is the legacy [`Self::all_passed`]
+    /// behaviour (nothing pending, nothing failed, at least one pass).
+    ///
+    /// When `required` is non-empty it becomes a **closed** gate: EVERY named
+    /// check must be present in `passed` and NONE may be in `failed`. A
+    /// required check that has not reported yet — absent from both `passed`
+    /// and `failed` — does NOT count as green. That closes the partial-suite
+    /// hole where an unfinished build (e.g. only the fast lint posted a
+    /// conclusion) looked green because nothing had failed *yet*. Non-required
+    /// checks are ignored, matching GitHub branch-protection "required status
+    /// checks" semantics.
+    pub fn is_green(&self, required: &[String]) -> bool {
+        if self.any_pending {
+            return false;
+        }
+        if required.is_empty() {
+            return self.all_passed();
+        }
+        required
+            .iter()
+            .all(|r| self.passed.iter().any(|p| p == r) && !self.failed.iter().any(|f| f == r))
+    }
+
+    /// True when the red path should fire. With an empty `required`, any
+    /// failed check counts (legacy [`Self::has_failed`]). With a non-empty
+    /// `required`, only a failure of a *named* check is gating; a non-required
+    /// failure is ignored and the PR stays pending until the required checks
+    /// report. Pairs with [`Self::is_green`]: when neither is true the suite
+    /// is still incomplete and the caller should treat it as pending.
+    pub fn required_failed(&self, required: &[String]) -> bool {
+        if required.is_empty() {
+            return self.has_failed();
+        }
+        required.iter().any(|r| self.failed.iter().any(|f| f == r))
+    }
 }
 
 /// One row of the GitHub Actions artifacts listing for a workflow run.
@@ -623,6 +661,60 @@ mod tests {
     use serde_json::json;
     use wiremock::matchers::{method, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn summary(passed: &[&str], failed: &[&str], any_pending: bool) -> CheckRunSummary {
+        CheckRunSummary {
+            passed: passed.iter().map(|s| s.to_string()).collect(),
+            failed: failed.iter().map(|s| s.to_string()).collect(),
+            any_pending,
+        }
+    }
+
+    fn req(names: &[&str]) -> Vec<String> {
+        names.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn is_green_empty_required_matches_all_passed() {
+        // Legacy behaviour: any pass, nothing failed, nothing pending.
+        assert!(summary(&["ci"], &[], false).is_green(&[]));
+        assert!(!summary(&[], &[], false).is_green(&[]), "empty suite not green");
+        assert!(!summary(&["ci"], &["lint"], false).is_green(&[]));
+        assert!(!summary(&["ci"], &[], true).is_green(&[]), "pending not green");
+    }
+
+    #[test]
+    fn is_green_required_needs_every_named_check_passed() {
+        let required = req(&["cargo test", "cargo fmt"]);
+        // Both required present in passed → green.
+        assert!(summary(&["cargo test", "cargo fmt", "extra"], &[], false).is_green(&required));
+        // A required check failed → not green.
+        assert!(!summary(&["cargo test"], &["cargo fmt"], false).is_green(&required));
+    }
+
+    #[test]
+    fn is_green_required_rejects_partial_suite() {
+        // THE HOLE: only the fast check reported; the other required check
+        // has not run yet (absent from passed AND failed). all_passed() would
+        // call this green; is_green(required) must not.
+        let required = req(&["cargo test", "cargo fmt"]);
+        let partial = summary(&["cargo fmt"], &[], false);
+        assert!(partial.all_passed(), "legacy all_passed is fooled by the partial suite");
+        assert!(!partial.is_green(&required), "required gate must reject the partial suite");
+        // And it's not a gating failure either → caller should treat as pending.
+        assert!(!partial.required_failed(&required));
+    }
+
+    #[test]
+    fn required_failed_only_fires_on_named_check() {
+        let required = req(&["cargo test"]);
+        // A non-required check failed; required one passed → not a gating failure.
+        assert!(!summary(&["cargo test"], &["flaky-optional"], false).required_failed(&required));
+        // The required check failed → gating failure.
+        assert!(summary(&[], &["cargo test"], false).required_failed(&required));
+        // Empty required → any failure is gating (legacy has_failed).
+        assert!(summary(&["x"], &["y"], false).required_failed(&[]));
+    }
 
     fn ops_for(uri: &str) -> OctocrabGhOps {
         let crab = Octocrab::builder()

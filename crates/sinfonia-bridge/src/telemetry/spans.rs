@@ -45,6 +45,7 @@ pub const CAP_KIND_COST: &str = "cost";
 
 // Transition-reason enumerated values for the `reason` attribute (§5).
 pub const REASON_CI_FAILURE: &str = "ci_failure";
+pub const REASON_CI_GREEN: &str = "ci_green";
 pub const REASON_CAP_HIT: &str = "cap_hit";
 pub const REASON_BUDGET_EXCEEDED: &str = "budget_exceeded";
 pub const REASON_MANUAL: &str = "manual";
